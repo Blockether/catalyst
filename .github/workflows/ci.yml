@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Start copilot-api service
+      run: |
+        npx copilot-api@latest start --port 3005 --github-token ${{ secrets.GITHUB_TOKEN }} &
+        sleep 15
+        # Wait for service to be ready
+        for i in {1..30}; do
+          if curl -f http://localhost:3005/v1/models >/dev/null 2>&1; then
+            echo "Copilot API service is ready"
+            break
+          fi
+          echo "Waiting for copilot-api service... ($i/30)"
+          sleep 2
+        done
+      continue-on-error: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      run: uv python install ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: uv sync --all-extras
+    
+    - name: Run linting
+      run: uv run poe lint
+    
+    - name: Run type checking
+      run: uv run poe typecheck
+    
+    - name: Build documentation
+      run: uv run poe docs-build
+    
+    - name: Run tests with coverage
+      run: uv run python3 -m pytest --cov=src --cov-report=xml --cov-report=term-missing --cov-fail-under=85
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: true

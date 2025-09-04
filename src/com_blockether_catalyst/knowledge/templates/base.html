@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Knowledge Visualization{% endblock %}</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    
+    <!-- Marked.js for Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.0/marked.min.js"></script>
+    
+    <!-- DOMPurify for sanitizing HTML -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+    
+    <!-- Custom Markdown Renderer -->
+    <script>
+        // Global markdown renderer function
+        function renderMarkdown(element, markdown) {
+            if (!markdown) {
+                element.innerHTML = '';
+                return;
+            }
+            
+            // Configure marked options
+            marked.setOptions({
+                breaks: true,
+                gfm: true,
+                headerIds: true,
+                mangle: false,
+                sanitize: false // We'll use DOMPurify instead
+            });
+            
+            // Parse markdown
+            let html = marked.parse(markdown);
+            
+            // Sanitize HTML to prevent XSS
+            html = DOMPurify.sanitize(html, {
+                ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'a', 'ul', 'ol', 'li', 
+                              'blockquote', 'code', 'pre', 'em', 'strong', 'del', 'table', 
+                              'thead', 'tbody', 'tr', 'th', 'td', 'br', 'hr', 'img', 'div', 'span'],
+                ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target']
+            });
+            
+            // Add Tailwind CSS classes
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = html;
+            
+            // Style headers
+            wrapper.querySelectorAll('h1').forEach(el => {
+                el.className = 'text-3xl font-bold mt-6 mb-4 text-gray-900';
+            });
+            wrapper.querySelectorAll('h2').forEach(el => {
+                el.className = 'text-2xl font-bold mt-5 mb-3 text-gray-800';
+            });
+            wrapper.querySelectorAll('h3').forEach(el => {
+                el.className = 'text-xl font-semibold mt-4 mb-2 text-gray-800';
+            });
+            wrapper.querySelectorAll('h4').forEach(el => {
+                el.className = 'text-lg font-semibold mt-3 mb-2 text-gray-700';
+            });
+            
+            // Style paragraphs
+            wrapper.querySelectorAll('p').forEach(el => {
+                if (!el.className) {
+                    el.className = 'mb-3 text-gray-700 leading-relaxed';
+                }
+            });
+            
+            // Style lists
+            wrapper.querySelectorAll('ul').forEach(el => {
+                el.className = 'list-disc list-inside mb-3 ml-4 text-gray-700';
+            });
+            wrapper.querySelectorAll('ol').forEach(el => {
+                el.className = 'list-decimal list-inside mb-3 ml-4 text-gray-700';
+            });
+            wrapper.querySelectorAll('li').forEach(el => {
+                el.className = 'mb-1';
+            });
+            
+            // Style blockquotes
+            wrapper.querySelectorAll('blockquote').forEach(el => {
+                el.className = 'border-l-4 border-blue-400 pl-4 py-2 my-3 italic text-gray-600 bg-gray-50';
+            });
+            
+            // Style inline code
+            wrapper.querySelectorAll('code').forEach(el => {
+                if (!el.parentElement || el.parentElement.tagName !== 'PRE') {
+                    el.className = 'px-1.5 py-0.5 bg-gray-100 rounded text-sm font-mono text-red-600';
+                }
+            });
+            
+            // Style code blocks
+            wrapper.querySelectorAll('pre').forEach(el => {
+                el.className = 'bg-gray-900 text-gray-100 p-4 rounded-lg my-3 overflow-x-auto';
+                const code = el.querySelector('code');
+                if (code) {
+                    code.className = 'text-sm font-mono';
+                }
+            });
+            
+            // Style links
+            wrapper.querySelectorAll('a').forEach(el => {
+                el.className = 'text-blue-600 hover:text-blue-800 underline';
+                if (!el.getAttribute('target')) {
+                    el.setAttribute('target', '_blank');
+                    el.setAttribute('rel', 'noopener noreferrer');
+                }
+            });
+            
+            // Style tables
+            wrapper.querySelectorAll('table').forEach(el => {
+                el.className = 'w-full border-collapse my-3';
+            });
+            wrapper.querySelectorAll('th').forEach(el => {
+                el.className = 'border border-gray-300 px-3 py-2 bg-gray-100 font-semibold text-left';
+            });
+            wrapper.querySelectorAll('td').forEach(el => {
+                el.className = 'border border-gray-300 px-3 py-2';
+            });
+            
+            // Style horizontal rules
+            wrapper.querySelectorAll('hr').forEach(el => {
+                el.className = 'my-4 border-gray-300';
+            });
+            
+            // Set the styled content
+            element.innerHTML = wrapper.innerHTML;
+        }
+        
+        // Auto-render markdown on page load for elements with data-markdown attribute
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('[data-markdown]').forEach(element => {
+                const markdown = element.getAttribute('data-markdown') || element.textContent;
+                renderMarkdown(element, markdown);
+            });
+        });
+        
+        // HTMX extension to auto-render markdown after swaps
+        htmx.defineExtension('markdown', {
+            transformResponse: function(text, xhr, elt) {
+                // Check if response contains markdown indicator
+                if (xhr.getResponseHeader('X-Markdown') === 'true') {
+                    const wrapper = document.createElement('div');
+                    renderMarkdown(wrapper, text);
+                    return wrapper.innerHTML;
+                }
+                return text;
+            },
+            onEvent: function(name, evt) {
+                if (name === 'htmx:afterSwap') {
+                    // Auto-render any elements with data-markdown in the swapped content
+                    const target = evt.detail.target;
+                    if (target) {
+                        target.querySelectorAll('[data-markdown]').forEach(element => {
+                            const markdown = element.getAttribute('data-markdown') || element.textContent;
+                            renderMarkdown(element, markdown);
+                        });
+                    }
+                }
+            }
+        });
+    </script>
+    
+    <style>
+        /* Additional custom styles */
+        .markdown-content {
+            max-width: none;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body class="bg-gray-50" hx-ext="markdown">
+    {% block content %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Knowledge Base Visualization{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <h1 class="text-4xl font-bold mb-8 text-gray-900">Knowledge Base Visualization</h1>
+    
+    <!-- Search Section -->
+    <div class="mb-8">
+        <form hx-get="{{ module_prefix }}/api/search" 
+              hx-target="#search-results" 
+              hx-trigger="submit"
+              class="flex gap-4">
+            <input type="text" 
+                   name="query" 
+                   placeholder="Search knowledge base..." 
+                   class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button type="submit" 
+                    class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                Search
+            </button>
+        </form>
+    </div>
+    
+    <!-- Results Section -->
+    <div id="search-results" class="space-y-4">
+        <!-- Search results will be loaded here -->
+    </div>
+    
+    <!-- Documents Section -->
+    <div id="documents-section" class="mt-8">
+        <h2 class="text-2xl font-bold mb-4 text-gray-800">Documents</h2>
+        <div hx-get="{{ module_prefix }}/api/documents" 
+             hx-trigger="load" 
+             hx-target="this"
+             class="grid gap-4">
+            <!-- Documents will be loaded here -->
+        </div>
+    </div>
+    
+    <!-- Terms Section -->
+    <div id="terms-section" class="mt-8">
+        <h2 class="text-2xl font-bold mb-4 text-gray-800">Terms</h2>
+        <div hx-get="{{ module_prefix }}/api/terms" 
+             hx-trigger="load" 
+             hx-target="this"
+             class="grid gap-4">
+            <!-- Terms will be loaded here -->
+        </div>
+    </div>
+</div>
+
+<!-- Include markdown initialization script -->
+{% include "markdown_init.html" %}
+{% endblock %}

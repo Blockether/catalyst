@@ -1,0 +1,45 @@
+Analyze this batch of pages from:
+
+Document: "{document_name}",
+Batch: (Batch {batch_number}/{total_batches}).
+Author: {author}
+
+PAGES TO ANALYZE:
+{pages_text}
+
+EXTRACT THE FOLLOWING:
+
+1. DOCUMENT SECTIONS:
+   - Identify all section headings with their hierarchy levels
+   - Note page ranges for each section
+   - Provide brief summary of each section's content
+   - Classify section type: concept (definitions/terminology), procedure (how-to/steps), requirement (rules/policies), example (samples/cases), data (tables/metrics), narrative (general text)
+
+2. TERMS AND ACRONYMS:
+   - Extract important keywords and technical terms
+   - Identify all acronyms with their full forms
+   - Note first occurrence page
+   - Provide brief definitions where applicable
+
+
+3. CONTENT SUMMARY:
+   - Provide a brief paragraph summarizing what this batch covers
+   - Focus on the main topic and purpose
+
+4. KEY CONCEPTS:
+   - List the key technical concepts and ideas found in this batch
+   - Focus on extractable knowledge units
+   - Include important principles, methods, or frameworks
+
+5. Is the current section a child of the previous one:
+  - If the level of the current section is higher than the previous one,
+    the it MEANS the current section is a child of the previous one!
+
+    Example:
+    1. Here is a title                  - level 1
+      1. Here is a subsection           - level 2
+
+    then:
+    Level 2 subsection is a child of the Level 1.
+
+Provide a structured technical analysis of these pages.

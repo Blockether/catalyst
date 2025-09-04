@@ -1,0 +1,19 @@
+__pycache__
+.venv
+.pytest_cache
+.env
+
+# Test artifacts
+test_artifacts/
+entity_keyword_graph_test.html
+.DS_Store
+.storage
+build
+src/com_blockether_catalyst.egg-info
+.coverage
+site
+input
+public
+.lsp
+*.log
+verification/**
