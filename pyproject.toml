@@ -1,0 +1,147 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["com_blockether_catalyst*"]
+
+[tool.setuptools.package-data]
+"com_blockether_catalyst.integrations.agno" = ["templates/**/*.html"]
+"com_blockether_catalyst" = ["static_models/**/*"]
+
+[project]
+name = "com-blockether-catalyst"
+version = "0.1.0"
+description = "A comprehensive toolkit for building enterprise-grade LLM-powered applications"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Blockether", email = "contact@blockether.com" }]
+maintainers = [{ name = "Blockether", email = "contact@blockether.com" }]
+requires-python = ">=3.12"
+keywords = ["llm", "ai", "document-processing", "knowledge-base", "enterprise"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Indexing",
+    "Natural Language :: English",
+]
+
+# Core runtime dependencies only
+dependencies = [
+    "langchain-core>=0.3.75",
+    "model2vec>=0.6.0",
+    "numpy>=2.3.2",
+    "tenacity>=9.1.2",
+    "trio>=0.30.0",
+    "instructor>=1.10.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/Blockether/catalyst"
+Documentation = "https://github.com/Blockether/catalyst"
+Repository = "https://github.com/Blockether/catalyst.git"
+Issues = "https://github.com/Blockether/catalyst/issues"
+Changelog = "https://github.com/Blockether/catalyst/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+agno = ["agno>=1.8.1"]
+api = ["fastapi>=0.116.1", "mcp>=1.13.1"]
+extraction = ["easyocr>=1.7.2", "pdfplumber>=0.11.7", "tiktoken>=0.11.0", "rapidfuzz>=3.14.0"]
+
+[dependency-groups]
+test = ["pytest>=8.4.1", "pytest-asyncio>=1.1.0", "pytest-cov>=6.2.1", "pytest-timeout>=2.4.0"]
+
+# Development tools
+dev = [
+    "mypy>=1.17.1",
+    "ruff>=0.12.8",
+    "isort>=5.10.0",
+    "black>=24.0.0",
+    "poethepoet>=0.37.0",
+    "instructor>=1.10.0",
+    "easyocr>=1.7.2",
+    "uvicorn>=0.35.0",
+    "pdfplumber>=0.11.7",
+    "fastapi>=0.116.1",
+    "agno>=1.8.1",
+    "mcp>=1.13.1",
+    "mangum>=0.19.0",
+    "pytest-randomly>=3.16.0",
+]
+
+# Documentation generation
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-shadcn>=0.9.0",
+    "mkdocs-llmstxt>=0.3.1",
+    "mkdocstrings>=0.30.0",
+    "mkdocstrings-python>=1.17.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*Test.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --timeout=600 --timeout-method=thread"
+timeout = 600
+timeout_method = "thread"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.mypy]
+ignore_missing_imports = true
+disallow_untyped_defs = true
+warn_return_any = true
+explicit_package_bases = true
+mypy_path = "src"
+
+[tool.ruff.lint]
+ignore = ["E501", "F401"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
+known_first_party = ["com_blockether_catalyst"]
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.poe.tasks]
+# Linting and type checking
+lint = "uv run ruff check src/ tests/"
+typecheck = "uv run mypy src/ tests/"
+verify = ["lint", "typecheck"]
+
+# Formatting
+format-ruff = "uv run ruff format src/ tests/"
+format-black = "uv run black src/ tests/"
+format-isort = "uv run isort src/ tests/"
+format = ["format-ruff", "format-black", "format-isort"]
+
+# Testing
+test = "uv run python3 -m pytest"
+test-cov = "uv run python3 -m pytest --cov=src --cov-report=html"
+test-cov-check = "uv run python3 -m pytest --cov=src --cov-report=term-missing --cov-fail-under=85"
+
+# Documentation
+docs-serve = "uv run mkdocs serve"
+docs-build = "uv run mkdocs build"
+check-docs = { shell = "if [ -d docs/examples ]; then echo '❌ ERROR: docs/examples/ folder is prohibited! Examples should be embedded in markdown files within docs/modules/'; exit 1; else echo '✅ Documentation structure is valid'; fi" }
+
+# Cleaning tasks
+clean-cache = "uv cache clean"
+clean-pyc = { shell = "find . -type f -name '*.pyc' -delete && find . -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true" }
+clean = ["clean-pyc", "clean-cache"]
+
+# Complete workflow
+check = ["format", "verify", "test-cov-check", "check-docs"]

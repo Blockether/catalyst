@@ -1,0 +1,57 @@
+<!-- Include this in pages that need markdown rendering -->
+<script>
+    // Initialize markdown rendering after HTMX swaps
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        // Find all elements with data-markdown in the swapped content
+        const target = evt.detail.target;
+        if (target) {
+            target.querySelectorAll('[data-markdown]').forEach(element => {
+                const markdown = element.getAttribute('data-markdown');
+                if (markdown && typeof renderMarkdown === 'function') {
+                    renderMarkdown(element, markdown);
+                }
+            });
+        }
+    });
+    
+    // Also handle toggles for chunk text
+    function toggleChunkText(chunkIndex) {
+        const shortDiv = document.getElementById('chunk-text-short-' + chunkIndex);
+        const fullDiv = document.getElementById('chunk-text-full-' + chunkIndex);
+        const toggleBtn = document.getElementById('chunk-text-toggle-' + chunkIndex);
+        
+        if (shortDiv && fullDiv && toggleBtn) {
+            if (fullDiv.classList.contains('hidden')) {
+                // Show full text
+                shortDiv.classList.add('hidden');
+                fullDiv.classList.remove('hidden');
+                toggleBtn.textContent = 'Collapse';
+                
+                // Render markdown if not already rendered
+                if (!fullDiv.hasAttribute('data-markdown-rendered')) {
+                    const markdown = fullDiv.getAttribute('data-markdown');
+                    if (markdown && typeof renderMarkdown === 'function') {
+                        renderMarkdown(fullDiv, markdown);
+                        fullDiv.setAttribute('data-markdown-rendered', 'true');
+                    }
+                }
+            } else {
+                // Show short text
+                fullDiv.classList.add('hidden');
+                shortDiv.classList.remove('hidden');
+                toggleBtn.textContent = 'Expand';
+            }
+        }
+    }
+    
+    // Render markdown on initial page load
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('[data-markdown]').forEach(element => {
+            const markdown = element.getAttribute('data-markdown');
+            if (markdown && typeof renderMarkdown === 'function') {
+                renderMarkdown(element, markdown);
+                element.setAttribute('data-markdown-rendered', 'true');
+            }
+        });
+    });
+</script>
