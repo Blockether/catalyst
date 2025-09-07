@@ -12,10 +12,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import anyio
 from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 from rich.tree import Tree
 
@@ -29,6 +30,12 @@ from com_blockether_catalyst.consensus.internal.VotingComparison import (
     BaseModelWithReasoning,
     ComparisonStrategy,
     VotingField,
+)
+from com_blockether_catalyst.prompt import PromptAlignmentCore
+from com_blockether_catalyst.prompt.PromptAlignmentCLIBase import PromptAlignmentCLIBase
+from com_blockether_catalyst.prompt.internal.PromptAlignmentTypes import (
+    AlignmentFeedback,
+    EvaluationResult,
 )
 from com_blockether_catalyst.utils.instructor.InstructorLLMCall import InstructorLLMCall
 
@@ -111,7 +118,7 @@ class DocumentOverview(TypedCallBaseForConsensus):
     )
 
 
-class TOCGeneratorCLI:
+class TOCGeneratorCLI(PromptAlignmentCLIBase):
     """CLI for generating Table of Contents from technical analysis batches."""
 
     def __init__(
@@ -128,7 +135,7 @@ class TOCGeneratorCLI:
             api_base_url: Base URL for the Instructor API
             api_key: API key for the Instructor API
         """
-        self.output_dir = output_dir
+        self.batch_files_dir = output_dir
         self.api_base_url = api_base_url
         self.api_key = api_key
         self.batch_files: List[Path] = []
@@ -140,12 +147,17 @@ class TOCGeneratorCLI:
             None  # Document metadata from batch files
         )
         self.toc_data: Optional[TOCDocument] = None  # Loaded ToC data
+        self.last_consensus_result: Optional[Any] = None  # Store last consensus result
+        
+        super().__init__(
+            prompt_name="document_overview",
+            prompt_dir=Path("tools/extraction/prompts"),
+            output_dir=Path("output/analysis_responses"),
+            console=console,
+        )
 
-        # Initialize LLM model for document overview
-        self._init_llm()
-
-    def _init_llm(self) -> None:
-        """Initialize the LLM model for document overview generation."""
+    def _init_components(self) -> None:
+        """Initialize LLM components and prompt aligner."""
         # Create model for document overview
         overview_model: InstructorLLMCall[DocumentOverview] = InstructorLLMCall(
             response_model=DocumentOverview,
@@ -178,11 +190,84 @@ class TOCGeneratorCLI:
                 max_rounds=3, threshold=0.9, verbosity=VerbosityLevel.VERBOSE
             ),
         )
+        
+        # Create alignment models
+        eval_model = InstructorLLMCall(
+            response_model=EvaluationResult,
+            model="gpt-4o",
+            temperature=0.3,
+            base_url=self.api_base_url,
+            api_key=self.api_key,
+        )
 
+        feedback_model = InstructorLLMCall(
+            response_model=AlignmentFeedback,
+            model="gpt-4o",
+            temperature=0.3,
+            base_url=self.api_base_url,
+            api_key=self.api_key,
+        )
+
+        # Create consensus for alignment
+        target_consensus = ConsensusCore.consensus(
+            models=[
+                ConsensusCore.model(
+                    id="evaluator",
+                    executor=eval_model,
+                    perspective="Evaluate overview quality and completeness.",
+                    weight_multiplier=1.0,
+                ),
+                ConsensusCore.model(
+                    id="evaluator1",
+                    executor=eval_model,
+                    perspective="Evaluate overview quality and completeness. Take into account all of the rules and remember to be concise and strict.",
+                    weight_multiplier=1.0,
+                ),
+            ],
+            judge=eval_model,
+            settings=ConsensusSettings(max_rounds=2, threshold=0.9, verbosity=VerbosityLevel.VERBOSE),
+        )
+
+        alignment_consensus = ConsensusCore.consensus(
+            models=[
+                ConsensusCore.model(
+                    id="aligner",
+                    executor=feedback_model,
+                    perspective="Provide feedback for improving overview prompts.",
+                    weight_multiplier=1.0,
+                ),
+            ],
+            judge=feedback_model,
+            settings=ConsensusSettings(max_rounds=3, threshold=0.85, verbosity=VerbosityLevel.VERBOSE),
+        )
+
+        # Initialize prompt aligner
+        self.prompt_aligner = PromptAlignmentCore(
+            target_consensus=target_consensus,
+            alignment_consensus=alignment_consensus,
+        )
+
+    def _get_default_prompt(self) -> str:
+        """Get the default prompt template from external file."""
+        prompt_file = self.prompt_dir / f"{self.prompt_name}.txt"
+        if prompt_file.exists():
+            with open(prompt_file, "r") as f:
+                return f.read()
+        raise ValueError(f"Prompt file not found: {prompt_file}")
+    
+    def _get_prompt_placeholders(self) -> List[str]:
+        """Get list of placeholders in the prompt."""
+        return [
+            "{document_title}",
+            "{document_author}",
+            "{toc_summary}",
+            "{terms_summary}",
+        ]
+        
     def _find_batch_files(self) -> None:
         """Find all batch JSON files in the output directory."""
         self.batch_files = sorted(
-            self.output_dir.glob("batch_*_pages_*.json"),
+            self.batch_files_dir.glob("batch_*_pages_*.json"),
             key=lambda x: self._extract_batch_number(x),
         )
 
@@ -517,27 +602,28 @@ class TOCGeneratorCLI:
         except Exception as e:
             console.print(f"[red]Error loading ToC: {e}[/red]")
             return None
+            
+    def _load_specific_toc(self, toc_file: Path) -> Optional[TOCDocument]:
+        """Load a specific Table of Contents file."""
+        console.print(f"[green]Loading ToC from: {toc_file.name}[/green]")
+        
+        try:
+            with open(toc_file, "r") as f:
+                data = json.load(f)
+                self.toc_data = TOCDocument(**data)
+                console.print("[green]✓ ToC loaded successfully[/green]")
+                return self.toc_data
+        except Exception as e:
+            console.print(f"[red]Error loading ToC: {e}[/red]")
+            return None
 
-    def _load_overview_prompt(self) -> str:
-        """Load the document overview prompt from file."""
-        prompt_file = Path("tools/extraction/prompts/document_overview.txt")
-        if prompt_file.exists():
-            with open(prompt_file, "r") as f:
-                return f.read()
-        raise ValueError(f"Prompt file not found: {prompt_file}")
-
-    async def _generate_document_overview(self) -> None:
-        """Generate a high-level document overview using LLM."""
+    async def _test_prompt(self, prompt: str) -> Dict[str, Any]:
+        """Test the current prompt and return results."""
         # Load ToC data if not already loaded
         if not self.toc_data:
             if not self._load_toc_data():
-                return
-
-        console.print("\n[cyan]Generating Document Overview...[/cyan]")
-
-        # Load prompt template
-        prompt_template = self._load_overview_prompt()
-
+                return {"error": "No Table of Contents data available"}
+                
         # Prepare the prompt with ToC information
         toc_summary = self._prepare_toc_summary()
         terms_summary = self._prepare_terms_summary()
@@ -548,30 +634,101 @@ class TOCGeneratorCLI:
         if self.toc_data and self.toc_data.document_metadata:
             doc_title = self.toc_data.document_metadata.get("title", "Unknown")
             doc_author = self.toc_data.document_metadata.get("author", "Unknown")
-
+        
         # Fill the prompt template
-        prompt = prompt_template
-        prompt = prompt.replace("{document_title}", doc_title)
-        prompt = prompt.replace("{document_author}", doc_author)
-        prompt = prompt.replace("{toc_summary}", toc_summary)
-        prompt = prompt.replace("{terms_summary}", terms_summary)
+        values = {
+            "document_title": doc_title,
+            "document_author": doc_author,
+            "toc_summary": toc_summary,
+            "terms_summary": terms_summary,
+        }
+        
+        filled_prompt = self._fill_template(prompt, values)
+        
+        # Run the consensus
+        result = await self.overview_consensus.call(filled_prompt)
+        
+        if result and result.final_response:
+            response = result.final_response
+            
+            # Store consensus result for diff viewing
+            self.last_consensus_result = result
+            
+            # Create the response dictionary
+            full_response_data = response.model_dump()
+            
+            # Save the full response to file
+            saved_file = self._save_response_to_file(full_response_data, prefix="overview_test")
+            
+            return {
+                "purpose": response.purpose,
+                "audience": response.audience,
+                "concepts": response.concepts,
+                "summary": response.summary,
+                "final_response": full_response_data,
+                "saved_to": str(saved_file),
+                "consensus_result": result,
+            }
+            
+        return {"error": "No response from LLM"}
+        
+    def _display_test_results(self, results: Dict[str, Any]):
+        """Display test results to the user."""
+        if "error" in results:
+            self.console.print(f"[red]Error: {results['error']}[/red]")
+            return
+            
+        # Display overview information
+        self.console.print("\n[bold cyan]Test Results - Document Overview[/bold cyan]\n")
+        
+        if "purpose" in results:
+            self.console.print(f"[yellow]Purpose:[/yellow] {results['purpose']}")
+            
+        if "audience" in results:
+            self.console.print("\n[yellow]Target Audience:[/yellow]")
+            for audience in results["audience"]:
+                self.console.print(f"  • {audience}")
+                
+        if "concepts" in results:
+            self.console.print("\n[yellow]Key Concepts:[/yellow]")
+            for concept in results["concepts"][:5]:
+                self.console.print(f"  • {concept}")
+            if len(results["concepts"]) > 5:
+                self.console.print(f"  [dim]... and {len(results['concepts']) - 5} more[/dim]")
+                
+        # Show where the full response was saved
+        if "saved_to" in results:
+            self.console.print(f"\n[yellow]Full response saved to: {results['saved_to']}[/yellow]")
+            
+        # Display raw JSON of final response
+        self._display_raw_json(results["final_response"], "Full Response")
 
-        try:
-            with console.status("Generating overview with consensus models..."):
-                result = await self.overview_consensus.call(prompt)
+    async def _generate_document_overview(self) -> None:
+        """Generate a high-level document overview using LLM."""
+        # Load ToC data if not already loaded
+        if not self.toc_data:
+            if not self._load_toc_data():
+                return
 
-            if result and result.final_response:
-                response = result.final_response
+        console.print("\n[cyan]Generating Document Overview...[/cyan]")
 
-                # Display the overview
-                self._display_document_overview(response)
+        # Test the prompt
+        test_results = await self._test_prompt(self.prompt_template)
+        
+        if "error" not in test_results and "final_response" in test_results:
+            response_data = test_results["final_response"]
+            
+            # Create DocumentOverview from the response data
+            response = DocumentOverview(**response_data)
+            
+            # Display the overview
+            self._display_document_overview(response)
 
-                # Save the overview
-                if Confirm.ask("\nSave document overview to file?", default=True):
-                    self._save_document_overview(response)
-
-        except Exception as e:
-            console.print(f"[red]Error generating overview: {e}[/red]")
+            # Save the overview
+            if Confirm.ask("\nSave document overview to file?", default=True):
+                self._save_document_overview(response)
+        else:
+            console.print(f"[red]Error generating overview: {test_results.get('error', 'Unknown error')}[/red]")
 
     def _prepare_toc_summary(self) -> str:
         """Prepare a summary of the ToC structure for the prompt."""
@@ -679,6 +836,356 @@ class TOCGeneratorCLI:
 
         return output_file
 
+    def _view_filled_prompt(self):
+        """View the filled prompt template for document overview."""
+        # Load ToC data if not already loaded
+        if not self.toc_data:
+            if not self._load_toc_data():
+                self.console.print("[red]No Table of Contents data available[/red]")
+                return
+                
+        # Prepare the prompt with ToC information
+        toc_summary = self._prepare_toc_summary()
+        terms_summary = self._prepare_terms_summary()
+
+        # Extract document info safely
+        doc_title = "Unknown"
+        doc_author = "Unknown"
+        if self.toc_data and self.toc_data.document_metadata:
+            doc_title = self.toc_data.document_metadata.get("title", "Unknown")
+            doc_author = self.toc_data.document_metadata.get("author", "Unknown")
+        
+        # Fill the prompt template
+        values = {
+            "document_title": doc_title,
+            "document_author": doc_author,
+            "toc_summary": toc_summary,
+            "terms_summary": terms_summary,
+        }
+        
+        filled_prompt = self._fill_template(self.prompt_template, values)
+        
+        # Use base class method for display
+        self._display_text_with_syntax(
+            filled_prompt,
+            title="Filled Document Overview Prompt",
+            language="markdown",
+            line_numbers=True,
+            offer_save=True,
+            save_prefix="filled_overview_prompt"
+        )
+        
+    def _compare_prompts_with_previous(self):
+        """Compare current prompt with the previously saved version."""
+        # Load the saved prompt
+        saved_prompt_file = self.prompt_dir / f"{self.prompt_name}.txt"
+        if not saved_prompt_file.exists():
+            self.console.print("[yellow]No saved prompt to compare with[/yellow]")
+            return
+
+        with open(saved_prompt_file, "r") as f:
+            saved_prompt = f.read()
+
+        self.console.print("\n[cyan]Comparing Prompts:[/cyan]")
+        self._compare_prompts(saved_prompt, self.prompt_template)
+        
+    def _get_ignore_fields(self, response_model) -> set:
+        """Get fields that should be ignored in comparisons based on ComparisonStrategy.IGNORE."""
+        ignore_fields = set()
+
+        # Check if it's a Pydantic model with model_fields
+        if hasattr(response_model.__class__, 'model_fields'):
+            for field_name, field_info in response_model.__class__.model_fields.items():
+                # Check if field has IGNORE comparison strategy
+                if hasattr(field_info, 'metadata'):
+                    for meta in field_info.metadata:
+                        if hasattr(meta, 'comparison') and meta.comparison == ComparisonStrategy.IGNORE:
+                            ignore_fields.add(field_name)
+
+        # No default ignored fields - only use what's explicitly marked with IGNORE strategy
+        return ignore_fields
+        
+    def _view_consensus_disagreements(self):
+        """View detailed diffs of consensus disagreements from the last test."""
+        # Check if we have a stored result
+        last_result = getattr(self, 'last_consensus_result', None)
+        if not last_result:
+            self.console.print("[yellow]No consensus result available. Run a test first.[/yellow]")
+            return
+
+        result = last_result
+
+        # Properly typed access to rounds
+        if not result.rounds:
+            self.console.print("[yellow]No rounds information available[/yellow]")
+            return
+
+        rounds = result.rounds
+        if not rounds:
+            self.console.print("[green]No rounds to display[/green]")
+            return
+
+        self.console.print("\n[bold cyan]Consensus Disagreement Analysis[/bold cyan]\n")
+
+        # Check each round for disagreements
+        any_disagreements = False
+        for round_idx, round_data in enumerate(rounds):
+            round_num = round_idx + 1
+
+            # Check if this round has responses
+            if round_data.responses:
+                # Extract unique responses to find disagreements
+                responses_list = round_data.responses
+
+                # Group by unique response values for comparison
+                unique_responses = {}
+                for model_response in responses_list:
+                    # Each ModelResponse has id and content attributes (properly typed)
+                    model_id = model_response.id
+                    response = model_response.content
+
+                    # Create a hash of the response for grouping (responses are Pydantic models)
+                    response_str = str(response.model_dump())
+                    response_hash = hash(response_str)
+
+                    if response_hash not in unique_responses:
+                        unique_responses[response_hash] = {'response': response, 'models': []}
+                    unique_responses[response_hash]['models'].append(model_id)
+
+                # If there are disagreements (more than 1 unique response)
+                if len(unique_responses) > 1:
+                    any_disagreements = True
+                    self.console.print(
+                        f"\n[yellow]Round {round_num} - {len(unique_responses)} different responses:[/yellow]")
+
+                    # Show the differences between first two unique responses
+                    unique_list = list(unique_responses.values())
+                    if len(unique_list) >= 2:
+                        resp1 = unique_list[0]['response']
+                        resp2 = unique_list[1]['response']
+                        models1 = ', '.join(unique_list[0]['models'])
+                        models2 = ', '.join(unique_list[1]['models'])
+
+                        # Convert responses to comparable format (they are Pydantic models)
+                        dict1 = resp1.model_dump()
+                        dict2 = resp2.model_dump()
+
+                        # Get fields to ignore based on ComparisonStrategy.IGNORE
+                        ignore_fields = self._get_ignore_fields(resp1)
+
+                        # Find all differing fields
+                        all_differing = []
+                        ignored_differing = []
+                        for field in dict1.keys():
+                            if field in dict2 and dict1[field] != dict2[field]:
+                                if field in ignore_fields:
+                                    ignored_differing.append(field)
+                                else:
+                                    all_differing.append(field)
+
+                        # Show note about ignored fields if any
+                        if ignored_differing:
+                            self.console.print(
+                                f"  [dim]Ignoring fields with IGNORE strategy: {', '.join(ignored_differing)}[/dim]")
+
+                        if all_differing:
+                            self.console.print(
+                                f"  [yellow]Significant disagreements in: {', '.join(all_differing)}[/yellow]")
+
+                            # Show diffs for each differing field (excluding ignored ones)
+                            for field in all_differing[:3]:  # Show first 3 significant fields
+                                self._show_value_diff(
+                                    dict1[field],
+                                    dict2[field],
+                                    field,
+                                    f"Models: {models1}",
+                                    f"Models: {models2}"
+                                )
+
+                    if len(unique_responses) > 2:
+                        self.console.print(
+                            f"  [dim]Total of {len(unique_responses)} unique responses in this round[/dim]")
+                else:
+                    self.console.print(f"[green]Round {round_num}: Full consensus achieved[/green]")
+            else:
+                self.console.print(f"[dim]Round {round_num}: No response data available[/dim]")
+
+        if not any_disagreements:
+            self.console.print("\n[green]No disagreements found across all rounds[/green]")
+
+        # Show final consensus status
+        if result.consensus_achieved:
+            self.console.print(f"\n[green]✓ Final consensus reached after {result.total_rounds} rounds[/green]")
+            self.console.print(f"[dim]Convergence score: {result.convergence_score:.2%}[/dim]")
+        else:
+            self.console.print(f"\n[red]✗ No consensus after {result.total_rounds} rounds[/red]")
+            if result.dissenting_models:
+                self.console.print(f"[dim]Dissenting models: {', '.join(result.dissenting_models)}[/dim]")
+                
+    async def _refine_prompt_with_principles(self):
+        """Refine prompt using ONLY principle-based approach (Google's guidelines method)."""
+        if not self.prompt_aligner:
+            self.console.print("[red]Prompt aligner not initialized[/red]")
+            return
+
+        self.console.print("\n[bold cyan]Principle-Based Refinement (Google's Guidelines Method)[/bold cyan]")
+        self.console.print("[dim]This uses extraction of reusable principles from feedback[/dim]\n")
+
+        # Check existing principles
+        existing_principles = self.prompt_aligner.export_principles() if hasattr(self.prompt_aligner, 'export_principles') else []
+        if existing_principles:
+            self.console.print(f"[dim]Currently have {len(existing_principles)} learned principles[/dim]")
+            if Confirm.ask("View existing principles?", default=False):
+                for idx, p in enumerate(existing_principles[:5], 1):
+                    if isinstance(p, dict):
+                        self.console.print(f"  {idx}. {p.get('principle', str(p))}")
+                    else:
+                        self.console.print(f"  {idx}. {str(p)}")
+                if len(existing_principles) > 5:
+                    self.console.print(f"  [dim]... and {len(existing_principles) - 5} more[/dim]")
+
+        # Step 1: Learn principles from good/bad examples
+        self.console.print("\n[bold]Step 1: Extract Principles from Examples[/bold]")
+        self.console.print("[dim]Provide examples of good document overviews and what made them good[/dim]\n")
+
+        learn_more = True
+        total_principles = 0
+
+        while learn_more:
+            # Show current ToC for context
+            if self.toc_data:
+                total_sections = len(self.toc_data.sections) if self.toc_data.sections else 0
+                total_terms = len(self.toc_data.terms) if self.toc_data.terms else 0
+                self.console.print(f"\n[dim]Current ToC has {total_sections} sections and {total_terms} terms[/dim]")
+
+            # Get example of what makes a good overview
+            self.console.print("\nDescribe a good overview for this type of document:")
+
+            example_type = Prompt.ask(
+                "Example type",
+                choices=["good", "bad", "skip"],
+                default="good"
+            )
+
+            if example_type == "skip":
+                break
+
+            if example_type == "good":
+                # Learn from positive example
+                good_purpose = Prompt.ask("What should the purpose capture?", default="Clear business objective and use case")
+                good_audience = IntPrompt.ask("How many audience groups should be identified?", default=3)
+                good_concepts = IntPrompt.ask("How many key concepts should be extracted?", default=5)
+                good_summary_style = Prompt.ask("What style should the summary use?", default="Detailed with page references")
+
+                ideal_response = f"""
+                A good overview should:
+                - Purpose: {good_purpose}
+                - Identify approximately {good_audience} distinct audience groups
+                - Extract around {good_concepts} key concepts and methodologies
+                - Summary should be {good_summary_style}
+                - Each section should be referenced with page numbers
+                - Focus on business value and practical application
+                """
+
+                # Extract principles from this ideal
+                if hasattr(self.prompt_aligner, 'extract_principles_from_ideal'):
+                    with self.console.status("Extracting principles from ideal example..."):
+                        principles = await self.prompt_aligner.extract_principles_from_ideal(
+                            self.prompt_template,
+                            ideal_response
+                        )
+
+                    if principles:
+                        total_principles += len(principles)
+                        self.console.print(f"[green]✓ Extracted {len(principles)} principles[/green]")
+                        for p in principles[:3]:
+                            self.console.print(f"  • {p.principle}")
+
+            else:  # bad example
+                # Learn from negative example
+                self.console.print("Describe what makes a BAD overview:")
+                bad_aspects = Prompt.ask("What problems should be avoided?")
+
+                # Convert negative to positive principles
+                positive_principles = f"""
+                Avoid these issues:
+                - {bad_aspects}
+                Convert to positive principles for better overview generation.
+                """
+
+                if hasattr(self.prompt_aligner, 'extract_principles_from_ideal'):
+                    with self.console.status("Converting issues to positive principles..."):
+                        principles = await self.prompt_aligner.extract_principles_from_ideal(
+                            self.prompt_template,
+                            positive_principles
+                        )
+
+                    if principles:
+                        total_principles += len(principles)
+                        self.console.print(f"[green]✓ Converted to {len(principles)} positive principles[/green]")
+
+            learn_more = Confirm.ask("\nLearn from another example?", default=False)
+
+        if total_principles == 0 and not existing_principles:
+            self.console.print("\n[yellow]No principles available for refinement.[/yellow]")
+            self.console.print("[dim]Principle-based refinement requires examples to learn from.[/dim]")
+            return
+
+        # Step 2: Apply principles to refine prompt
+        self.console.print("\n[bold]Step 2: Apply Principles to Refine Prompt[/bold]")
+
+        # Test current prompt first
+        self.console.print("\n[cyan]Testing current prompt for baseline...[/cyan]")
+        test_results = await self._test_prompt(self.prompt_template)
+        self._display_test_results(test_results)
+
+        # Get target behavior
+        target = Prompt.ask(
+            "\nDescribe the ideal behavior for the refined prompt",
+            default="Generate comprehensive, well-structured document overviews with clear business context"
+        )
+
+        # Apply principle-based refinement
+        from com_blockether_catalyst.prompt.PromptAlignmentCore import PromptConfiguration
+
+        config = PromptConfiguration(
+            initial_prompt=self.prompt_template,
+            target_behavior=target,
+            max_iterations=IntPrompt.ask("Max refinement iterations", default=3),
+            score_threshold=0.85,
+        )
+
+        original_prompt = self.prompt_template
+
+        with self.console.status("Applying principles to refine prompt..."):
+            result = await self.prompt_aligner.align_prompt(config)
+
+        # Show results
+        self._display_alignment_result(result)
+
+        # Show changes
+        if result.aligned_prompt != original_prompt:
+            self.console.print("\n[bold cyan]Prompt Changes:[/bold cyan]")
+            self._compare_prompts(original_prompt, result.aligned_prompt)
+
+            if Confirm.ask("\nView detailed diff?", default=True):
+                diff_text = self._show_diff(
+                    original_prompt,
+                    result.aligned_prompt,
+                    "Original",
+                    "Refined (Principle-Based)",
+                    context_lines=5
+                )
+                from rich.panel import Panel
+                self.console.print(Panel(diff_text, title="[bold]Principle-Based Changes[/bold]",
+                                         border_style="green", expand=False))
+
+            if Confirm.ask("\nAccept principle-refined prompt?", default=True):
+                self.prompt_template = result.aligned_prompt
+                self.console.print("[green]✓ Prompt updated with principle-based refinements[/green]")
+        else:
+            self.console.print("\n[yellow]Prompt already optimal according to learned principles[/yellow]")
+            
     def _generate_toc(self) -> None:
         """Generate the Table of Contents."""
         # Find and load batch files
@@ -745,6 +1252,16 @@ class TOCGeneratorCLI:
             console.print("\n[bold cyan]Options:[/bold cyan]")
             console.print("1. Generate ToC")
             console.print("2. Generate Document Overview")
+            console.print("3. View current prompt template")
+            console.print("4. Test current prompt")
+            console.print("5. Jump to saved file")
+            console.print("6. Refine prompt")
+            console.print("7. Manually edit prompt")
+            console.print("8. Save refined prompt")
+            console.print("f. View filled prompt for current batch")
+            console.print("v. View saved response files")
+            console.print("c. Compare prompts (current vs saved)")
+            console.print("d. View consensus disagreements (diffs)")
             console.print("0. Exit")
 
             choice = Prompt.ask("Select option", default="1")
@@ -754,6 +1271,41 @@ class TOCGeneratorCLI:
                     self._generate_toc()
                 elif choice == "2":
                     await self._generate_document_overview()
+                elif choice == "3":
+                    self._view_prompt()
+                elif choice == "4":
+                    results = await self._test_prompt(self.prompt_template)
+                    self._display_test_results(results)
+                elif choice == "5":
+                    # Jump to a saved ToC file
+                    analysis_dir = Path("output/analysis_responses")
+                    toc_files = sorted(
+                        analysis_dir.glob("table_of_contents_*.json"), reverse=True
+                    )
+                    if toc_files:
+                        console.print("\n[cyan]Available ToC files:[/cyan]")
+                        for idx, file in enumerate(toc_files[:10], 1):
+                            console.print(f"{idx}. {file.name}")
+                        file_num = IntPrompt.ask("Select file (0 to cancel)", default=0)
+                        if file_num > 0 and file_num <= len(toc_files):
+                            selected_file = toc_files[file_num - 1]
+                            self._load_specific_toc(selected_file)
+                    else:
+                        console.print("[yellow]No ToC files found[/yellow]")
+                elif choice == "6":
+                    await self._refine_prompt_with_principles()
+                elif choice == "7":
+                    self._manual_edit()
+                elif choice == "8":
+                    self._save_prompt_template(self.prompt_template)
+                elif choice.lower() == "f":
+                    self._view_filled_prompt()
+                elif choice.lower() == "v":
+                    self._view_saved_responses()
+                elif choice.lower() == "c":
+                    self._compare_prompts_with_previous()
+                elif choice.lower() == "d":
+                    self._view_consensus_disagreements()
                 elif choice == "0":
                     break
                 else:
@@ -797,6 +1349,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    import anyio
-
     anyio.run(main)

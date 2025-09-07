@@ -168,7 +168,7 @@ class PromptAlignmentCLIBase(ABC):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{prefix}_{timestamp}.json"
         filepath = self.output_dir / filename
-        
+
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -192,7 +192,7 @@ class PromptAlignmentCLIBase(ABC):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{prefix}_{timestamp}.txt"
         filepath = self.output_dir / filename
-        
+
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
