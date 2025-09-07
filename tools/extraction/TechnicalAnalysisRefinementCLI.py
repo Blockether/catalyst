@@ -163,14 +163,6 @@ class TechnicalBatchResponse(TypedCallBaseForConsensus):
 # CLI IMPLEMENTATION
 # ============================================================================
 
-# 1. We have technical analysis of the content (sections, concepts, summary, terms etc.)
-# Remove decorational elements like headers, footers, watermarks
-# 2. Now we need to go over the sections and create a table of content with explanation of each section and keywords to section + keywords for the full document.. (heuristics)
-# 3. We need to build a higher overview of the document - author, name, purpose, audience,
-# concepts, like summary of the book (detailed.. On this page there this one, and on the other one there is somethng else..) (heuristics + LLM)
-# 4. For each section generate the questions and answers then put them in the vector store..
-# Answer: terms, reasoning, text, references: page, section title, document i author (LLM)
-
 class TechnicalAnalysisRefinementCLI(PromptAlignmentCLIBase):
     """CLI for refining technical analysis prompts."""
 

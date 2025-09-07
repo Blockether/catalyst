@@ -118,6 +118,48 @@ class DocumentOverview(TypedCallBaseForConsensus):
     )
 
 
+class QuestionAnswerGenerated(BaseModel):
+    """LLM-generated Q&A content."""
+    
+    question: str = Field(description="The educational question")
+    answer: str = Field(description="Detailed answer with context and explanation")
+    terms: List[str] = Field(default_factory=list, description="Terms and acronyms referenced in this Q&A")
+    reasoning: str = Field(description="The reasoning behind the answer")
+    text: str = Field(description="Relevant text excerpt from the section")
+
+
+class QuestionAnswer(BaseModel):
+    """Complete question-answer pair with metadata."""
+    
+    question: str
+    answer: str
+    terms: List[str]
+    reasoning: str
+    text: str
+    # Metadata fields (injected after generation)
+    section_title: str
+    document: str
+    author: str
+    
+    
+class SectionQAGenerated(TypedCallBaseForConsensus):
+    """LLM-generated questions and answers for a section."""
+    
+    qa_pairs: List[QuestionAnswerGenerated] = VotingField(
+        default_factory=list,
+        description="List of question-answer pairs for this section",
+        comparison=ComparisonStrategy.SEQUENCE_ORDERED_ALIKE,
+    )
+
+
+class SectionQA(BaseModel):
+    """Complete section Q&A with metadata."""
+    
+    section_id: str
+    section_title: str
+    qa_pairs: List[QuestionAnswer]
+
+
 class TOCGeneratorCLI(PromptAlignmentCLIBase):
     """CLI for generating Table of Contents from technical analysis batches."""
 
@@ -148,6 +190,8 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
         )
         self.toc_data: Optional[TOCDocument] = None  # Loaded ToC data
         self.last_consensus_result: Optional[Any] = None  # Store last consensus result
+        self.qa_consensus = None  # QA generation consensus (initialized in _init_components)
+        self.current_prompt_name: str = "document_overview"  # Track current prompt
         
         super().__init__(
             prompt_name="document_overview",
@@ -245,6 +289,37 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
         self.prompt_aligner = PromptAlignmentCore(
             target_consensus=target_consensus,
             alignment_consensus=alignment_consensus,
+        )
+        
+        # Create model for QA generation
+        qa_model: InstructorLLMCall[SectionQAGenerated] = InstructorLLMCall(
+            response_model=SectionQAGenerated,
+            model="gpt-4o",
+            temperature=0.5,
+            base_url=self.api_base_url,
+            api_key=self.api_key,
+        )
+        
+        # Create consensus for QA generation
+        self.qa_consensus = ConsensusCore[SectionQAGenerated].consensus(
+            models=[
+                ConsensusCore[SectionQAGenerated].model(
+                    id="qa_generator",
+                    executor=qa_model,
+                    perspective="Generate educational questions that test understanding of key concepts and practical applications.",
+                    weight_multiplier=1.0,
+                ),
+                ConsensusCore[SectionQAGenerated].model(
+                    id="qa_generator_2",
+                    executor=qa_model,
+                    perspective="Create comprehensive Q&As that explore relationships between terms and connect to broader context.",
+                    weight_multiplier=1.0,
+                ),
+            ],
+            judge=qa_model,
+            settings=ConsensusSettings(
+                max_rounds=2, threshold=0.85, verbosity=VerbosityLevel.VERBOSE
+            ),
         )
 
     def _get_default_prompt(self) -> str:
@@ -657,16 +732,12 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
             # Create the response dictionary
             full_response_data = response.model_dump()
             
-            # Save the full response to file
-            saved_file = self._save_response_to_file(full_response_data, prefix="overview_test")
-            
             return {
                 "purpose": response.purpose,
                 "audience": response.audience,
                 "concepts": response.concepts,
                 "summary": response.summary,
                 "final_response": full_response_data,
-                "saved_to": str(saved_file),
                 "consensus_result": result,
             }
             
@@ -1189,6 +1260,246 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
         else:
             self.console.print("\n[yellow]Prompt already optimal according to learned principles[/yellow]")
             
+    def _prepare_section_info(self, section: TOCSection) -> str:
+        """Prepare section information for the QA prompt."""
+        info = f"Title: {section.title}\n"
+        info += f"Type: {section.type}\n"
+        info += f"Pages: {section.start_page}-{section.end_page}\n"
+        info += f"Summary: {section.summary}\n"
+        info += f"Content: {section.text[:500]}..." if len(section.text) > 500 else f"Content: {section.text}"
+        return info
+    
+    async def _get_or_generate_document_overview(self) -> Optional[DocumentOverview]:
+        """Get cached document overview or generate it if not available."""
+        # Check if we have a cached overview
+        if hasattr(self, '_cached_document_overview') and self._cached_document_overview:
+            return self._cached_document_overview
+            
+        # Try to load from recent file
+        analysis_dir = Path("output/analysis_responses")
+        overview_files = sorted(
+            analysis_dir.glob("document_overview_*.json"), reverse=True
+        )
+        
+        if overview_files and self.toc_data:
+            # Load the most recent overview that matches our document
+            for overview_file in overview_files[:5]:  # Check last 5 files
+                try:
+                    with open(overview_file, "r") as f:
+                        data = json.load(f)
+                    
+                    # Check if it's for the same document
+                    if (data.get("document_metadata", {}).get("title") == 
+                        self.toc_data.document_metadata.get("title")):
+                        overview = DocumentOverview(
+                            purpose=data["purpose"],
+                            audience=data["audience"],
+                            concepts=data["concepts"],
+                            summary=data["summary"]
+                        )
+                        self._cached_document_overview = overview
+                        return overview
+                except Exception:
+                    continue
+        
+        # Generate overview if not found
+        console.print("[dim]Generating document overview for context...[/dim]")
+        
+        # Test the prompt to generate overview
+        test_results = await self._test_prompt(self._get_default_prompt())
+        
+        if "error" not in test_results and "final_response" in test_results:
+            response_data = test_results["final_response"]
+            overview = DocumentOverview(**response_data)
+            self._cached_document_overview = overview
+            return overview
+            
+        return None
+    
+    def _prepare_section_terms(self, section: TOCSection) -> str:
+        """Prepare terms found in this section for the QA prompt."""
+        section_terms = []
+        
+        if self.toc_data and self.toc_data.terms:
+            for term_key, mapping in self.toc_data.terms.items():
+                if section.id in mapping.section_ids:
+                    for term_info in mapping.term_infos:
+                        if section.start_page <= term_info.page_found <= section.end_page:
+                            term_str = f"- {term_info.term}"
+                            if term_info.full_form:
+                                term_str += f": {term_info.full_form}"
+                            elif term_info.definition:
+                                term_str += f": {term_info.definition}"
+                            section_terms.append(term_str)
+        
+        return "\n".join(section_terms) if section_terms else "No specific terms found in this section."
+    
+    async def _generate_qa_for_section(self, section: TOCSection) -> Optional[SectionQA]:
+        """Generate Q&A pairs for a specific section."""
+        if not self.qa_consensus:
+            console.print("[red]QA consensus not initialized[/red]")
+            return None
+            
+        # Load the QA generation prompt
+        qa_prompt_file = self.prompt_dir / "qa_generation.txt"
+        if not qa_prompt_file.exists():
+            console.print("[red]QA generation prompt not found[/red]")
+            return None
+            
+        with open(qa_prompt_file, "r") as f:
+            prompt_template = f.read()
+        
+        # Prepare prompt values
+        doc_title = "Unknown"
+        doc_author = "Unknown"
+        if self.toc_data and self.toc_data.document_metadata:
+            doc_title = self.toc_data.document_metadata.get("title", "Unknown")
+            doc_author = self.toc_data.document_metadata.get("author", "Unknown")
+        
+        # Get document overview for context
+        doc_purpose = "Not available"
+        doc_audience = "Not available"
+        overview = await self._get_or_generate_document_overview()
+        if overview:
+            doc_purpose = overview.purpose
+            doc_audience = ", ".join(overview.audience) if overview.audience else "Not specified"
+        
+        section_info = self._prepare_section_info(section)
+        section_terms = self._prepare_section_terms(section)
+        
+        values = {
+            "document_title": doc_title,
+            "document_author": doc_author,
+            "document_purpose": doc_purpose,
+            "document_audience": doc_audience,
+            "section_info": section_info,
+            "section_terms": section_terms,
+        }
+        
+        filled_prompt = self._fill_template(prompt_template, values)
+        
+        # Generate Q&As
+        result = await self.qa_consensus.call(filled_prompt)
+        
+        if result and result.final_response:
+            generated_response = result.final_response
+            
+            # Convert generated Q&As to complete Q&As with metadata
+            complete_qa_pairs = []
+            for qa_gen in generated_response.qa_pairs:
+                complete_qa = QuestionAnswer(
+                    question=qa_gen.question,
+                    answer=qa_gen.answer,
+                    terms=qa_gen.terms,
+                    reasoning=qa_gen.reasoning,
+                    text=qa_gen.text,
+                    # Inject metadata
+                    section_title=section.title,
+                    document=doc_title,
+                    author=doc_author
+                )
+                complete_qa_pairs.append(complete_qa)
+            
+            # Create complete SectionQA with metadata
+            section_qa = SectionQA(
+                section_id=section.id,
+                section_title=section.title,
+                qa_pairs=complete_qa_pairs
+            )
+            
+            return section_qa
+            
+        return None
+    
+    async def _generate_document_qa(self) -> None:
+        """Generate Q&A pairs for all sections in the document."""
+        # Load ToC data if not already loaded
+        if not self.toc_data:
+            if not self._load_toc_data():
+                return
+                
+        console.print("\n[cyan]Generating Q&A Pairs for Document Sections...[/cyan]")
+        
+        all_qa_sections = []
+        
+        # Process each section
+        def get_all_sections(sections: List[TOCSection]) -> List[TOCSection]:
+            """Recursively get all sections including children."""
+            result = []
+            for section in sections:
+                result.append(section)
+                if section.children:
+                    result.extend(get_all_sections(section.children))
+            return result
+        
+        all_sections = get_all_sections(self.toc_data.sections)
+        total_sections = len(all_sections)
+        
+        with console.status(f"Generating Q&As for {total_sections} sections...") as status:
+            for idx, section in enumerate(all_sections):
+                status.update(f"Processing section {idx + 1}/{total_sections}: {section.title}")
+                
+                qa_result = await self._generate_qa_for_section(section)
+                if qa_result:
+                    all_qa_sections.append(qa_result)
+                    console.print(f"[green]✓ Generated {len(qa_result.qa_pairs)} Q&As for: {section.title}[/green]")
+                else:
+                    console.print(f"[yellow]⚠ Failed to generate Q&As for: {section.title}[/yellow]")
+        
+        # Display summary
+        total_qa_pairs = sum(len(qa.qa_pairs) for qa in all_qa_sections)
+        console.print(f"\n[bold green]Generated {total_qa_pairs} Q&A pairs across {len(all_qa_sections)} sections[/bold green]")
+        
+        # Save results
+        if Confirm.ask("\nSave Q&A pairs to file?", default=True):
+            self._save_document_qa(all_qa_sections)
+    
+    def _display_qa_sample(self, qa_sections: List[SectionQA], max_sections: int = 3) -> None:
+        """Display a sample of generated Q&As."""
+        console.print("\n[bold cyan]Sample Q&A Pairs:[/bold cyan]\n")
+        
+        for idx, section_qa in enumerate(qa_sections[:max_sections]):
+            console.print(f"[bold yellow]Section: {section_qa.section_title}[/bold yellow]")
+            
+            for qa_idx, qa_pair in enumerate(section_qa.qa_pairs[:2]):  # Show first 2 Q&As per section
+                console.print(f"\n[cyan]Q{qa_idx + 1}:[/cyan] {qa_pair.question}")
+                console.print(f"[green]A:[/green] {qa_pair.answer[:200]}..." if len(qa_pair.answer) > 200 else f"[green]A:[/green] {qa_pair.answer}")
+                if qa_pair.terms:
+                    console.print(f"[dim]Terms: {', '.join(qa_pair.terms[:3])}{'...' if len(qa_pair.terms) > 3 else ''}[/dim]")
+            
+            if len(section_qa.qa_pairs) > 2:
+                console.print(f"[dim]... and {len(section_qa.qa_pairs) - 2} more Q&As[/dim]")
+            
+            if idx < len(qa_sections) - 1:
+                console.print("\n" + "-" * 80 + "\n")
+    
+    def _save_document_qa(self, qa_sections: List[SectionQA]) -> Path:
+        """Save all Q&A pairs to a JSON file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = Path("output/analysis_responses")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = output_dir / f"document_qa_{timestamp}.json"
+        
+        # Prepare data
+        qa_data = {
+            "generated_at": datetime.now().isoformat(),
+            "document_metadata": self.toc_data.document_metadata if self.toc_data else None,
+            "total_sections_analyzed": len(qa_sections),
+            "total_qa_pairs": sum(len(qa.qa_pairs) for qa in qa_sections),
+            "sections": [qa.model_dump() for qa in qa_sections]
+        }
+        
+        # Save to file
+        with open(output_file, "w") as f:
+            json.dump(qa_data, f, indent=2)
+        
+        console.print(f"\n[green]✓ Q&A pairs saved to: {output_file}[/green]")
+        
+        # Display sample
+        self._display_qa_sample(qa_sections)
+        
+        return output_file
+
     def _generate_toc(self) -> None:
         """Generate the Table of Contents."""
         # Find and load batch files
@@ -1322,6 +1633,7 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
             console.print("\n[bold cyan]Options:[/bold cyan]")
             console.print("1. Generate ToC")
             console.print("2. Document Overview")
+            console.print("3. Q&A Generation")
             console.print("0. Exit")
 
             choice = Prompt.ask("Select option", default="1")
@@ -1332,6 +1644,9 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
                 elif choice == "2":
                     # Enter document overview sub-menu
                     await self._document_overview_menu()
+                elif choice == "3":
+                    # Enter Q&A generation sub-menu
+                    await self._qa_generation_menu()
                 elif choice == "0":
                     break
                 else:
@@ -1341,6 +1656,117 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
                 if Confirm.ask("Show traceback?", default=False):
                     import traceback
 
+                    traceback.print_exc()
+    
+    async def _qa_generation_menu(self) -> bool:
+        """Handle Q&A Generation sub-menu. Returns False to go back to main menu."""
+        while True:
+            console.print("\n[bold cyan]Q&A Generation Options:[/bold cyan]")
+            console.print("1. Generate Q&As for all sections")
+            console.print("2. Generate Q&As for specific section")
+            console.print("3. View saved Q&A files")
+            console.print("4. Jump to saved ToC file")
+            console.print("0. Back to main menu")
+            
+            choice = Prompt.ask("Select option", default="1")
+            
+            try:
+                if choice == "1":
+                    await self._generate_document_qa()
+                elif choice == "2":
+                    # Generate Q&As for specific section
+                    if not self.toc_data:
+                        if not self._load_toc_data():
+                            console.print("[yellow]No ToC data available[/yellow]")
+                            continue
+                    
+                    # Display sections to choose from
+                    def display_sections(sections: List[TOCSection], level: int = 0):
+                        """Display sections with numbering."""
+                        section_list = []
+                        for section in sections:
+                            prefix = "  " * level
+                            section_list.append(section)
+                            console.print(f"{len(section_list)}. {prefix}{section.title} (p{section.start_page}-{section.end_page})")
+                            if section.children:
+                                child_list = display_sections(section.children, level + 1)
+                                section_list.extend(child_list)
+                        return section_list
+                    
+                    console.print("\n[cyan]Available sections:[/cyan]")
+                    all_sections = display_sections(self.toc_data.sections)
+                    
+                    section_num = IntPrompt.ask("Select section (0 to cancel)", default=0)
+                    if section_num > 0 and section_num <= len(all_sections):
+                        selected_section = all_sections[section_num - 1]
+                        console.print(f"\n[cyan]Generating Q&As for: {selected_section.title}[/cyan]")
+                        
+                        qa_result = await self._generate_qa_for_section(selected_section)
+                        if qa_result:
+                            console.print(f"[green]✓ Generated {len(qa_result.qa_pairs)} Q&As[/green]")
+                            self._display_qa_sample([qa_result])
+                            
+                            if Confirm.ask("\nSave Q&A to file?", default=True):
+                                self._save_document_qa([qa_result])
+                        else:
+                            console.print("[red]Failed to generate Q&As[/red]")
+                            
+                elif choice == "3":
+                    # View saved Q&A files
+                    analysis_dir = Path("output/analysis_responses")
+                    qa_files = sorted(
+                        analysis_dir.glob("document_qa_*.json"), reverse=True
+                    )
+                    
+                    if qa_files:
+                        console.print("\n[cyan]Available Q&A files:[/cyan]")
+                        for idx, file in enumerate(qa_files[:10], 1):
+                            console.print(f"{idx}. {file.name}")
+                        
+                        file_num = IntPrompt.ask("Select file to view (0 to cancel)", default=0)
+                        if file_num > 0 and file_num <= len(qa_files):
+                            selected_file = qa_files[file_num - 1]
+                            
+                            with open(selected_file, "r") as f:
+                                qa_data = json.load(f)
+                            
+                            console.print(f"\n[bold cyan]Q&A File: {selected_file.name}[/bold cyan]")
+                            console.print(f"Generated: {qa_data['generated_at']}")
+                            console.print(f"Total Sections: {qa_data['total_sections_analyzed']}")
+                            console.print(f"Total Q&A Pairs: {qa_data['total_qa_pairs']}")
+                            
+                            # Display sample from file
+                            if qa_data.get('sections'):
+                                sample_sections = [SectionQA(**s) for s in qa_data['sections'][:3]]
+                                self._display_qa_sample(sample_sections)
+                    else:
+                        console.print("[yellow]No Q&A files found[/yellow]")
+                        
+                elif choice == "4":
+                    # Jump to a saved ToC file
+                    analysis_dir = Path("output/analysis_responses")
+                    toc_files = sorted(
+                        analysis_dir.glob("table_of_contents_*.json"), reverse=True
+                    )
+                    if toc_files:
+                        console.print("\n[cyan]Available ToC files:[/cyan]")
+                        for idx, file in enumerate(toc_files[:10], 1):
+                            console.print(f"{idx}. {file.name}")
+                        file_num = IntPrompt.ask("Select file (0 to cancel)", default=0)
+                        if file_num > 0 and file_num <= len(toc_files):
+                            selected_file = toc_files[file_num - 1]
+                            self._load_specific_toc(selected_file)
+                    else:
+                        console.print("[yellow]No ToC files found[/yellow]")
+                        
+                elif choice == "0":
+                    return False
+                else:
+                    console.print("[yellow]Invalid option[/yellow]")
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/red]")
+                if Confirm.ask("Show traceback?", default=False):
+                    import traceback
                     traceback.print_exc()
 
 
