@@ -16,11 +16,12 @@ EXTRACT THE FOLLOWING:
    - Classify section type: concept (definitions/terminology), procedure (how-to/steps), requirement (rules/policies), example (samples/cases), data (tables/metrics), narrative (general text)
 
 2. TERMS AND ACRONYMS:
-   - Extract important keywords and technical terms
-   - Identify all acronyms with their full forms
+   - Extract ALL keywords and technical terms
+   - Extract ALL acronyms and their full forms
+   - CRITICAL REQUIREMENT: If you encounter a glossary, definition list, or acronym list, you MUST extract EVERY SINGLE ENTRY without exception
+   - DO NOT select "representative examples" - extract the COMPLETE list
    - Note first occurrence page
    - Provide brief definitions where applicable
-
 
 3. CONTENT SUMMARY:
    - Provide a brief paragraph summarizing what this batch covers
@@ -43,3 +44,17 @@ EXTRACT THE FOLLOWING:
     Level 2 subsection is a child of the Level 1.
 
 Provide a structured technical analysis of these pages.
+
+GLOSSARY/ACRONYM LIST EXAMPLES:
+
+Example 1 - Medical Document:
+If you encounter: "MRI: Magnetic Resonance Imaging, CT: Computed Tomography, ECG: Electrocardiogram, ICU: Intensive Care Unit, OR: Operating Room"
+You must extract ALL 5 terms, not just MRI and CT.
+
+Example 2 - Software Documentation:
+If you see: "API: Application Programming Interface, SDK: Software Development Kit, CLI: Command Line Interface, GUI: Graphical User Interface, REST: Representational State Transfer, JSON: JavaScript Object Notation, XML: Extensible Markup Language"
+You must extract ALL 7 terms, not a subset.
+
+Example 3 - Educational Material:
+If the page lists: "STEM: Science Technology Engineering Mathematics, GPA: Grade Point Average, SAT: Scholastic Assessment Test, AP: Advanced Placement, ESL: English as Second Language"
+Extract ALL 5 terms completely.

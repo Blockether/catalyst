@@ -78,6 +78,13 @@ class Section(BaseModelWithReasoning):
         comparison=ComparisonStrategy.EXACT
     )
 
+    reasoning: str = VotingField(
+        min_length=30,
+        comparison=ComparisonStrategy.IGNORE,
+        threshold=0.80,
+        description="Brief reason for this classification"
+    )
+
 class TermType(str, Enum):
     """Type of term identified."""
     ACRONYM = "acronym"
@@ -92,13 +99,20 @@ class TermCandidate(BaseModelWithReasoning):
     definition: Optional[str] = VotingField(comparison=ComparisonStrategy.EXACT,
                                             default=None, description="Brief definition of a term")
     page_found: int = VotingField(comparison=ComparisonStrategy.EXACT, description="Page where found")
+    
+    reasoning: str = VotingField(
+        min_length=20,
+        comparison=ComparisonStrategy.IGNORE,
+        threshold=0.80,
+        description="Brief reason for extracting this term"
+    )
 
 
 class Concept(BaseModelWithReasoning):
     """A key concept or idea the LLM found."""
     concept: str = VotingField(
         description="The concept text", comparison=ComparisonStrategy.EXACT,
-        min_length=150
+        min_length=50  # Reduced from 150
     )
     context: Optional[str] = VotingField(
         default=None, description="Context or explanation", comparison=ComparisonStrategy.SEMANTIC,
@@ -106,6 +120,13 @@ class Concept(BaseModelWithReasoning):
     )
     page_found: int = VotingField(
         description="Page where found", comparison=ComparisonStrategy.EXACT
+    )
+    
+    reasoning: str = VotingField(
+        min_length=30,
+        comparison=ComparisonStrategy.IGNORE,
+        threshold=0.80,
+        description="Brief reason for identifying this concept"
     )
 
 
