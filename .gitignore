@@ -13,6 +13,7 @@ src/com_blockether_catalyst.egg-info
 .coverage
 site
 input
+output
 public
 .lsp
 *.log
