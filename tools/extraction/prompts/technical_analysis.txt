@@ -16,10 +16,11 @@ EXTRACT THE FOLLOWING:
    - Classify section type: concept (definitions/terminology), procedure (how-to/steps), requirement (rules/policies), example (samples/cases), data (tables/metrics), narrative (general text)
 
 2. TERMS AND ACRONYMS:
-   - Extract ALL keywords and technical terms
+   - Extract ALL keywords and technical terms (do not be selective)
    - Extract ALL acronyms and their full forms
    - CRITICAL REQUIREMENT: If you encounter a glossary, definition list, or acronym list, you MUST extract EVERY SINGLE ENTRY without exception
    - DO NOT select "representative examples" - extract the COMPLETE list
+   - If there are 50 acronyms in a glossary, you must return all 50
    - Note first occurrence page
    - Provide brief definitions where applicable
 
