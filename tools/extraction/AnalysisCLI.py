@@ -1238,45 +1238,34 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
                 f"\n[green]✓ Table of Contents saved to: {output_file}[/green]"
             )
 
-    async def run(self) -> None:
-        """Main CLI loop."""
-        console.print(
-            Panel.fit(
-                "[bold cyan]Table of Contents Generator[/bold cyan]\n"
-                f"Output Directory: {self.output_dir}",
-                title="TOC Generator",
-            )
-        )
-
+    async def _document_overview_menu(self) -> bool:
+        """Handle Document Overview sub-menu. Returns False to go back to main menu."""
         while True:
-            console.print("\n[bold cyan]Options:[/bold cyan]")
-            console.print("1. Generate ToC")
-            console.print("2. Generate Document Overview")
-            console.print("3. View current prompt template")
-            console.print("4. Test current prompt")
-            console.print("5. Jump to saved file")
-            console.print("6. Refine prompt")
-            console.print("7. Manually edit prompt")
-            console.print("8. Save refined prompt")
+            console.print("\n[bold cyan]Document Overview Options:[/bold cyan]")
+            console.print("1. Generate overview")
+            console.print("2. View current prompt template")
+            console.print("3. Test current prompt")
+            console.print("4. Jump to saved file")
+            console.print("5. Refine prompt")
+            console.print("6. Manually edit prompt")
+            console.print("7. Save refined prompt")
             console.print("f. View filled prompt for current batch")
             console.print("v. View saved response files")
             console.print("c. Compare prompts (current vs saved)")
             console.print("d. View consensus disagreements (diffs)")
-            console.print("0. Exit")
-
+            console.print("0. Back to main menu")
+            
             choice = Prompt.ask("Select option", default="1")
-
+            
             try:
                 if choice == "1":
-                    self._generate_toc()
-                elif choice == "2":
                     await self._generate_document_overview()
-                elif choice == "3":
+                elif choice == "2":
                     self._view_prompt()
-                elif choice == "4":
+                elif choice == "3":
                     results = await self._test_prompt(self.prompt_template)
                     self._display_test_results(results)
-                elif choice == "5":
+                elif choice == "4":
                     # Jump to a saved ToC file
                     analysis_dir = Path("output/analysis_responses")
                     toc_files = sorted(
@@ -1292,11 +1281,11 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
                             self._load_specific_toc(selected_file)
                     else:
                         console.print("[yellow]No ToC files found[/yellow]")
-                elif choice == "6":
+                elif choice == "5":
                     await self._refine_prompt_with_principles()
-                elif choice == "7":
+                elif choice == "6":
                     self._manual_edit()
-                elif choice == "8":
+                elif choice == "7":
                     self._save_prompt_template(self.prompt_template)
                 elif choice.lower() == "f":
                     self._view_filled_prompt()
@@ -1306,6 +1295,40 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
                     self._compare_prompts_with_previous()
                 elif choice.lower() == "d":
                     self._view_consensus_disagreements()
+                elif choice == "0":
+                    return False
+                else:
+                    console.print("[yellow]Invalid option[/yellow]")
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/red]")
+                if Confirm.ask("Show traceback?", default=False):
+                    import traceback
+                    traceback.print_exc()
+
+    async def run(self) -> None:
+        """Main CLI loop."""
+        console.print(
+            Panel.fit(
+                "[bold cyan]Table of Contents Generator[/bold cyan]\n"
+                f"Output Directory: {self.output_dir}",
+                title="TOC Generator",
+            )
+        )
+
+        while True:
+            console.print("\n[bold cyan]Options:[/bold cyan]")
+            console.print("1. Generate ToC")
+            console.print("2. Document Overview")
+            console.print("0. Exit")
+
+            choice = Prompt.ask("Select option", default="1")
+
+            try:
+                if choice == "1":
+                    self._generate_toc()
+                elif choice == "2":
+                    # Enter document overview sub-menu
+                    await self._document_overview_menu()
                 elif choice == "0":
                     break
                 else:
