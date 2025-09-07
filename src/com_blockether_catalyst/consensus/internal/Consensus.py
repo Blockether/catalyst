@@ -50,6 +50,7 @@ from .ConsensusTypes import (
     TypedCallBaseForConsensus,
     VerbosityLevel,
 )
+from .VotingComparison import ComparisonStrategy, FieldComparator
 
 # Type variable for structured outputs
 T = TypeVar("T", bound=TypedCallBaseForConsensus)
@@ -1044,6 +1045,14 @@ Provide a response in the same JSON format as the tied responses above.
 
         analysis = DisagreementAnalysis()
 
+        # Get field information from the first response's model class
+        if responses and responses[0].content:
+            model_class = responses[0].content.__class__
+            model_fields = model_class.model_fields
+        else:
+            # If no responses, return empty analysis
+            return analysis
+
         # Collect all field values as strings
         field_values: DefaultDict[str, List[str]] = defaultdict(list)
         for response in responses:
@@ -1053,6 +1062,15 @@ Provide a response in the same JSON format as the tied responses above.
 
         # Analyze each field
         for field, values in field_values.items():
+            # Check if field should be ignored based on ComparisonStrategy
+            field_info = model_fields.get(field)
+            if field_info:
+                # Extract voting metadata using the helper method
+                voting_meta = FieldComparator._extract_voting_metadata(field_info)
+                if voting_meta.strategy == ComparisonStrategy.IGNORE:
+                    # Skip this field in disagreement analysis
+                    continue
+
             unique_values = list(set(values))
 
             if len(unique_values) == 1:
