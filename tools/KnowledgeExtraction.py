@@ -23,24 +23,18 @@ import instructor
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from com_blockether_catalyst.consensus import ConsensusCore, ConsensusSettings
-from com_blockether_catalyst.consensus.internal.ConsensusTypes import ConsensusResult
+from com_blockether_catalyst.consensus import ConsensusCore, ConsensusSettings, ConsensusResult
+
 from com_blockether_catalyst.knowledge import (
-    KnowledgeExtractionCore,
-)
-from com_blockether_catalyst.knowledge.internal import (
-    ChunkingDecision,
-    KnowledgeProcessorSettings,
-)
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionCallBase import (
     BaseAcronymExtractionCall,
     BaseKeywordExtractionCall,
     BaseChunkingCall,
     BaseChunkAcronymExtractionCall,
     BaseChunkKeywordExtractionCall,
-)
-# Import from base types
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionBaseTypes import (
+    ExtractionCallsSettings,
+    ChunkingDecision,
+    KnowledgeProcessorSettings,
+    KnowledgeExtractionCore,
     AcronymMeaningExtractionResponse,
     ChunkAcronymExtractionResponse,
     ChunkKeywordExtractionResponse,
@@ -48,12 +42,11 @@ from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionBaseTypes imp
     KeywordMeaningExtractionResponse,
     KnowledgeMetadata,
     KnowledgePageData,
-)
-# Import from main types
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionTypes import (
     TermCooccurrence,
+    PDFKnowledgeProcessorSettings,
+    PDFPageCropOffset
 )
-from com_blockether_catalyst.knowledge.internal.PDKnowledgeExtractorTypes import PDFPageCropOffset
+
 from com_blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
 # Type variable for response types
@@ -167,7 +160,6 @@ Contexts where the term appears:
         return prompt
 
 
-
 class ConsensusKeywordValidationExtractor(BaseKeywordExtractionCall):
     """
     Consensus-based keyword validation extractor that validates and extracts meanings from keyword candidates.
@@ -233,7 +225,6 @@ Contexts where the term appears:
         return prompt
 
 
-
 class ConsensusChunkingExtractor(BaseChunkingCall):
     """
     Consensus-based chunking extractor that uses multiple models for document segmentation.
@@ -293,7 +284,6 @@ Please split this text into logical, self-contained chunks that:
 Return a ChunkingDecision with the chunks."""
 
         return prompt
-
 
 
 class ConsensusChunkAcronymDiscoveryExtractor(BaseChunkAcronymExtractionCall):
@@ -358,7 +348,6 @@ For each acronym found:
 Return a list of acronyms with their full forms and rationale."""
 
         return prompt
-
 
 
 class ConsensusChunkKeywordDiscoveryExtractor(BaseChunkKeywordExtractionCall):
@@ -427,7 +416,6 @@ Avoid common words unless they have special meaning in this context.
 Return a list of keywords with rationale for each."""
 
         return prompt
-
 
 
 class KnowledgeExtraction:
@@ -739,16 +727,16 @@ class KnowledgeExtraction:
         2. Configures KnowledgeProcessorSettings with all required parameters
         3. Initializes the KnowledgeExtractionCore with the settings
         """
-        # Create validation extractors (for meaning extraction)
-        acronym_validation_extractor = self._create_acronym_validation_extractor()
-        keyword_validation_extractor = self._create_keyword_validation_extractor()
+        # Create extraction calls (for meaning extraction)
+        acronym_extraction_call = self._create_acronym_validation_extractor()
+        keyword_extraction_call = self._create_keyword_validation_extractor()
 
-        # Create discovery extractors (for finding candidates in chunks)
-        chunk_acronym_discovery_extractor = self._create_chunk_acronym_discovery_extractor()
-        chunk_keyword_discovery_extractor = self._create_chunk_keyword_discovery_extractor()
+        # Create chunk extraction calls (for finding candidates in chunks)
+        chunk_acronym_extraction_call = self._create_chunk_acronym_discovery_extractor()
+        chunk_keyword_extraction_call = self._create_chunk_keyword_discovery_extractor()
 
-        # Create chunking extractor
-        chunking_extractor = self._create_chunking_extractor()
+        # Create chunking call
+        chunking_call = self._create_chunking_extractor()
 
         # Log setup info
         self.logger.info("🧠 Setting up intelligent chunking with 3-model consensus")
@@ -756,18 +744,12 @@ class KnowledgeExtraction:
         # Create settings with all required extractors (validation and discovery)
         settings = KnowledgeProcessorSettings(
             extraction_output_dir=self.output_dir,
-            pdf_page_crop_offset=PDFPageCropOffset(
-                top=48,
-                bottom=48
+            pdf_settings=PDFKnowledgeProcessorSettings(
+                pdf_page_crop_offset=PDFPageCropOffset(
+                    top=48,
+                    bottom=48
+                )
             ),
-            # Validation extractors (for meaning extraction from candidates)
-            acronym_extraction_call=acronym_validation_extractor,
-            keyword_extraction_call=keyword_validation_extractor,
-            # Discovery extractors (for finding candidates in chunks)
-            chunk_acronym_extraction_call=chunk_acronym_discovery_extractor,
-            chunk_keyword_extraction_call=chunk_keyword_discovery_extractor,
-            # Document processing
-            chunking_call=chunking_extractor,
             min_term_score=0.0,
             linking_threshold=0.65,
             max_display_occurrences=15,
@@ -775,7 +757,16 @@ class KnowledgeExtraction:
         )
 
         # Create knowledge extractor with settings
-        self.extractor = KnowledgeExtractionCore(settings=settings)
+        self.extractor = KnowledgeExtractionCore(
+            calls=ExtractionCallsSettings(
+                acronym_extraction_call=acronym_extraction_call,
+                keyword_extraction_call=keyword_extraction_call,
+                chunking_call=chunking_call,
+                chunk_acronym_extraction_call=chunk_acronym_extraction_call,
+                chunk_keyword_extraction_call=chunk_keyword_extraction_call
+            ),
+            settings=settings
+        )
 
     async def extract(self) -> None:
         """

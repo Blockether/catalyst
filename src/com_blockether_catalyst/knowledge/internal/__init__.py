@@ -19,6 +19,7 @@ from .KnowledgeExtractionCallBase import (
     BaseChunkingCall,
     BaseChunkKeywordExtractionCall,
     BaseKeywordExtractionCall,
+    ExtractionCallsSettings,
 )
 
 # Import from main types
@@ -31,6 +32,9 @@ from .KnowledgeExtractionTypes import (
     KnowledgeExtractionResultWithChunks,
     KnowledgePageDataWithRawText,
     KnowledgeProcessorSettings,
+    LinkedKnowledge,
+    Term,
+    TermLink,
     TermOccurrence,
 )
 
@@ -39,12 +43,13 @@ try:
     from .PDFKnowledgeExtractor import PDFKnowledgeExtractor
     from .PDKnowledgeExtractorTypes import (
         PDFImageProcessingSettings,
+        PDFKnowledgeProcessorSettings,
         PDFPageCropOffset,
         PDFProcessorTableExtractionSettings,
         PDFProcessorTextExtractionSettings,
     )
 
-    _PDF_AVAILABLE = True
+    PDF_AVAILABLE = True
 except ImportError:
     # PDF extraction dependencies not available
     PDFKnowledgeExtractor = None  # type: ignore
@@ -52,7 +57,7 @@ except ImportError:
     PDFPageCropOffset = None  # type: ignore
     PDFProcessorTableExtractionSettings = None  # type: ignore
     PDFProcessorTextExtractionSettings = None  # type: ignore
-    _PDF_AVAILABLE = False
+    PDF_AVAILABLE = False
 
 # Core exports (always available)
 __all__ = [
@@ -73,6 +78,9 @@ __all__ = [
     "AgenticChunkingRequest",
     "ChunkingDecision",
     "ChunkOutput",
+    "LinkedKnowledge",
+    "Term",
+    "TermLink",
     "BaseAcronymExtractionCall",
     "BaseChunkAcronymExtractionCall",
     "BaseChunkKeywordExtractionCall",
@@ -82,10 +90,12 @@ __all__ = [
     "ChunkKeywordExtractionResponse",
     "ExtractedAcronym",
     "ExtractedKeyword",
+    "PDF_AVAILABLE",
+    "ExtractionCallsSettings",
 ]
 
 # Add PDF-related exports if available
-if _PDF_AVAILABLE:
+if PDF_AVAILABLE:
     __all__.extend(
         [
             "PDFKnowledgeExtractor",
@@ -93,5 +103,6 @@ if _PDF_AVAILABLE:
             "PDFPageCropOffset",
             "PDFProcessorTableExtractionSettings",
             "PDFProcessorTextExtractionSettings",
+            "PDFKnowledgeProcessorSettings",
         ]
     )

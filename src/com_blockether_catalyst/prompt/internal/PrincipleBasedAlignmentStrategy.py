@@ -131,6 +131,9 @@ class PrincipleBasedAlignmentStrategy:
         issue_lower = issue.lower()
 
         if "lacks" in issue_lower:
+            # Handle both "lacks" and "Lacks" cases
+            if "Lacks" in issue:
+                return issue.replace("Lacks", "should include")
             return issue.replace("lacks", "should include")
         elif "missing" in issue_lower:
             # Preserve original case when replacing

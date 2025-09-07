@@ -56,7 +56,7 @@ class PDFKnowledgeExtractor:
         self.settings = settings
         self.table_settings = settings.pdf_table_extraction or PDFProcessorTableExtractionSettings()
         self.text_extraction_settings = settings.pdf_text_extraction or PDFProcessorTextExtractionSettings()
-        self.pdf_image_processing = settings.pdf_image_processing or PDFImageProcessingSettings()
+        self.pdf_image_processing_settings = settings.pdf_image_processing or PDFImageProcessingSettings()
         self.ocr_reader: Optional[Any] = None
 
         # Initialize OCR if needed

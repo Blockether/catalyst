@@ -152,11 +152,36 @@ class Consensus(
         # Log initial round metrics
         self._log_round_metrics(initial_round, 0)
 
-        # Log initial responses
+        # Log initial responses with detail based on verbosity
         if initial_round.responses:
             logger.info(f"📝 Initial responses ({len(initial_round.responses)} models):")
-            for i, resp in enumerate(initial_round.responses, 1):
-                logger.info(f"  {i}. {resp.id}: {str(resp.content)}")
+            if self._settings.verbosity == VerbosityLevel.VERBOSE:
+                # Show detailed initial responses
+                for i, resp in enumerate(initial_round.responses, 1):
+                    logger.info(f"  {i}. Model: {resp.id}")
+                    # Show key fields if structured
+                    content_dict = resp.content.model_dump()
+                    for key, value in list(content_dict.items())[:5]:  # Show first 5 fields
+                        # Skip ignored fields in display
+                        field_info = resp.content.__class__.model_fields.get(key)
+                        if field_info:
+                            voting_meta = FieldComparator._extract_voting_metadata(field_info)
+                            if voting_meta.strategy == ComparisonStrategy.IGNORE:
+                                continue
+
+                        value_wrapped = self._wrap_text_for_logging(str(value), max_length=70, indent=8)
+                        lines = value_wrapped.split("\n")
+                        logger.info(f"      • {key}: {lines[0]}")
+                        for line in lines[1:]:
+                            logger.info(f"        {line}")
+                    if len(content_dict) > 5:
+                        logger.info(f"      ... and {len(content_dict) - 5} more fields")
+            else:
+                # Normal verbosity - just show summary
+                for i, resp in enumerate(initial_round.responses, 1):
+                    summary = self._wrap_text_for_logging(str(resp.content), max_length=120, indent=0)
+                    summary_line = summary.split("\n")[0][:120] + "..."
+                    logger.info(f"  {i}. {resp.id}: {summary_line}")
 
         # Check for early consensus
         if await self._check_consensus(initial_round, convergence_threshold):
@@ -173,11 +198,12 @@ class Consensus(
         for round_num in range(1, max_rounds):
             logger.info(f"🔄 === CONSENSUS ROUND {round_num} ===")
 
-            # Log current responses from previous round
-            if rounds and rounds[-1].responses:
+            # Log current responses from previous round with detail based on verbosity
+            if rounds and rounds[-1].responses and self._settings.verbosity == VerbosityLevel.VERBOSE:
                 logger.info(f"📝 Current responses ({len(rounds[-1].responses)} models):")
                 for i, resp in enumerate(rounds[-1].responses, 1):
-                    logger.info(f"  {i}. {resp.id}: {resp.content}")
+                    content_str = str(resp.content)[:200] + "..." if len(str(resp.content)) > 200 else str(resp.content)
+                    logger.info(f"  {i}. {resp.id}: {content_str}")
 
             logger.debug(f"Executing consensus round {round_num}")
 
@@ -415,11 +441,20 @@ Peer Model Responses:
             prompt += "\n## KEY INSIGHTS:\n"
 
             if analysis.consensus_fields:
-                prompt += f"✓ Consensus reached on: {', '.join(analysis.consensus_fields[:5])}\n"
+                # Filter out any IGNORED fields from consensus display
+                relevant_consensus = [
+                    f for f in analysis.consensus_fields if f != "reasoning"
+                ]  # reasoning is always ignored
+                if relevant_consensus:
+                    prompt += f"✓ Consensus reached on: {', '.join(relevant_consensus[:5])}\n"
 
             if analysis.disagreement_fields:
-                disagreement_field_names = list(analysis.disagreement_fields.keys())[:3]
-                prompt += f"⚠ Fields with disagreement: {', '.join(disagreement_field_names)}\n"
+                # Only show non-ignored fields in disagreements
+                # Note: IGNORED fields should already be filtered out in _analyze_disagreements
+                # but we double-check here for safety
+                disagreement_field_names = [f for f in analysis.disagreement_fields.keys() if f != "reasoning"][:3]
+                if disagreement_field_names:
+                    prompt += f"⚠ Fields with disagreement: {', '.join(disagreement_field_names)}\n"
 
         # Add consensus status concisely
         if previous_round:
@@ -1039,7 +1074,7 @@ Provide a response in the same JSON format as the tied responses above.
         self,
         responses: List[ModelResponse[T]],
     ) -> DisagreementAnalysis:
-        """Analyze disagreements between responses."""
+        """Analyze disagreements between responses with detailed comparison."""
         if not responses:
             return DisagreementAnalysis()
 
@@ -1053,12 +1088,19 @@ Provide a response in the same JSON format as the tied responses above.
             # If no responses, return empty analysis
             return analysis
 
-        # Collect all field values as strings
+        # Collect all field values with model IDs for traceability
         field_values: DefaultDict[str, List[str]] = defaultdict(list)
+        field_values_with_models: DefaultDict[str, List[tuple[str, str]]] = defaultdict(list)
+
         for response in responses:
             response_dict = response.content.model_dump()
             for field, value in response_dict.items():
-                field_values[field].append(str(value))
+                str_value = str(value)
+                field_values[field].append(str_value)
+                field_values_with_models[field].append((response.id, str_value))
+
+        # Track ignored fields for logging
+        ignored_fields = []
 
         # Analyze each field
         for field, values in field_values.items():
@@ -1069,6 +1111,9 @@ Provide a response in the same JSON format as the tied responses above.
                 voting_meta = FieldComparator._extract_voting_metadata(field_info)
                 if voting_meta.strategy == ComparisonStrategy.IGNORE:
                     # Skip this field in disagreement analysis
+                    ignored_fields.append(field)
+                    if self._settings.verbosity == VerbosityLevel.VERBOSE:
+                        logger.debug(f"    ⊘ Field '{field}' is IGNORED for consensus (strategy=IGNORE)")
                     continue
 
             unique_values = list(set(values))
@@ -1077,10 +1122,175 @@ Provide a response in the same JSON format as the tied responses above.
                 # Consensus on this field
                 analysis.consensus_fields.append(field)
             else:
-                # Disagreement on this field
+                # Disagreement on this field (but only for fields that matter)
                 analysis.disagreement_fields[field] = values
 
+                # Log detailed comparison if verbose
+                if self._settings.verbosity == VerbosityLevel.VERBOSE:
+                    self._log_field_disagreement_details(field, field_values_with_models[field])
+
         return analysis
+
+    def _wrap_text_for_logging(self, text: str, max_length: int = 80, indent: int = 0) -> str:
+        """Wrap text for readable logging output.
+
+        Args:
+            text: Text to wrap
+            max_length: Maximum line length
+            indent: Number of spaces to indent wrapped lines
+
+        Returns:
+            Wrapped text with proper indentation
+        """
+        import textwrap
+
+        # First line doesn't need indent, subsequent lines do
+        wrapper = textwrap.TextWrapper(
+            width=max_length,
+            subsequent_indent=" " * indent,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+
+        # Handle multiline text
+        lines = text.split("\n")
+        wrapped_lines = []
+        for line in lines:
+            if len(line) <= max_length:
+                wrapped_lines.append(line)
+            else:
+                wrapped_lines.extend(wrapper.wrap(line))
+
+        return "\n".join(wrapped_lines)
+
+    def _log_field_disagreement_details(self, field: str, values_with_models: List[tuple[str, str]]) -> None:
+        """Log detailed disagreement information for a specific field with semantic similarity."""
+        unique_values: Dict[str, List[str]] = {}
+        for model_id, value in values_with_models:
+            if value not in unique_values:
+                unique_values[value] = []
+            unique_values[value].append(model_id)
+
+        # Only log if we have reasonable number of unique values
+        if len(unique_values) <= 5:
+            logger.debug(f"      Detailed disagreement for '{field}':")
+
+            # Show which models said what
+            for value, models in unique_values.items():
+                # Wrap long text for better readability
+                display_value = self._wrap_text_for_logging(value, max_length=80, indent=10)
+                models_str = ", ".join(models)
+                logger.debug(f"        • Value by {models_str}:")
+                for line in display_value.split("\n"):
+                    logger.debug(f"          {line}")
+
+            # Calculate and show semantic similarity matrix if we have 2-5 unique values
+            if 2 <= len(unique_values) <= 5:
+                self._log_similarity_matrix(field, list(unique_values.keys()))
+
+    def _log_similarity_matrix(self, field: str, unique_values: List[str]) -> None:
+        """Log a pairwise semantic similarity matrix for unique values."""
+        try:
+            import numpy as np
+
+            # Get embeddings for all values
+            embeddings = []
+            for value in unique_values:
+                truncated = value[:1000] if len(value) > 1000 else value
+                embedding = EncoderCore.encode_single(truncated)
+                embeddings.append(embedding)
+
+            # Calculate pairwise similarity matrix
+            n = len(embeddings)
+            similarity_matrix = np.zeros((n, n))
+
+            for i in range(n):
+                for j in range(n):
+                    if i == j:
+                        similarity_matrix[i][j] = 1.0
+                    else:
+                        # Cosine similarity
+                        similarity = np.dot(embeddings[i], embeddings[j]) / (
+                            np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[j])
+                        )
+                        similarity_matrix[i][j] = similarity
+
+            # Log the similarity matrix
+            logger.info(f"      Semantic Similarity Matrix for '{field}':")
+
+            # Create a visual representation
+            for i, val1 in enumerate(unique_values):
+                similarities = []
+                for j, val2 in enumerate(unique_values):
+                    if i != j:
+                        sim = similarity_matrix[i][j]
+                        # Create visual indicator
+                        if sim >= 0.8:
+                            indicator = "≈≈≈"  # Very similar
+                        elif sim >= 0.6:
+                            indicator = "≈≈ "  # Moderately similar
+                        elif sim >= 0.4:
+                            indicator = "≈  "  # Somewhat similar
+                        else:
+                            indicator = "≠  "  # Different
+
+                        # Wrap the compared value for readability
+                        val2_wrapped = self._wrap_text_for_logging(val2, max_length=50, indent=0)
+                        val2_preview = val2_wrapped.split("\n")[0]  # First line only for preview
+                        if len(val2) > 50:
+                            val2_preview += "..."
+                        similarities.append(f"{indicator} {sim:.2f} to: {val2_preview}")
+
+                # Wrap the main value
+                val1_wrapped = self._wrap_text_for_logging(val1, max_length=60, indent=8)
+                logger.info("        Value:")
+                for line in val1_wrapped.split("\n"):
+                    logger.info(f"          {line}")
+                logger.info("        Similarities:")
+                for sim_str in similarities:
+                    logger.info(f"          {sim_str}")
+
+            # Check for semantic clusters
+            self._identify_semantic_clusters(unique_values, similarity_matrix)
+
+        except Exception as e:
+            logger.debug(f"Could not compute similarity matrix: {e}")
+
+    def _identify_semantic_clusters(self, unique_values: List[str], similarity_matrix: Any) -> None:
+        """Identify and log semantic clusters in the values."""
+        import numpy as np
+
+        # Find clusters (values with similarity > 0.7)
+        clusters = []
+        used = set()
+
+        for i in range(len(unique_values)):
+            if i in used:
+                continue
+
+            cluster = [i]
+            for j in range(i + 1, len(unique_values)):
+                if j not in used and similarity_matrix[i][j] >= 0.7:
+                    cluster.append(j)
+                    used.add(j)
+
+            if len(cluster) > 1:
+                used.add(i)
+                clusters.append(cluster)
+
+        if clusters:
+            logger.info("      🔗 Semantic Clusters Detected:")
+            for cluster_idx, cluster in enumerate(clusters, 1):
+                logger.info(f"        Cluster {cluster_idx}: {len(cluster)} semantically similar values")
+                for idx in cluster:
+                    val = unique_values[idx]
+                    wrapped_val = self._wrap_text_for_logging(val, max_length=65, indent=12)
+                    lines = wrapped_val.split("\n")
+                    logger.info(f"          • {lines[0]}")
+                    for line in lines[1:]:
+                        logger.info(f"            {line}")
+                avg_sim = np.mean([similarity_matrix[cluster[0]][j] for j in cluster[1:]])
+                logger.info(f"          Average similarity: {avg_sim:.2%}")
 
     async def _execute_with_concurrency_limit(
         self,
@@ -1164,6 +1374,183 @@ Provide a response in the same JSON format as the tied responses above.
         # T is bound to TypedCallBaseForConsensus which has get_voting_key method
         return content.get_voting_key()
 
+    def _calculate_field_similarity(self, values: List[str]) -> float:
+        """Calculate semantic similarity score for a set of field values.
+
+        Returns a score between 0 (completely different) and 1 (identical).
+        Uses semantic embeddings to determine actual similarity between values.
+        """
+        if not values or len(values) == 1:
+            return 1.0
+
+        unique_values = list(set(values))
+        if len(unique_values) == 1:
+            return 1.0
+
+        # Use semantic similarity for text values
+        try:
+            # Get embeddings for all unique values
+            embeddings = []
+            for value in unique_values:
+                # Truncate very long values for embedding
+                truncated = value[:1000] if len(value) > 1000 else value
+                embedding = EncoderCore.encode_single(truncated)
+                embeddings.append(embedding)
+
+            # Calculate pairwise similarities
+            import numpy as np
+
+            similarities = []
+            for i in range(len(embeddings)):
+                for j in range(i + 1, len(embeddings)):
+                    # Cosine similarity
+                    similarity = np.dot(embeddings[i], embeddings[j]) / (
+                        np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[j])
+                    )
+                    similarities.append(similarity)
+
+            if similarities:
+                # Average similarity across all pairs
+                avg_similarity = float(np.mean(similarities))
+
+                # Weight by how many models agree
+                # If most models agree on one value, boost the score
+                value_counts = Counter(values)
+                max_count = max(value_counts.values())
+                agreement_ratio = max_count / len(values)
+
+                # Combine semantic similarity with agreement ratio
+                # If values are semantically similar OR most models agree, score is high
+                final_score = max(avg_similarity, agreement_ratio * 0.8)
+
+                return final_score
+
+        except Exception as e:
+            logger.debug(f"Semantic similarity calculation failed, using basic method: {e}")
+
+        # Fallback to basic calculation
+        similarity = 1.0 - ((len(unique_values) - 1) / len(values))
+        return similarity
+
+    def _log_field_similarities(self, round: ConsensusRound[T]) -> None:
+        """Log detailed field similarity analysis for verbose output."""
+        if not round.responses or not round.disagreement_analysis:
+            return
+
+        logger.info("  Field Similarity Analysis:")
+
+        # Calculate similarity for each field with semantic details
+        field_similarities: Dict[str, tuple[float, str]] = {}
+
+        for field, values in round.disagreement_analysis.disagreement_fields.items():
+            similarity = self._calculate_field_similarity(values)
+
+            # Determine if values are semantically similar despite being textually different
+            unique_values = len(set(values))
+            semantic_note = ""
+            if unique_values > 1 and similarity >= 0.7:
+                semantic_note = " (semantically aligned)"
+            elif unique_values > 1 and similarity >= 0.5:
+                semantic_note = " (partially aligned)"
+            elif unique_values == 1:
+                semantic_note = " (identical)"
+
+            field_similarities[field] = (similarity, semantic_note)
+
+        # Sort fields by similarity (lowest first - most disagreement)
+        sorted_fields = sorted(field_similarities.items(), key=lambda x: x[0][1])
+
+        for field, (similarity, note) in sorted_fields:
+            # Create visual indicator
+            bar_length = int(similarity * 20)
+            bar = "█" * bar_length + "░" * (20 - bar_length)
+
+            # Determine status emoji based on semantic similarity
+            if similarity >= 0.8:
+                status = "✓"  # High agreement (semantic or textual)
+            elif similarity >= 0.5:
+                status = "~"  # Moderate agreement
+            else:
+                status = "✗"  # Low agreement
+
+            logger.info(f"    {status} {field}: [{bar}] {similarity:.2%}{note}")
+
+        # Log consensus progress visualization
+        self._log_consensus_progress_visual(round)
+
+    def _log_consensus_progress_visual(self, round: ConsensusRound[T]) -> None:
+        """Log visual representation of consensus progress."""
+        if not round.responses:
+            return
+
+        # Create model voting visualization
+        logger.info("  Model Voting Alignment:")
+
+        # Group models by their votes
+        vote_groups: Dict[str, List[str]] = {}
+        for response in round.responses:
+            vote_key = self._get_voting_key_from_content(response.content)
+            if vote_key not in vote_groups:
+                vote_groups[vote_key] = []
+            vote_groups[vote_key].append(response.id)
+
+        # Sort groups by size (largest first)
+        sorted_groups = sorted(vote_groups.items(), key=lambda x: len(x[1]), reverse=True)
+
+        # Visualize voting alignment
+        total_models = len(round.responses)
+        for i, (vote_key, models) in enumerate(sorted_groups):
+            percentage = (len(models) / total_models) * 100
+            bar_length = int(percentage / 5)  # Scale to 20 chars max
+            bar = "▓" * bar_length + "░" * (20 - bar_length)
+
+            # Create model list string
+            model_list = ", ".join(models[:3])
+            if len(models) > 3:
+                model_list += f", +{len(models) - 3} more"
+
+            logger.info(f"    Group {i + 1} [{bar}] {percentage:.1f}% ({len(models)} models): {model_list}")
+            logger.info(f"      Vote hash: {vote_key}")
+
+        # Show convergence trend if we have evolution data
+        if hasattr(self, "_response_evolution_tracking") and self._response_evolution_tracking:
+            self._log_evolution_trends(round)
+
+    def _log_evolution_trends(self, round: ConsensusRound[T]) -> None:
+        """Log how models are evolving their responses."""
+        logger.info("  Response Evolution Trends:")
+
+        # Count models that changed votes vs stayed same
+        changed_count = 0
+        stayed_count = 0
+
+        for evolutions in self._response_evolution_tracking.values():
+            for evolution in evolutions:
+                if evolution.round_to == round.round_number:
+                    if evolution.vote_changed:
+                        changed_count += 1
+                    else:
+                        stayed_count += 1
+
+        if changed_count + stayed_count > 0:
+            change_percentage = (changed_count / (changed_count + stayed_count)) * 100
+            logger.info(
+                f"    Vote changes: {changed_count} models changed ({change_percentage:.1f}%), {stayed_count} stayed"
+            )
+
+            # Show influence patterns
+            influence_map: Dict[str, int] = {}
+            for evolutions in self._response_evolution_tracking.values():
+                for evolution in evolutions:
+                    if evolution.round_to == round.round_number and evolution.influenced_by:
+                        for influencer in evolution.influenced_by:
+                            influence_map[influencer] = influence_map.get(influencer, 0) + 1
+
+            if influence_map:
+                logger.info("    Most influential models:")
+                for model, influence_count in sorted(influence_map.items(), key=lambda x: x[1], reverse=True)[:3]:
+                    logger.info(f"      • {model}: influenced {influence_count} other models")
+
     def _log_round_metrics(self, round: ConsensusRound[T], round_num: int) -> None:
         """Log metrics for a consensus round based on verbosity level."""
         if self._settings.verbosity == VerbosityLevel.SILENT:
@@ -1194,10 +1581,24 @@ Provide a response in the same JSON format as the tied responses above.
             # Log disagreement analysis if present
             if round.disagreement_analysis:
                 num_disagreements = len(round.disagreement_analysis.disagreement_fields)
-                logger.info(f"  Disagreements: {num_disagreements} fields")
+                logger.info(f"  Disagreements: {num_disagreements} fields (excluding IGNORED fields like 'reasoning')")
                 if round.disagreement_analysis.disagreement_fields:
+                    # Log detailed field analysis with similarity scores
+                    self._log_field_similarities(round)
+
                     for (
                         field,
                         values,
                     ) in round.disagreement_analysis.disagreement_fields.items():
-                        logger.info(f"    - {field}: {len(values)} unique values")
+                        unique_values = len(set(values))
+                        logger.info(f"    - {field}: {unique_values} unique values")
+
+                        # Show actual values for better understanding
+                        if unique_values <= 3:  # Only show if not too many unique values
+                            value_counts = Counter(values)
+                            for value, count in value_counts.most_common():
+                                wrapped = self._wrap_text_for_logging(value, max_length=70, indent=10)
+                                lines = wrapped.split("\n")
+                                logger.info(f"        • ({count} votes) {lines[0]}")
+                                for line in lines[1:]:
+                                    logger.info(f"          {line}")

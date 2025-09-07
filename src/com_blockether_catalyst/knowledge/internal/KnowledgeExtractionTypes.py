@@ -256,7 +256,6 @@ class Term(BaseModelWithReasoning):
     )
     total_count: int = Field(default=0, description="Total number of times this term appears")
     mean_score: float = Field(default=0.0, description="Mean relevance score (for keywords)")
-    # reasoning field inherited from BaseModelWithReasoning
     full_form: str = Field(description="The expanded full form (same as term for keywords)")
     meaning: Optional[str] = Field(default=None, description="The extracted meaning of the term")
 

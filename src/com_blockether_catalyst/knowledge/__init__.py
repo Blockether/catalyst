@@ -25,11 +25,27 @@ To install extraction dependencies:
 """
 
 # Core types that don't require extraction dependencies
-from .internal.KnowledgeExtractionTypes import (
+from .internal import (  # Base extraction calls; Response types
+    PDF_AVAILABLE,
+    AcronymMeaningExtractionResponse,
+    BaseAcronymExtractionCall,
+    BaseChunkAcronymExtractionCall,
+    BaseChunkingCall,
+    BaseChunkKeywordExtractionCall,
+    BaseKeywordExtractionCall,
+    ChunkAcronymExtractionResponse,
+    ChunkingDecision,
+    ChunkKeywordExtractionResponse,
+    ChunkOutput,
+    ExtractionCallsSettings,
+    KeywordMeaningExtractionResponse,
     KnowledgeExtractionResult,
     KnowledgeExtractionResultWithChunks,
     KnowledgeMetadata,
+    KnowledgePageData,
+    KnowledgeProcessorSettings,
     LinkedKnowledge,
+    PDFKnowledgeProcessorSettings,
     Term,
     TermCooccurrence,
     TermLink,
@@ -37,22 +53,13 @@ from .internal.KnowledgeExtractionTypes import (
 )
 from .KnowledgeSearchCore import KnowledgeSearchCore
 
-RAPID_FUZZ_AVAILABLE = False
+if PDF_AVAILABLE:
+    from .internal import PDFPageCropOffset
+    from .KnowledgeExtractionCore import KnowledgeExtractionCore
 
-try:
-    import rapidfuzz  # type: ignore
-
-    RAPID_FUZZ_AVAILABLE = True
-
-    from .internal.KnowledgeExtractionTypes import (
-        KnowledgeExtractionResult,
-        KnowledgeExtractionResultWithChunks,
-    )
-    from .KnowledgeExtractionCoreddd import KnowledgeExtractionCore
-except ImportError:
-    RAPID_FUZZ_AVAILABLE = False
 
 __all__ = [
+    # Core search and data structures
     "KnowledgeSearchCore",
     "LinkedKnowledge",
     "Term",
@@ -60,13 +67,32 @@ __all__ = [
     "TermOccurrence",
     "TermCooccurrence",
     "KnowledgeMetadata",
+    "KnowledgePageData",
+    # Settings
+    "ExtractionCallsSettings",
+    "KnowledgeProcessorSettings",
+    # Base extraction calls
+    "BaseAcronymExtractionCall",
+    "BaseKeywordExtractionCall",
+    "BaseChunkingCall",
+    "BaseChunkAcronymExtractionCall",
+    "BaseChunkKeywordExtractionCall",
+    # Response types
+    "AcronymMeaningExtractionResponse",
+    "ChunkAcronymExtractionResponse",
+    "ChunkKeywordExtractionResponse",
+    "ChunkOutput",
+    "KeywordMeaningExtractionResponse",
+    "ChunkingDecision",
 ]
 
-if RAPID_FUZZ_AVAILABLE:
+if PDF_AVAILABLE:
     __all__.extend(
         [
-            "KnowledgeExtractionCoreddd",
+            "KnowledgeExtractionCore",
             "KnowledgeExtractionResult",
             "KnowledgeExtractionResultWithChunks",
+            "PDFKnowledgeProcessorSettings",
+            "PDFPageCropOffset",
         ]
     )

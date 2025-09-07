@@ -891,18 +891,21 @@ class TOCGeneratorCLI(PromptAlignmentCLIBase):
         
     def _get_ignore_fields(self, response_model) -> set:
         """Get fields that should be ignored in comparisons based on ComparisonStrategy.IGNORE."""
+        from com_blockether_catalyst.consensus.internal.VotingComparison import (
+            ComparisonStrategy,
+            FieldComparator,
+        )
+        
         ignore_fields = set()
 
         # Check if it's a Pydantic model with model_fields
         if hasattr(response_model.__class__, 'model_fields'):
             for field_name, field_info in response_model.__class__.model_fields.items():
-                # Check if field has IGNORE comparison strategy
-                if hasattr(field_info, 'metadata'):
-                    for meta in field_info.metadata:
-                        if hasattr(meta, 'comparison') and meta.comparison == ComparisonStrategy.IGNORE:
-                            ignore_fields.add(field_name)
+                # Use FieldComparator to extract voting metadata properly
+                voting_meta = FieldComparator._extract_voting_metadata(field_info)
+                if voting_meta.strategy == ComparisonStrategy.IGNORE:
+                    ignore_fields.add(field_name)
 
-        # No default ignored fields - only use what's explicitly marked with IGNORE strategy
         return ignore_fields
         
     def _view_consensus_disagreements(self):

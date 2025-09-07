@@ -48,7 +48,7 @@ class TestPrincipleBasedAlignmentStrategy:
                 ),
             ],
             confidence_score=0.85,
-            reasoning="These principles will help improve the prompt to better align with expectations and create more effective results.",
+            reasoning="These principles will help improve the prompt to better align with expectations and create more effective results. By applying concrete examples, providing step-by-step explanations, and defining technical terms clearly, the prompt will achieve superior performance and alignment with the target behavior.",
         )
 
         principles = strategy.extract_principles(feedback)
@@ -73,7 +73,7 @@ class TestPrincipleBasedAlignmentStrategy:
             ],
             principles_to_apply=[],
             confidence_score=0.75,
-            reasoning="The prompt needs these improvements to achieve better alignment with the desired outcomes and user expectations.",
+            reasoning="The prompt needs these improvements to achieve better alignment with the desired outcomes and user expectations. Adding specific details, providing clear context, ensuring relevant examples, and clarifying technical terminology will transform this prompt into a highly effective instruction set that consistently delivers quality results.",
         )
 
         principles = strategy.extract_principles(feedback)
@@ -99,7 +99,7 @@ class TestPrincipleBasedAlignmentStrategy:
             improvement_suggestions=[],
             principles_to_apply=[],
             confidence_score=0.7,
-            reasoning="These issues prevent the prompt from achieving its intended purpose and must be addressed for effective alignment.",
+            reasoning="These issues prevent the prompt from achieving its intended purpose and must be addressed for effective alignment. The lack of clarity creates confusion, vague requirements lead to inconsistent outputs, missing context reduces understanding, and the absence of examples leaves the model without concrete guidance for execution.",
         )
 
         principles = strategy.extract_principles(feedback)
@@ -316,7 +316,7 @@ class TestPrincipleBasedAlignmentStrategy:
             improvement_suggestions=many_suggestions,
             principles_to_apply=[],
             confidence_score=0.7,
-            reasoning="There are numerous issues that need to be addressed to achieve proper alignment with the target behavior.",
+            reasoning="There are numerous issues that need to be addressed to achieve proper alignment with the target behavior. Each issue represents a barrier to effective prompt performance. By systematically addressing these problems through principled refinement, we can create a prompt that reliably produces high-quality, consistent outputs aligned with user expectations.",
         )
 
         principles = strategy.extract_principles(feedback)

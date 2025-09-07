@@ -7,6 +7,8 @@ Users inherit from these base classes to implement their own LLM providers.
 from abc import ABC, abstractmethod
 from typing import Any, Generic, List, Optional, Tuple, TypeVar, Union
 
+from pydantic import BaseModel, Field
+
 from com_blockether_catalyst.consensus import (
     Consensus,
     ConsensusResult,
@@ -284,3 +286,27 @@ class BaseChunkKeywordExtractionCall(BaseConsensusCall[ChunkKeywordExtractionRes
             Filled prompt string ready for LLM
         """
         pass
+
+
+class ExtractionCallsSettings(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
+
+    acronym_extraction_call: BaseAcronymExtractionCall = Field(
+        description="User-implemented call for acronym validation/meaning extraction",
+    )
+
+    keyword_extraction_call: BaseKeywordExtractionCall = Field(
+        description="User-implemented call for keyword validation/meaning extraction",
+    )
+
+    chunking_call: BaseChunkingCall = Field(
+        description="User-implemented call for document chunking",
+    )
+
+    chunk_acronym_extraction_call: BaseChunkAcronymExtractionCall = Field(
+        description="User-implemented call for initial acronym discovery in chunks (MANDATORY)",
+    )
+
+    chunk_keyword_extraction_call: BaseChunkKeywordExtractionCall = Field(
+        description="User-implemented call for initial keyword discovery in chunks (MANDATORY)",
+    )
