@@ -295,8 +295,10 @@ dependencies = [
     { name = "langchain-core" },
     { name = "model2vec" },
     { name = "numpy" },
+    { name = "rapidfuzz" },
     { name = "scikit-learn" },
     { name = "tenacity" },
+    { name = "tiktoken" },
     { name = "trio" },
 ]
 
@@ -357,10 +359,12 @@ requires-dist = [
     { name = "model2vec", specifier = ">=0.6.0" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "pdfplumber", marker = "extra == 'extraction'", specifier = ">=0.11.7" },
+    { name = "rapidfuzz", specifier = ">=3.14.0" },
     { name = "rapidfuzz", marker = "extra == 'extraction'", specifier = ">=3.14.0" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "scikit-learn", marker = "extra == 'extraction'", specifier = ">=1.7.1" },
     { name = "tenacity", specifier = ">=9.1.2" },
+    { name = "tiktoken", specifier = ">=0.11.0" },
     { name = "tiktoken", marker = "extra == 'extraction'", specifier = ">=0.11.0" },
     { name = "trio", specifier = ">=0.30.0" },
 ]
