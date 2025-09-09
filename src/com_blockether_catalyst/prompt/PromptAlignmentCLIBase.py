@@ -11,13 +11,15 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generic, List, Optional, TypeVar
 
+from pydantic import BaseModel
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.syntax import Syntax
 from rich.table import Table
+import re
 
 from com_blockether_catalyst.prompt import PromptAlignmentCore
 from com_blockether_catalyst.prompt.PromptAlignmentCore import (
@@ -25,8 +27,11 @@ from com_blockether_catalyst.prompt.PromptAlignmentCore import (
     PromptConfiguration,
 )
 
+# Type variable for the response model type
+TResponse = TypeVar("TResponse", bound=BaseModel)
 
-class PromptAlignmentCLIBase(ABC):
+
+class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
     """Base class for creating prompt refinement CLIs."""
 
     def __init__(
@@ -69,10 +74,6 @@ class PromptAlignmentCLIBase(ABC):
         """Initialize LLM components and prompt aligner."""
         pass
 
-    @abstractmethod
-    def _get_default_prompt(self) -> str:
-        """Get the default prompt template."""
-        pass
 
     def _get_current_data(self) -> Optional[Any]:
         """
@@ -84,56 +85,18 @@ class PromptAlignmentCLIBase(ABC):
         """
         return None
 
-    def _format_data_for_display(self, data: Any) -> str:
-        """
-        Format data for display as text.
-        Override this method to customize how data is formatted.
-
-        Args:
-            data: The data to format
-
-        Returns:
-            Formatted string representation
-        """
-        return str(data)
-
-    @abstractmethod
-    async def _test_prompt(self, prompt: str) -> Dict[str, Any]:
-        """
-        Test the current prompt and return results.
-
-        Implementations should use _fill_template() to safely fill placeholders:
-            filled_prompt = self._fill_template(prompt, {'placeholder': value})
-
-        Args:
-            prompt: The prompt to test
-
-        Returns:
-            Dictionary with test results
-        """
-        pass
-
-    @abstractmethod
-    def _display_test_results(self, results: Dict[str, Any]):
-        """
-        Display test results to the user.
-
-        Implementations should call _display_raw_json() to show raw results.
-        """
-        pass
-
-    def _display_raw_json(self, results: Dict[str, Any], title: str = "Raw JSON Results"):
+    def _display_raw_json(self, results: BaseModel, title: str = "Raw JSON Results"):
         """
         Display results as pretty-printed JSON.
 
         Args:
-            results: Dictionary to display as JSON
+            results: BaseModel instance to display as JSON
             title: Title for the JSON panel
         """
         from rich.syntax import Syntax
 
-        # Convert to JSON with proper formatting
-        json_str = json.dumps(results, indent=2, default=str)
+        # Convert BaseModel to JSON with proper formatting
+        json_str = results.model_dump_json(indent=2)
 
         # Use Rich's syntax highlighting for JSON with word wrap
         syntax = Syntax(
@@ -154,12 +117,12 @@ class PromptAlignmentCLIBase(ABC):
             )
         )
 
-    def _save_response_to_file(self, response_data: Dict[str, Any], prefix: str = "response") -> Path:
+    def _save_response_to_file(self, response_data: BaseModel, prefix: str = "response") -> Path:
         """
         Save response data to a JSON file without any truncation.
 
         Args:
-            response_data: The data to save
+            response_data: The BaseModel data to save
             prefix: Prefix for the filename
 
         Returns:
@@ -173,34 +136,12 @@ class PromptAlignmentCLIBase(ABC):
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         with open(filepath, "w") as f:
-            json.dump(response_data, f, indent=2, default=str)
+            # Write Pydantic model as JSON
+            f.write(response_data.model_dump_json(indent=2))
 
         self.console.print(f"[green]✓ Response saved to: {filepath}[/green]")
         return filepath
 
-    def _save_text_to_file(self, text: str, prefix: str = "text") -> Path:
-        """
-        Save text content to a file.
-
-        Args:
-            text: The text content to save
-            prefix: Prefix for the filename
-
-        Returns:
-            Path to the saved file
-        """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{prefix}_{timestamp}.txt"
-        filepath = self.output_dir / filename
-
-        # Ensure output directory exists
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        with open(filepath, "w") as f:
-            f.write(text)
-
-        self.console.print(f"[green]✓ Text saved to: {filepath}[/green]")
-        return filepath
 
     def _view_saved_responses(self):
         """View saved response files in the output directory."""
@@ -216,8 +157,6 @@ class PromptAlignmentCLIBase(ABC):
 
         if len(response_files) > 10:
             self.console.print(f"[dim]... and {len(response_files) - 10} more files[/dim]")
-
-        from rich.prompt import IntPrompt
 
         file_num = IntPrompt.ask("Select file to view (0 to cancel)", default=0)
         if file_num > 0 and file_num <= len(response_files):
@@ -247,11 +186,8 @@ class PromptAlignmentCLIBase(ABC):
         """Load saved prompt or use default."""
         template_file = self.prompt_dir / f"{self.prompt_name}.txt"
 
-        if template_file.exists():
-            with open(template_file, "r") as f:
-                return f.read()
-
-        return self._get_default_prompt()
+        with open(template_file, "r") as f:
+            return f.read()
 
     def _save_prompt_template(self, template: str):
         """Save refined prompt."""
@@ -298,7 +234,6 @@ class PromptAlignmentCLIBase(ABC):
         Get list of placeholders in the prompt.
         Override to provide specific placeholders.
         """
-        import re
 
         # Find all {placeholder} patterns
         return list(set(re.findall(r"\{(\w+)\}", self.prompt_template)))

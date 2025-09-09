@@ -10,8 +10,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, RootModel
 
-from ...consensusConsensusTypes import TypedCallBaseForConsensus
-from ...consensusVotingComparison import ComparisonStrategy, VotingField
+from ..consensus.ConsensusTypes import TypedCallBaseForConsensus
+from ..consensus.VotingComparison import ComparisonStrategy, VotingField
 
 
 class AlignmentPrinciple(BaseModel):
