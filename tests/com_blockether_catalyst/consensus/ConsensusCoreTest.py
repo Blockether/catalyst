@@ -11,13 +11,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
-from com_blockether_catalyst.consensus import (
-    Consensus,
-    ConsensusCore,
+from com_blockether_catalyst.consensus.Consensus import Consensus
+from com_blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from com_blockether_catalyst.consensus.ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
-)
-from com_blockether_catalyst.consensusConsensusTypes import (
     TypedCallBaseForConsensus,
 )
 from com_blockether_catalyst.utils.TypedCalls import ArityOneTypedCall

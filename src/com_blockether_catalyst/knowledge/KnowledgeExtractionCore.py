@@ -204,27 +204,70 @@ class KnowledgeExtractionCore:
 
         Returns:
             Sequence of resolved file paths
+
+        Raises:
+            FileNotFoundError: If no files match any of the provided patterns
+            ValueError: If the glob patterns are invalid
         """
+        if not globs:
+            raise ValueError("No glob patterns provided")
+
         all_files = []
+        pattern_results = {}  # Track results per pattern for better error reporting
+
         for glob_pattern in globs:
+            pattern_files = []
             path = Path(glob_pattern)
+
             if path.is_file():
                 # Direct file path
-                all_files.append(path)
+                pattern_files.append(path)
             else:
                 # Glob pattern
                 if "*" in glob_pattern or "?" in glob_pattern or "[" in glob_pattern:
                     # It's a glob pattern
                     parent = Path(glob_pattern).parent if "/" in glob_pattern else Path(".")
                     pattern = Path(glob_pattern).name
+
+                    if not parent.exists():
+                        pattern_results[glob_pattern] = f"Directory '{parent}' does not exist"
+                        continue
+
                     matches = list(parent.glob(pattern))
-                    all_files.extend(matches)
+                    pattern_files.extend(matches)
+
+                    if not matches:
+                        pattern_results[glob_pattern] = f"No files matching pattern in '{parent}'"
+                    else:
+                        pattern_results[glob_pattern] = f"Found {len(matches)} file(s)"
                 else:
                     # It might be a directory or non-existent path
                     path_obj = Path(glob_pattern)
                     if path_obj.is_dir():
                         # Get all files in directory
-                        all_files.extend(path_obj.iterdir())
+                        dir_files = list(path_obj.iterdir())
+                        pattern_files.extend([f for f in dir_files if f.is_file()])
+                        pattern_results[glob_pattern] = f"Found {len(pattern_files)} file(s) in directory"
+                    elif not path_obj.exists():
+                        pattern_results[glob_pattern] = "Path does not exist"
+                    else:
+                        pattern_results[glob_pattern] = "Path exists but is not a file or directory"
+
+            all_files.extend(pattern_files)
+
+        # If no files were found, provide detailed error message
+        if not all_files:
+            error_msg = "No files found matching any of the provided patterns:\n"
+            for pattern, result in pattern_results.items():
+                error_msg += f"  • '{pattern}': {result}\n"
+
+            error_msg += "\n💡 Examples of valid patterns:\n"
+            error_msg += "  • 'input/*.pdf' - all PDFs in input directory\n"
+            error_msg += "  • 'docs/**/*.pdf' - all PDFs recursively in docs\n"
+            error_msg += "  • 'data/file.pdf' - specific file path"
+
+            raise FileNotFoundError(error_msg)
+
         return all_files
 
     def _group_files_by_extension(self, files: list[Path]) -> dict[str, list[Path]]:
@@ -241,7 +284,8 @@ class KnowledgeExtractionCore:
         for file_path in files:
             if file_path.is_file():
                 extension = file_path.suffix.lower()
-                files_by_extension[extension].append(file_path)
+                if extension:
+                  files_by_extension[extension].append(file_path)
         return files_by_extension
 
     @timed_operation("Step 1/12: Raw file extraction")

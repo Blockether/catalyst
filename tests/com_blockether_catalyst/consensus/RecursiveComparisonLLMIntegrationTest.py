@@ -11,7 +11,8 @@ from typing import Any, List, Optional
 import anyio
 import pytest
 
-from com_blockether_catalyst.consensus import ConsensusCore, ConsensusSettings
+from com_blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from com_blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
 from com_blockether_catalyst.consensus.VotingComparison import (
     ComparisonStrategy,
     VotingField,

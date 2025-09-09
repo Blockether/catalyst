@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytest
 from pydantic import BaseModel
 
-from com_blockether_catalyst.consensusVotingComparison import (
+from com_blockether_catalyst.consensus.VotingComparison import (
     ComparisonStrategy,
     FieldComparator,
     VotingField,

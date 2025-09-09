@@ -29,11 +29,7 @@ class PDFProcessorTextExtractionSettings(BaseModel):
 
 class PDFImageProcessingSettings(BaseModel):
     """Settings for image processing with CLIP and OCR."""
-
-    device: Optional[str] = Field(default=None, description="Device to use (cuda, mps, cpu). Auto-detect if None")
-    torch_dtype: str = Field(default="auto", description="Torch dtype (float16, float32, auto)")
-    confidence_threshold: float = Field(default=0.7, description="Confidence threshold for decorative image detection")
-
+    pass
 
 class PDFPageCropOffset(BaseModel):
     """Page cropping offsets in pixels."""

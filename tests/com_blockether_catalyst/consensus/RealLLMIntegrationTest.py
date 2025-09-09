@@ -10,12 +10,13 @@ from typing import Any
 
 import pytest
 
-from com_blockether_catalyst.consensus import ConsensusCore, ConsensusSettings
-from com_blockether_catalyst.consensusVotingComparison import (
+from com_blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from com_blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
+from com_blockether_catalyst.consensus.VotingComparison import (
     ComparisonStrategy,
     VotingField,
 )
-from com_blockether_catalyst.knowledgeKnowledgeExtractionBaseTypes import (
+from com_blockether_catalyst.knowledge.KnowledgeExtractionBaseTypes import (
     ChunkingDecision,
     ChunkOutput,
 )

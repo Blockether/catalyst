@@ -105,13 +105,14 @@ pip install "com-blockether-catalyst[extraction,api] @ git+https://github.com/Bl
 | 📚 **Technical documentation**: Understanding system relationships and dependencies | ⚡ **Real-time requirements**: Need sub-second responses |
 | 📊 **Audit support**: Providing complete evidence chains with source materials | |
 
-## Examples
+## Knowledge Extraction
 
-Check out these real-world examples:
+1. Deploy a multimodal model serve - such as [MiniCPM-o-2_6](https://huggingface.co/openbmb/MiniCPM-o-2_6 or [QwenVL](https://huggingface.co/unsloth/Qwen2.5-VL-3B-Instruct-GGUF) - on an OpenAI-compatible inference platform to enable advanced document extraction and analysis capabilities.
 
-- **[Legal Document Q&A](examples/BasicCalculatorExample.py)** - Contract analysis and compliance checking
-- **[Research Knowledge Base](examples/KnowledgeBaseQAExample.py)** - Academic paper processing and search
-- **[Knowledge Extraction Pipeline](examples/KnowledgeExtractionExample.py)** - Batch document processing
+See: https://www.alibabacloud.com/help/en/model-studio/qwen-vl-compatible-with-openai
+
+2. Clone this repository
+3. Perform knowledge extraction using tools/KnowledgeExtraction.py
 
 ## License
 

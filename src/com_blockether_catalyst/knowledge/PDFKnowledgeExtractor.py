@@ -13,12 +13,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pdfplumber
-import torch
 from pdfplumber import page
 from pdfplumber.display import PageImage
 from PIL import Image
 
-from .ImageRecognition import ImageRecognition
+from .ImageRecognition import ImageRecognition, ImageRecognitionSettings
 
 from .KnowledgeExtractionTypes import (
     ImageMetadata,
@@ -57,7 +56,9 @@ class PDFKnowledgeExtractor:
         Args:
             settings: Unified PDF processor settings
         """
-        self._image_recognition = ImageRecognition()
+        self._image_recognition = ImageRecognition(ImageRecognitionSettings(
+            max_new_tokens=512
+        ))
         self._logger = logging.getLogger(__name__)
         self._knowledge_settings = knowledge_settings
         self._settings = knowledge_settings.pdf_settings
@@ -144,7 +145,7 @@ class PDFKnowledgeExtractor:
         base_text = page_without_tables.extract_text(**self._text_extraction_settings.model_dump()) or ""
 
         # Extract image
-        images = self._extract_images_from_page(page, base_text)
+        images = self._extract_images_from_page(page, context=f"Document: {self._current_document}, Page: {page.page_number}, Context: {base_text}")
 
         # Fix hyphenated line breaks immediately after extraction
         base_text = self._fix_hyphenated_line_breaks(base_text)
@@ -267,7 +268,7 @@ class PDFKnowledgeExtractor:
     def _extract_images_from_page(
         self,
         page: page.Page,
-        base_text: str,
+        context: str,
     ) -> List[ImageMetadata]:
         """Extract non-decorative images from page and save to files
 
@@ -315,7 +316,7 @@ class PDFKnowledgeExtractor:
                         document_name=self._current_document or "",
                         page=page.page_number,
                         href=str(image_path),
-                        caption=self._image_recognition.caption_for_image(image, context=base_text)
+                        caption=self._image_recognition.caption_for_image(image, context=context)
                     )
 
                     # Save the image

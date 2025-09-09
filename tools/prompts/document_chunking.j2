@@ -5,10 +5,11 @@ Page {{ page.page }}:
 
 {{ page.raw_text }}
 
-Please split this text into logical, self-contained chunks that:
-1. Preserve markdown structure (don't break tables, lists, or code blocks)
-2. Maintain semantic coherence
-3. Include sufficient context for independent understanding
-4. Keep related information together
+Taking into account the overall page content split the page into smaller chunks which encapsulate fully an idea or concept.
 
-Return a ChunkingDecision with the chunks.
+RULES:
+- Each chunk should be at least 500 words,
+- The document should have MAX 4 chunks per page,
+- Each chunk should be a coherent piece of text, not cutting off mid-sentence, mid paragraph, mid-idea, mid-concept, or
+mid-list, or mid-table.
+
