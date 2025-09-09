@@ -11,7 +11,6 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import easyocr
 import numpy as np
 import pdfplumber
 import torch
@@ -19,13 +18,16 @@ from pdfplumber import page
 from pdfplumber.display import PageImage
 from PIL import Image
 
-from .KnowledgeExtractionBaseTypes import KnowledgeTableData
+from .ImageRecognition import ImageRecognition
+
 from .KnowledgeExtractionTypes import (
+    ImageMetadata,
     KnowledgeExtractionResult,
     KnowledgeMetadata,
     KnowledgePageData,
     KnowledgePageDataWithRawText,
     KnowledgeProcessorSettings,
+    KnowledgeTableData,
 )
 from .PDKnowledgeExtractorTypes import (
     PDFImageProcessingSettings,
@@ -45,22 +47,35 @@ class PDFTableData(KnowledgeTableData):
 class PDFKnowledgeExtractor:
     """Advanced PDF processor using pdfplumber for sophisticated extraction."""
 
-    def __init__(self, settings: PDFKnowledgeProcessorSettings = PDFKnowledgeProcessorSettings()) -> None:
+    def __init__(
+        self,
+        knowledge_settings: KnowledgeProcessorSettings
+    ) -> None:
         """
         Initialize PDF processor with optional configuration.
 
         Args:
             settings: Unified PDF processor settings
         """
-        self.logger = logging.getLogger(__name__)
-        self.settings = settings
-        self.table_settings = settings.pdf_table_extraction or PDFProcessorTableExtractionSettings()
-        self.text_extraction_settings = settings.pdf_text_extraction or PDFProcessorTextExtractionSettings()
-        self.pdf_image_processing_settings = settings.pdf_image_processing or PDFImageProcessingSettings()
-        self.ocr_reader: Optional[Any] = None
+        self._image_recognition = ImageRecognition()
+        self._logger = logging.getLogger(__name__)
+        self._knowledge_settings = knowledge_settings
+        self._settings = knowledge_settings.pdf_settings
+        self._table_settings = self._settings.pdf_table_extraction or PDFProcessorTableExtractionSettings()
+        self._text_extraction_settings = self._settings.pdf_text_extraction or PDFProcessorTextExtractionSettings()
+        self._pdf_image_processing_settings = self._settings.pdf_image_processing or PDFImageProcessingSettings()
+        self._current_document: Optional[str] = None
+        self._current_document_path: Optional[Path] = None
 
-        # Initialize OCR if needed
-        self._initialize_ocr()
+    @property
+    def settings(self) -> PDFKnowledgeProcessorSettings:
+        """Get the PDF processor settings."""
+        return self._settings
+
+    @property
+    def knowledge_settings(self) -> KnowledgeProcessorSettings:
+        """Get the knowledge processor settings."""
+        return self._knowledge_settings
 
     def extract(self, source: Path) -> KnowledgeExtractionResult:
         """Synchronous PDF extraction with pdfplumber."""
@@ -71,11 +86,9 @@ class PDFKnowledgeExtractor:
         id = self._calculate_id(source)
         result = KnowledgeExtractionResult(filename=source.name, id=id, source_type="pdf")
 
-        # Store document name for logging
-        self.current_document = source.name
-
-        last_toc_page_idx: Optional[int] = None
-        toc_page_last_y0: Optional[float] = None
+        # Store document name and path for logging and image naming
+        self._current_document = source.name
+        self._current_document_path = source
 
         with pdfplumber.open(source) as pdf:
             # Extract metadata
@@ -96,14 +109,6 @@ class PDFKnowledgeExtractor:
                 page_image = None
 
                 page = self._crop_page(page, page_image)
-                page, last_toc_page_idx, toc_page_last_y0 = self.filter_out_toc(
-                    page,
-                    page.page_number - 1,
-                    page_image,
-                    last_toc_page_idx,
-                    toc_page_last_y0,
-                )
-
                 page_data = self._process_page(page)
 
                 # Add processed page to results
@@ -130,22 +135,19 @@ class PDFKnowledgeExtractor:
         # Extract tables
         tables = self._extract_tables_from_page(page)
 
-        # Extract image
-        images = self._extract_images_from_page(page)
-
         # Get table bounding boxes
         table_bboxes = [table.bbox for table in tables]
         bbox_not_within_bboxes = partial(self._not_within_bboxes, bboxes=table_bboxes)
         page_without_tables = page.filter(bbox_not_within_bboxes)
 
         # Extract base text (without tables)
-        base_text = page_without_tables.extract_text(**self.text_extraction_settings.model_dump()) or ""
+        base_text = page_without_tables.extract_text(**self._text_extraction_settings.model_dump()) or ""
+
+        # Extract image
+        images = self._extract_images_from_page(page, base_text)
 
         # Fix hyphenated line breaks immediately after extraction
         base_text = self._fix_hyphenated_line_breaks(base_text)
-
-        # Clean TOC artifacts from the text
-        base_text = self._clean_toc_artifacts(base_text)
 
         # Build raw text
         raw_text = self._build_raw_text(base_text, tables)
@@ -184,7 +186,7 @@ class PDFKnowledgeExtractor:
             Cropped page object.
         """
         x0, y0, x1, y1 = page.bbox  # (left, top, right, bottom)
-        crop_offset = self.settings.pdf_page_crop_offset
+        crop_offset = self._settings.pdf_page_crop_offset
 
         if not crop_offset:
             return page
@@ -203,93 +205,6 @@ class PDFKnowledgeExtractor:
             page = page.outside_bbox(footer_crop)
 
         return page
-
-    def filter_out_toc(
-        self,
-        page: page.Page,
-        page_idx: int,
-        page_image: PageImage | None = None,
-        last_toc_page_idx: Optional[int] = None,
-        toc_page_last_y0: Optional[float] = None,
-        toc_page_break_pages_gap_threshold: int = 40,
-    ) -> Tuple[page.Page, Optional[int], Optional[float]]:
-        toc_header_regex = re.compile(r"table\s+of\s+contents?", re.IGNORECASE)
-        crop_offset = self.settings.pdf_page_crop_offset or PDFPageCropOffset(top=0, bottom=0)
-
-        # Patterns for TOC entries:
-        # r'([\d.]+)\s+(.*?)\s*[\s.]{2,}\s*(\d+)' => "1.1 Introduction ........ 6" or "1.1 Introduction      6"
-        # r'^\s*[o▪•]\s*.*' => "• Intro; o Table of Content"
-        toc_page_regex = re.compile(r"([\d.]+)\s+(.*?)\s*[\s.]{2,}\s*(\d+)|^\s*[o▪•]\s*.*", re.MULTILINE)
-
-        toc_header = page.search(toc_header_regex)
-
-        x0, y0, x1, y1 = page.bbox  # (left, top, right, bottom)
-
-        if toc_header:
-            last_toc_page_idx = page_idx
-
-            toc_header_top = toc_header[0]["top"]
-
-            toc_page = page.search(toc_page_regex)
-
-            if toc_page:
-                toc_page_last = toc_page[-1]
-                toc_page_last_bottom = toc_page_last["bottom"]
-                toc_page_last_y0 = toc_page_last["chars"][0]["y0"] - crop_offset.bottom
-
-                if page_image:
-                    page_image.draw_rect(
-                        (
-                            page.bbox[0],
-                            toc_header_top,
-                            page.bbox[2],
-                            toc_page_last_bottom,
-                        ),
-                        stroke="blue",
-                    )
-
-                return (
-                    page.outside_bbox((x0, toc_header_top, x1, toc_page_last_bottom)),
-                    last_toc_page_idx,
-                    toc_page_last_y0,
-                )
-
-        if last_toc_page_idx and page_idx == last_toc_page_idx + 1:
-            toc_page = page.search(toc_page_regex)
-
-            if toc_page:
-                last_toc_page_idx = page_idx
-
-                toc_page_first = toc_page[0]
-                toc_page_last = toc_page[-1]
-
-                toc_page_first_element_top = toc_page_first["top"] - crop_offset.top
-
-                if (
-                    toc_page_last_y0 is not None
-                    and toc_page_first_element_top + toc_page_last_y0 < toc_page_break_pages_gap_threshold
-                ):
-                    last_bottom = toc_page_last["bottom"]
-                    toc_page_last_y0 = toc_page_last["chars"][0]["y0"] - crop_offset.bottom
-
-                    if page_image:
-                        page_image.draw_rect(
-                            (
-                                page.bbox[0],
-                                toc_page_first["top"],
-                                page.bbox[2],
-                                last_bottom,
-                            ),
-                            stroke="blue",
-                        )
-
-                    return (
-                        page.outside_bbox((x0, toc_page_first["top"], x1, last_bottom)),
-                        last_toc_page_idx,
-                        toc_page_last_y0,
-                    )
-
-        return page, last_toc_page_idx, toc_page_last_y0
 
     def _filter_invisible_lines(self, obj: Dict[str, Any]) -> bool:
         """
@@ -325,7 +240,7 @@ class PDFKnowledgeExtractor:
         page = page.filter(self._filter_invisible_lines)
 
         # Use pdfplumber's table finder
-        found_tables = page.find_tables(table_settings=self.table_settings.model_dump())
+        found_tables = page.find_tables(table_settings=self._table_settings.model_dump())
 
         for table in found_tables:
             try:
@@ -345,20 +260,21 @@ class PDFKnowledgeExtractor:
                     tables.append(pdf_table)
 
             except Exception as e:
-                self.logger.warning(f"[{self.current_document}] Error extracting table on page {page.page_number}: {e}")
+                self._logger.warning(f"[{self._current_document}] Error extracting table on page {page.page_number}: {e}")
 
         return tables
 
     def _extract_images_from_page(
         self,
         page: page.Page,
-    ) -> List[str]:
-        """Extract non-decorative images from page with base64 encoding
+        base_text: str,
+    ) -> List[ImageMetadata]:
+        """Extract non-decorative images from page and save to files
 
         Returns:
-            List of base64 encoded images
+            List of image metadata
         """
-        images = []
+        images: List[ImageMetadata] = []
 
         # Extract images using pdfplumber's image extraction
 
@@ -368,8 +284,8 @@ class PDFKnowledgeExtractor:
                 img_width = img_obj.get("width", 0)
                 img_height = img_obj.get("height", 0)
                 if img_height < 64:
-                    self.logger.info(
-                        f"[{self.current_document}] Skipped small image on page {page.page_number}: "
+                    self._logger.info(
+                        f"[{self._current_document}] Skipped small image on page {page.page_number}: "
                         f"{img_width}x{img_height} pixels (height < 64px)"
                     )
                     continue
@@ -381,22 +297,40 @@ class PDFKnowledgeExtractor:
                     img_obj["x1"],
                     img_obj["bottom"],
                 )
-                cropped = page.within_bbox(img_bbox)
+                cropped = page.crop(img_bbox)
 
                 # Convert to image
                 if cropped:
-                    page_image = cropped.to_image(resolution=150)
+                    page_image = cropped.to_image(resolution=300, antialias=True)
 
-                    # Convert to base64 for non-decorative images
-                    img_buffer = io.BytesIO()
-                    page_image.save(img_buffer, format="PNG")
-                    img_buffer.seek(0)
-                    base64_data = base64.b64encode(img_buffer.getvalue()).decode("utf-8")
-                    images.append(base64_data)
+                    # Create filename based on PDF name and page number
+                    pdf_stem = self._current_document_path.stem if self._current_document_path else "document"
+                    image_filename = f"{pdf_stem}_page_{page.page_number}_img_{idx + 1}.png"
+                    output_dir = Path(self._knowledge_settings.extraction_output_dir) / "images"
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    image_path = output_dir / image_filename
+                    image = page_image.original
+
+                    metadata = ImageMetadata(
+                        document_name=self._current_document or "",
+                        page=page.page_number,
+                        href=str(image_path),
+                        caption=self._image_recognition.caption_for_image(image, context=base_text)
+                    )
+
+                    # Save the image
+                    page_image.save(str(image_path), format="PNG")
+
+                    # Store the filename (not full path) in the results
+                    images.append(metadata)
+
+                    self._logger.info(
+                        f"[{self._current_document}] Saved image from page {page.page_number}: {image_filename}"
+                    )
 
             except Exception as e:
-                self.logger.warning(
-                    f"[{self.current_document}] Error processing image {idx} on page {page.page_number}: {e}"
+                self._logger.warning(
+                    f"[{self._current_document}] Error processing image {idx} on page {page.page_number}: {e}"
                 )
 
         return images
@@ -408,47 +342,6 @@ class PDFKnowledgeExtractor:
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
-
-    def _initialize_ocr(self) -> None:
-        """Initialize OCR reader."""
-
-        try:
-            # Initialize EasyOCR with English language
-            self.ocr_reader = easyocr.Reader(["en"], gpu=torch.cuda.is_available(), verbose=False)
-            self.logger.info(f"OCR reader initialized (GPU: {torch.cuda.is_available()})")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize OCR: {e}")
-            self.ocr_reader = None
-
-    def _extract_text_with_ocr(self, pil_image: Image.Image) -> str:
-        """Extract text from image using OCR.
-
-        Args:
-            pil_image: PIL Image to extract text from
-
-        Returns:
-            Extracted text or empty string if OCR fails
-        """
-        if self.ocr_reader is None:
-            return ""
-
-        try:
-            # Convert PIL image to numpy array
-            img_array = np.array(pil_image)
-
-            # Perform OCR
-            results = self.ocr_reader.readtext(img_array)
-
-            # Combine all text results
-            if results:
-                texts = [result[1] for result in results]
-                return " ".join(texts)
-
-            return ""
-
-        except Exception as e:
-            self.logger.info(f"[{getattr(self, 'current_document', 'Unknown')}] OCR extraction failed: {e}")
-            return ""
 
     def _fix_hyphenated_line_breaks(self, text: str) -> str:
         """Fix words that are hyphenated at line breaks.
@@ -463,65 +356,6 @@ class PDFKnowledgeExtractor:
         # This handles cases like "credit policy devia-\ntion" -> "credit policy deviation"
         fixed_text = re.sub(r"([a-zA-Z]+)-\n([a-zA-Z]+)", r"\1\2", text)
         return fixed_text
-
-    def _clean_toc_artifacts(self, text: str) -> str:
-        """Remove table of contents artifacts and page numbering from text.
-
-        Removes:
-        - Lines with excessive dots (.........) used as leaders in TOCs
-        - Page number references at the end of TOC entries
-        - Broken TOC entries that span multiple lines
-        - Page numbering patterns like "Page N of X"
-
-        Args:
-            text: Text to clean
-
-        Returns:
-            Cleaned text without TOC artifacts and page numbers
-        """
-        lines = text.split("\n")
-        cleaned_lines = []
-
-        for line in lines:
-            # Skip lines that are likely TOC entries:
-            # 1. Lines with 5+ consecutive dots (TOC leaders)
-            if re.search(r"\.{5,}", line):
-                continue
-
-            # 2. Lines that look like TOC entries with section numbers and page numbers
-            # Pattern: "6.4.2 Some Title .... 17" or "6.5 Title    17"
-            if re.match(r"^\s*\d+(\.\d+)*\s+.*?\s+\d+\s*$", line):
-                # Check if it has typical TOC patterns
-                if re.search(r"[\s.]{3,}\d+\s*$", line):  # Ends with spaces/dots and page number
-                    continue
-
-            # 3. Lines that are just dots and page numbers (broken TOC entries)
-            # Pattern: ".......................... 17"
-            if re.match(r"^\s*\.+\s*\d+\s*$", line):
-                continue
-
-            # 4. Lines with section numbers followed by dots
-            # Pattern: "6.4.2 Top-Down Limit setting ...."
-            if re.match(r"^\s*\d+(\.\d+)*\s+.*?\.{3,}", line):
-                continue
-
-            # 5. Skip page numbering patterns (case insensitive)
-            # Patterns: "Page N of X", "Page N/X", "N of X", "Page N", "- N -", etc.
-            if re.match(r"^\s*page\s+\d+\s*(of|/)\s*\d+\s*$", line, re.IGNORECASE):
-                continue
-            if re.match(r"^\s*\d+\s*(of|/)\s*\d+\s*$", line):
-                continue
-            if re.match(r"^\s*page\s+\d+\s*$", line, re.IGNORECASE):
-                continue
-            if re.match(r"^\s*-\s*\d+\s*-\s*$", line):  # Pattern: "- 17 -"
-                continue
-            if re.match(r"^\s*\[\s*\d+\s*\]\s*$", line):  # Pattern: "[17]"
-                continue
-
-            # Keep the line if it doesn't match TOC or page number patterns
-            cleaned_lines.append(line)
-
-        return "\n".join(cleaned_lines)
 
     def _build_raw_text(self, base_text: str, tables: List[PDFTableData]) -> str:
         """Build raw text with tables inline

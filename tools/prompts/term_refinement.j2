@@ -1,0 +1,19 @@
+Analyze if '{{ term }}' is a valid keyword and extract its meaning.
+
+Contexts where the term appears:
+{% for ctx in occurrences_contexts[:15] %}
+{{ loop.index }}. {{ ctx }}
+
+{% endfor %}
+
+{% if cooccurring_terms %}
+Co-occurring terms:
+{% for cooc_term in cooccurring_terms.keys() | list | slice(10) %}
+- {{ cooc_term }}
+{% endfor %}
+{% endif %}
+
+Determine:
+1. Is this a valid keyword?
+2. What is its meaning in this context?
+3. Provide reasoning for your decision.

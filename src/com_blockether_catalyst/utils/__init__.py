@@ -2,15 +2,15 @@
 Utility modules for the catalyst framework.
 """
 
-from .BatchProcessor import BatchProcessor, BatchProcessorWithFallback
 from .TypedCalls import (
     ArityOneTypedCall,
     AsyncBatchProcessor,
 )
 
+from .ConcurrentProcessor import ConcurrentProcessor
+
 __all__ = [
-    "BatchProcessor",
-    "BatchProcessorWithFallback",
+    "ConcurrentProcessor",
     "ArityOneTypedCall",
     "AsyncBatchProcessor",
 ]

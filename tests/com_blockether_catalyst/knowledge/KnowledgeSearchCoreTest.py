@@ -15,10 +15,10 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionBaseTypes import (
+from com_blockether_catalyst.knowledgeKnowledgeExtractionBaseTypes import (
     KnowledgeTableData,
 )
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionTypes import (
+from com_blockether_catalyst.knowledgeKnowledgeExtractionTypes import (
     DocumentMetadata,
     KnowledgeChunkWithTerms,
     KnowledgePageData,

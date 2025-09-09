@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from com_blockether_catalyst.consensus import Consensus
-from com_blockether_catalyst.consensus.internal.ConsensusTypes import ConsensusResult
+from com_blockether_catalyst.consensusConsensusTypes import ConsensusResult
 from com_blockether_catalyst.prompt import (
     PromptAlignmentCore,
     PromptConfiguration,

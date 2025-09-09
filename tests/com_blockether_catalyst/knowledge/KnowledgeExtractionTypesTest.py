@@ -2,7 +2,7 @@
 
 import pytest
 
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionBaseTypes import (
+from com_blockether_catalyst.knowledgeKnowledgeExtractionBaseTypes import (
     KnowledgeTableData,
 )
 

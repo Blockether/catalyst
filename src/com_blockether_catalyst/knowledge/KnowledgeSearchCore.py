@@ -14,13 +14,10 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import InMemoryVectorStore
 
-from com_blockether_catalyst.encoder.EncoderCore import EncoderCore
+from ..encoder.EncoderCore import EncoderCore
 
-from .internal.KnowledgeExtractionBaseTypes import (
-    KnowledgeMetadata,
+from .KnowledgeExtractionTypes import (
     KnowledgeTableData,
-)
-from .internal.KnowledgeExtractionTypes import (
     LinkedKnowledge,
     Term,
 )
@@ -259,7 +256,7 @@ class KnowledgeSearchCore:
 
         # Build acronym mappings from terms
         for term_key, term in linked_knowledge.terms.items():
-            if term.term_type == "acronym" and term.full_form:
+            if term.type == "acronym" and term.full_form:
                 self._acronym_to_full_form[term.term] = term.full_form
                 self._full_form_to_acronym[term.full_form] = term.term
 
@@ -450,11 +447,11 @@ class KnowledgeSearchCore:
                 # Resolve co-occurrences and links for all primary terms
                 for term in enh_result.primary_terms:
                     # Add linked terms (acronym-keyword relationships)
-                    for link in self.linked_knowledge.links:
+                    for link in term.links:
                         linked_term_key = None
-                        if term.term_type == "acronym" and link.acronym == term.term:
+                        if term.type == "acronym" and link.acronym == term.term:
                             linked_term_key = link.keyword
-                        elif term.term_type == "keyword" and link.keyword == term.term:
+                        elif term.type == "keyword" and link.keyword == term.term:
                             linked_term_key = link.acronym
 
                         if linked_term_key and linked_term_key in self.linked_knowledge.terms:
@@ -684,9 +681,9 @@ class KnowledgeSearchCore:
             # Find linked terms
             for link in self.linked_knowledge.links:
                 linked_term_key = None
-                if term.term_type == "acronym" and link.acronym == term.term:
+                if term.type == "acronym" and link.acronym == term.term:
                     linked_term_key = link.keyword
-                elif term.term_type == "keyword" and link.keyword == term.term:
+                elif term.type == "keyword" and link.keyword == term.term:
                     linked_term_key = link.acronym
 
                 if linked_term_key and linked_term_key in self.linked_knowledge.terms:

@@ -13,8 +13,8 @@ from typing import Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from ..consensus import Consensus
-from .internal.PrincipleBasedAlignmentStrategy import PrincipleBasedAlignmentStrategy
-from .internal.PromptAlignmentTypes import (
+from PrincipleBasedAlignmentStrategy import PrincipleBasedAlignmentStrategy
+from PromptAlignmentTypes import (
     AlignmentFeedback,
     AlignmentMetrics,
     AlignmentPrinciple,

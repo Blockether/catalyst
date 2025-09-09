@@ -17,7 +17,7 @@ from com_blockether_catalyst.consensus import (
     ConsensusSettings,
     ModelConfiguration,
 )
-from com_blockether_catalyst.consensus.internal.ConsensusTypes import (
+from com_blockether_catalyst.consensusConsensusTypes import (
     TypedCallBaseForConsensus,
 )
 from com_blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
@@ -131,7 +131,7 @@ class TestConsensusCore:
         models = [core.model(id=f"model-{i}", executor=mock_executor, perspective=f"As model {i}") for i in range(3)]
 
         # ConsensusRequest was removed - consensus is now directly created
-        from com_blockether_catalyst.consensus.internal.ConsensusTypes import (
+        from com_blockether_catalyst.consensusConsensusTypes import (
             ConsensusSettings,
         )
 
@@ -156,7 +156,7 @@ class TestConsensusCore:
         ]
 
         # Create and execute consensus directly
-        from com_blockether_catalyst.consensus.internal.ConsensusTypes import (
+        from com_blockether_catalyst.consensusConsensusTypes import (
             ConsensusSettings,
         )
 

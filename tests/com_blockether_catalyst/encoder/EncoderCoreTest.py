@@ -71,7 +71,7 @@ class TestEncoderCore:
 
     def test_semantic_hash_consistency(self) -> None:
         """Test that semantic hashing is consistent."""
-        from com_blockether_catalyst.consensus.internal.Consensus import Consensus
+        from com_blockether_catalyst.consensusConsensus import Consensus
 
         # Same text should produce same hash
         text = "This is a test sentence."
@@ -91,7 +91,7 @@ class TestEncoderCore:
 
     def test_semantic_hash_similarity(self) -> None:
         """Test that similar texts get similar hashes with low threshold."""
-        from com_blockether_catalyst.consensus.internal.Consensus import Consensus
+        from com_blockether_catalyst.consensusConsensus import Consensus
 
         # Very similar texts with low threshold should get same hash
         text1 = "The cat is sleeping on the couch."

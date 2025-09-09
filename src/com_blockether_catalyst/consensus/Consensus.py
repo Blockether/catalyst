@@ -30,8 +30,9 @@ from typing import (
 import anyio
 from pydantic import BaseModel, Field
 
-from ...encoder import EncoderCore
-from ...utils.TypedCalls import ArityOneTypedCall
+from com_blockether_catalyst.encoder.EncoderCore import EncoderCore
+from com_blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
+
 from .ConsensusTypes import (
     ConsensusCallRecord,
     ConsensusMetrics,

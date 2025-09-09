@@ -11,11 +11,11 @@ from typing import Any
 import pytest
 
 from com_blockether_catalyst.consensus import ConsensusCore, ConsensusSettings
-from com_blockether_catalyst.consensus.internal.VotingComparison import (
+from com_blockether_catalyst.consensusVotingComparison import (
     ComparisonStrategy,
     VotingField,
 )
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionBaseTypes import (
+from com_blockether_catalyst.knowledgeKnowledgeExtractionBaseTypes import (
     ChunkingDecision,
     ChunkOutput,
 )
@@ -152,7 +152,7 @@ class TestRealLLMIntegration:
         os.environ["INSTRUCTOR_API_KEY"] = "test-key"
 
         # Simple response model for testing
-        from com_blockether_catalyst.consensus.internal.ConsensusTypes import (
+        from com_blockether_catalyst.consensusConsensusTypes import (
             TypedCallBaseForConsensus,
         )
 

@@ -9,12 +9,12 @@ from typing import List
 
 import pytest
 
-from com_blockether_catalyst.consensus.internal.VotingComparison import (
+from com_blockether_catalyst.consensusVotingComparison import (
     ComparisonStrategy,
     FieldComparator,
     VotingField,
 )
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionBaseTypes import (
+from com_blockether_catalyst.knowledgeKnowledgeExtractionBaseTypes import (
     ChunkAcronymExtractionResponse,
     ChunkingDecision,
     ChunkKeywordExtractionResponse,

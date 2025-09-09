@@ -1,0 +1,14 @@
+Chunk this document page into semantic segments.
+
+Document: {{ document_name }}
+Page {{ page.page }}:
+
+{{ page.raw_text }}
+
+Please split this text into logical, self-contained chunks that:
+1. Preserve markdown structure (don't break tables, lists, or code blocks)
+2. Maintain semantic coherence
+3. Include sufficient context for independent understanding
+4. Keep related information together
+
+Return a ChunkingDecision with the chunks.

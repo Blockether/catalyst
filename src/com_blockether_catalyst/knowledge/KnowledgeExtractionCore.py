@@ -16,59 +16,49 @@ from datetime import datetime
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Sequence, Set, Tuple, TypeVar, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import anyio
-import tiktoken
+import numpy as np
+from pydantic import BaseModel, RootModel
 from rapidfuzz import fuzz
+from sklearn.feature_extraction.text import CountVectorizer
 
-from com_blockether_catalyst.consensus.internal.ConsensusTypes import (
-    ConsensusResult,
-)
-from com_blockether_catalyst.knowledge.internal import PDFKnowledgeExtractor
-
-from ..consensus.internal.Consensus import Consensus
-from ..utils.BatchProcessor import BatchProcessor
-from ..utils.TypedCalls import ArityOneTypedCall
-
-# Import from base types
-from .internal import (
-    AcronymMeaningExtractionResponse,
-    BaseAcronymExtractionCall,
-    BaseChunkingCall,
-    BaseKeywordExtractionCall,
-    ChunkingDecision,
-    ExtractionCallsSettings,
-    KeywordMeaningExtractionResponse,
-    KnowledgeExtractionItem,
-    KnowledgeExtractionOutput,
-    KnowledgeProcessorSettings,
-)
-
-# Import from main types
-from .internal.KnowledgeExtractionTypes import (
-    AcronymCandidate,
+from com_blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore
+from .KnowledgeExtractionTypes import (
     DocumentMetadata,
-    GroupedAcronym,
-    GroupedKeyword,
-    KeywordCandidate,
     KnowledgeChunk,
-    KnowledgeChunkWithTerms,
-    KnowledgeExtractionResult,
-    KnowledgeExtractionResultWithChunks,
-    KnowledgeMetadata,
-    KnowledgePageData,
-    LinkedKnowledge,
-    Term,
-    TermCooccurrence,
-    TermLink,
-    TermOccurrence,
-)
-from .KnowledgeSearchCore import KnowledgeSearchCore
+    KnowledgeChunkWithTerms, KnowledgeExtractionItem, KnowledgeExtractionOutput, KnowledgeExtractionResult, KnowledgeExtractionResultWithChunks, KnowledgeMetadata, KnowledgePageData, KnowledgeProcessorSettings, LinkedKnowledge, Term, TermCandidate, TermCooccurrence, TermCandidateGrouped, TermLink, TermOccurrence, TermWithLinks)
+from .PDFKnowledgeExtractor import PDFKnowledgeExtractor
+from .KnowledgeExtractionCallBase import ExtractionCallsSettings
+from ..consensus.Consensus import Consensus
+from ..utils import ArityOneTypedCall, ConcurrentProcessor
+
+# from .KnowledgeSearchCore import KnowledgeSearchCore
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+type PydanticLike = Union[
+    BaseModel,
+    RootModel,
+    Sequence[BaseModel | RootModel],
+    Mapping[str, BaseModel | RootModel],
+]
 
 
 def timed_operation(step_name: str) -> Callable[[Callable[..., T]], Callable[..., T]]:
@@ -136,19 +126,14 @@ class KnowledgeExtractionCore:
         logger.info(f"KnowledgeExtractionCore initialized with output_dir: {self._output_dir}")
 
         # Validate that ALL typed calls are provided - they are MANDATORY
-        if not self.calls.acronym_extraction_call:
-            raise ValueError("acronym_extraction_call is mandatory in settings")
-        if not self.calls.keyword_extraction_call:
-            raise ValueError("keyword_extraction_call is mandatory in settings")
-        if not self.calls.chunking_call:
-            raise ValueError("chunking_call is mandatory in settings")
-        if not self.calls.chunk_acronym_extraction_call:
-            raise ValueError("chunk_acronym_extraction_call is mandatory in settings - needed to find acronyms")
-        if not self.calls.chunk_keyword_extraction_call:
-            raise ValueError("chunk_keyword_extraction_call is mandatory in settings - needed to find keywords")
+        if not self.calls.term_extraction_call:
+            raise ValueError("term_extraction_call is mandatory in settings")
+
+        if not self.calls.document_chunking_call:
+            raise ValueError("document_chunking_call is mandatory in settings")
 
         # Define extractors for each supported extension
-        self.extractors = {".pdf": PDFKnowledgeExtractor(self._settings.pdf_settings)}
+        self.extractors = {".pdf": PDFKnowledgeExtractor(self._settings)}
 
         # Future: Add more extractors here
         # ".docx": self.docx_extractor
@@ -259,7 +244,7 @@ class KnowledgeExtractionCore:
                 files_by_extension[extension].append(file_path)
         return files_by_extension
 
-    @timed_operation("Step 1/11: Raw file extraction")
+    @timed_operation("Step 1/12: Raw file extraction")
     def _process_files_by_extension(self, files_by_extension: dict[str, list[Path]]) -> KnowledgeExtractionOutput:
         """
         Process files grouped by extension and return extraction output.
@@ -335,7 +320,7 @@ class KnowledgeExtractionCore:
 
     def _build_chunk_term_index(
         self,
-        grouped_terms: Dict[str, Any],
+        grouped_terms: Dict[str, TermCandidateGrouped],
         chunks_index: Dict[str, Sequence[KnowledgeChunk]],
     ) -> Dict[Tuple[str, int], Dict[str, Sequence[int]]]:
         """
@@ -355,13 +340,13 @@ class KnowledgeExtractionCore:
                 # Use the pre-built chunks_index for efficient lookup
                 if occurrence.document_id in chunks_index:
                     for chunk in chunks_index[occurrence.document_id]:
-                        positions = self._find_term_positions(term, chunk.text)
+                        positions = self._find_term_positions_in_text(term, chunk.text)
                         if positions:
                             chunk_terms_index[(occurrence.document_id, chunk.index)][term] = positions
 
         return chunk_terms_index
 
-    def _find_term_positions(self, term: str, text: str) -> Sequence[int]:
+    def _find_term_positions_in_text(self, term: str, text: str) -> Sequence[int]:
         """
         Find all positions where a term appears as a whole word in the text.
 
@@ -437,13 +422,7 @@ class KnowledgeExtractionCore:
         logger.info(f"Raw extraction completed: {raw_extraction.model_dump().keys()} documents")
 
         # Persist raw extraction results
-        self._persist(
-            "1_raw_extraction",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "raw_extraction": raw_extraction.model_dump(),
-            },
-        )
+        self._save_pickle("1_raw_extraction", raw_extraction)
 
         # Step 2: Chunk the documents and persist the results
         results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks] = await self._chunk_extraction(
@@ -451,14 +430,8 @@ class KnowledgeExtractionCore:
         )
         total_chunks = self._count_total_chunks(results_with_chunks)
         logger.info(f"Created {total_chunks} chunks from {len(results_with_chunks)} documents")
-        self._persist(
-            "2_chunked_extraction",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "chunked_documents": [r.model_dump() for r in results_with_chunks],
-                "total_chunks": total_chunks,
-            },
-        )
+
+        self._save_pickle("2_chunked_documents", results_with_chunks)
 
         # Build chunks index for efficient lookup across all steps
         document_to_chunks_index: Dict[str, Sequence[KnowledgeChunk]] = self._build_document_chunk_index(
@@ -466,219 +439,65 @@ class KnowledgeExtractionCore:
         )
         logger.info(f"Built chunks index for {len(document_to_chunks_index)} documents")
 
-        # Step 3: Extract acronym candidates
-        acronyms: Sequence[AcronymCandidate] = await self._extract_all_acronyms_candidates(results_with_chunks)
-        logger.info(f"Found {len(acronyms)} total acronym candidates")
-        self._persist(
-            "3_acronym_candidates",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "total_acronym_candidates": len(acronyms),
-                "acronyms": [a.model_dump() for a in acronyms],
-            },
-        )
+        terms: Sequence[TermCandidate] = await self._extract_terms_candidates_from_documents(results_with_chunks)
+        logger.info(f"Found {len(terms)} term candidates")
+        self._save_pickle("3_term_candidates", terms)
 
-        # Step 4: Group acronyms across documents/pages
-        grouped_acronyms: Dict[str, GroupedAcronym] = self._group_acronym_candidates(acronyms)
-        logger.info(f"{len(grouped_acronyms)} unique acronyms identified")
+        grouped_terms = self._group_term_candidates(terms)
+        self._save_pickle("4_grouped_terms", grouped_terms)
 
-        self._persist(
-            "4_acronyms_groupped",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "total_unique_acronyms": len(grouped_acronyms),
-                "acronyms": {k: v.model_dump() for k, v in grouped_acronyms.items()},
-            },
+        terms_with_cooccurrences: Dict[str, TermCandidateGrouped] = self._enrich_with_cooccurrences(
+            grouped_terms, document_to_chunks_index
         )
+        logger.info(f"Added co-occurrences to {len(terms_with_cooccurrences)} terms")
+        self._save_pickle("5_terms_with_cooccurrences", terms_with_cooccurrences)
 
-        # Step 5: Extract keyword candidates
-        keywords: Sequence[KeywordCandidate] = await self._extract_keywords_candidates_from_documents(
-            results_with_chunks
-        )
-        logger.info(f"Found {len(keywords)} keyword candidates")
-        self._persist(
-            "5_keyword_candidates",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "total_keyword_candidates": len(keywords),
-                "keywords_candidates": [k.model_dump() for k in keywords],
-            },
-        )
+        # Now validate and extract full forms for terms
+        consolidated_terms = await self._enrich_with_terms_meanings(terms_with_cooccurrences, document_to_chunks_index)
+        self._save_pickle("6_terms_with_meanings", consolidated_terms)
 
-        # Step 6: Group keyword candidates
-        grouped_keywords: Dict[str, GroupedKeyword] = self._group_keyword_candidates(keywords)
-        logger.info(f"{len(grouped_keywords)} unique keywords identified")
-
-        self._persist(
-            "6_keywords_grouped",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "total_unique_keywords": len(grouped_keywords),
-                "keywords": {key: value.model_dump() for key, value in grouped_keywords.items()},
-            },
-        )
-
-        # Step 7: Extract co-occurrences for keywords and acronyms separately
-        # Extract co-occurrences for keywords
-        keywords_with_cooccurrences: Dict[str, GroupedKeyword] = self._extract_cooccurrences(
-            grouped_keywords, document_to_chunks_index
-        )
-        logger.info(f"Added co-occurrences to {len(keywords_with_cooccurrences)} keywords")
-
-        # Extract co-occurrences for acronyms
-        acronyms_with_cooccurrences: Dict[str, GroupedAcronym] = self._extract_cooccurrences(
-            grouped_acronyms, document_to_chunks_index
-        )
-        logger.info(f"Added co-occurrences to {len(acronyms_with_cooccurrences)} acronyms")
-
-        # Persist co-occurrence results
-        self._persist(
-            "7_keywords_with_cooccurrences",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "total_keywords": len(keywords_with_cooccurrences),
-                "keywords": {key: value.model_dump() for key, value in keywords_with_cooccurrences.items()},
-            },
-        )
-        self._persist(
-            "7_acronyms_with_cooccurrences",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "total_acronyms": len(acronyms_with_cooccurrences),
-                "acronyms": {key: value.model_dump() for key, value in acronyms_with_cooccurrences.items()},
-            },
-        )
-
-        # Now validate and extract full forms for acronyms
-        (
-            consolidated_acronyms,
-            keywords_from_acronyms_proposals,
-            rejected_acronym_metadata,
-        ) = await self._consolidate_and_validate_acronyms_meanings(
-            acronyms_with_cooccurrences, document_to_chunks_index
-        )
-        self._persist(
-            "8_rejected_acronyms_as_keywords",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "rejected_acronyms": {
-                    key: [kw.model_dump() for kw in value] if isinstance(value, Sequence) else value.model_dump()
-                    for key, value in keywords_from_acronyms_proposals.items()
-                },
-                "rejected_acronym_metadata": rejected_acronym_metadata,  # Include all validation metadata
-            },
-        )
-
-        valid_acronym_count = len(consolidated_acronyms)
-        rejected_acronym_count = len(acronyms_with_cooccurrences) - valid_acronym_count
-        logger.info(f"{valid_acronym_count} validated acronyms, {rejected_acronym_count} rejected")
-        # Persist validated acronyms
-        self._persist(
-            "8_acronyms_consolidated",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "total_validated": valid_acronym_count,
-                "total_rejected": rejected_acronym_count,
-                "acronyms": {key: value.model_dump() for key, value in consolidated_acronyms.items()},
-            },
-        )
-
-        # Merge rejected acronyms (now as keywords) with existing keywords
-        merged_keywords = self._merge_rejected_acronyms_with_keywords(
-            keywords_with_cooccurrences, keywords_from_acronyms_proposals
-        )
-
-        # Step 8: Validate keywords and extract meanings (WITH co-occurrence context)
-        consolidated_keywords = await self._consolidate_and_extract_keyword_meanings(
-            merged_keywords, document_to_chunks_index
-        )
-        valid_keyword_count = len(consolidated_keywords)
-        rejected_keyword_count = len(merged_keywords) - valid_keyword_count
-        logger.info(f"{valid_keyword_count} validated keywords, {rejected_keyword_count} rejected")
-
-        # Persist validated keywords
-        self._persist(
-            "9_keywords_consolidated",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "total_validated": valid_keyword_count,
-                "total_rejected": rejected_keyword_count,
-                "keywords": {key: value.model_dump() for key, value in consolidated_keywords.items()},
-            },
-        )
-
-        # Step 9: Validate acronyms and extract full forms (WITH co-occurrence context)
-        logger.info("Step 9/11: Starting acronym validation and full form extraction with co-occurrence context")
-
-        # Step 10: Link acronyms with keywords based on similarity
-        links = self._link_acronyms_with_keywords(consolidated_keywords, consolidated_acronyms)
-        logger.info(f"Found {len(links)} acronym-keyword links")
-
-        # Persist link between acronyms and keywords
-        self._persist(
-            "10_term_links",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "links": [link.model_dump() for link in links],
-            },
-        )
+        consolidated_terms_with_links = self._link_terms(consolidated_terms)
+        self._save_pickle("7_terms_with_links", consolidated_terms_with_links)
 
         # Build final LinkedKnowledge object
         linked_knowledge = self._build_linked_knowledge(
             results_with_chunks=results_with_chunks,
-            consolidated_keywords=consolidated_keywords,
-            consolidated_acronyms=consolidated_acronyms,
-            links=links,
+            terms=consolidated_terms_with_links,
             document_to_chunks_index=document_to_chunks_index,
         )
 
-        self._persist(
-            "11_linked_knowledge",
-            {
-                "timestamp": datetime.now().isoformat(),
-                "linked_knowledge": linked_knowledge.model_dump(),
-            },
-        )
-
         # Serialize to pickle file
-        self._save_linked_knowledge_pickle(linked_knowledge)
+        self._save_pickle("linked_knowledge", linked_knowledge)
 
         # Copy source documents to output directory
         self._copy_source_documents(all_files)
 
-        logger.info(
-            f"Performance summary: {len(linked_knowledge.documents)} documents, {len(linked_knowledge.terms)} terms, {len(linked_knowledge.links)} links"
-        )
-
-        # Step 12: Create and persist KnowledgeSearchCore
-        logger.info("Step 12/13: Creating KnowledgeSearchCore with vector indices")
+        # Step 10: Create and persist KnowledgeSearchCore
+        logger.info("Step 10/12: Creating KnowledgeSearchCore with vector indices")
         search_core = KnowledgeSearchCore(
             linked_knowledge=linked_knowledge,
             pickle_path=self._output_dir / "knowledge_search.pkl",
         )
 
-        # Step 13: Persist the search core
-        logger.info("Step 13/13: Persisting KnowledgeSearchCore to pickle")
+        # Step 11: Persist the search core
+        logger.info("Step 11/12: Persisting KnowledgeSearchCore to pickle")
         search_core.persist()
 
         pickle_size_mb = (self._output_dir / "knowledge_search.pkl").stat().st_size / (1024 * 1024)
         logger.info(f"KnowledgeSearchCore saved ({pickle_size_mb:.2f} MB)")
 
+        # Step 12: Final summary
+        logger.info("Step 12/12: Knowledge extraction pipeline completed successfully")
+        logger.info(
+            f"Processed {len(linked_knowledge.documents)} documents with {linked_knowledge.total_chunks} chunks"
+        )
+        logger.info(
+            f"Extracted {linked_knowledge.total_acronyms} acronyms and {linked_knowledge.total_keywords} keywords"
+        )
+
         return linked_knowledge
 
-    @timed_operation("Step 15/15: LinkedKnowledge pickle serialization")
-    def _save_linked_knowledge_pickle(self, linked_knowledge: LinkedKnowledge) -> None:
-        """Save LinkedKnowledge to pickle file.
-
-        Args:
-            linked_knowledge: The LinkedKnowledge object to serialize
-        """
-        pickle_path = self._output_dir / "linked_knowledge.pkl"
-        with open(pickle_path, "wb") as f:
-            pickle.dump(linked_knowledge, f)
-        file_size_mb = pickle_path.stat().st_size / (1024 * 1024)
-        logger.info(f"Saved to {pickle_path} ({file_size_mb:.2f} MB)")
-
+    @timed_operation("Step 9/12: Copy source documents")
     def _copy_source_documents(self, all_files: Sequence[Path]) -> None:
         """Copy source documents to output directory for viewing.
 
@@ -705,9 +524,8 @@ class KnowledgeExtractionCore:
 
             # Copy to output directory (for specific document types)
             if file_path.suffix.lower() in [".pdf", ".txt", ".md"]:
-                # Overwrite if collision occurs
-                dest_filename = f"{file_path.stem}_{hash(str(file_path))}{file_path.suffix}"
-                dest_path = docs_dir / dest_filename
+                # Keep original filename and overwrite if collision occurs
+                dest_path = docs_dir / file_path.name
 
                 if dest_path.exists():
                     logger.info(f"Overwriting existing file: {dest_path}")
@@ -719,34 +537,15 @@ class KnowledgeExtractionCore:
         # Log summary
         logger.info(f"Document copying completed: {copied_count} files copied to {docs_dir}")
 
+    @timed_operation("Step 8/12: Build LinkedKnowledge")
     def _build_linked_knowledge(
         self,
         results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks],
-        consolidated_keywords: Dict[str, Term],
-        consolidated_acronyms: Dict[str, Term],
-        links: Sequence[TermLink],
+        terms: Dict[str, TermWithLinks],
         document_to_chunks_index: Dict[str, Sequence[KnowledgeChunk]],
     ) -> LinkedKnowledge:
-        """Build the final LinkedKnowledge object with minimized documents.
-
-        Args:
-            results_with_chunks: Sequence of extraction results with chunks
-            consolidated_keywords: Dictionary of validated keywords
-            consolidated_acronyms: Dictionary of validated acronyms
-            links: Sequence of term links between acronyms and keywords
-            document_to_chunks_index: Index mapping document IDs to chunks
-
-        Returns:
-            LinkedKnowledge object containing all extracted knowledge
-        """
-        # Build normalized indices: documents metadata and pages separately
         documents: Dict[str, DocumentMetadata] = {}
         pages_index: Dict[Tuple[str, int], KnowledgePageData] = {}
-
-        # Combine all terms (keywords and acronyms) with co-occurrences
-        final_terms: Dict[str, Term] = {}
-        final_terms.update(consolidated_keywords)
-        final_terms.update(consolidated_acronyms)
 
         # Build search indices
         (
@@ -755,7 +554,7 @@ class KnowledgeExtractionCore:
             chunks,
             document_to_chunk_ids_index,
             document_page_to_chunks_index,
-        ) = self._build_search_indices(final_terms, document_to_chunks_index)
+        ) = self._build_search_indices(terms, document_to_chunks_index)
 
         for result in results_with_chunks:
             # Build pages index
@@ -769,7 +568,6 @@ class KnowledgeExtractionCore:
                     text=page.text,
                     tables=page.tables,
                     images=page.images,
-                    lines=page.lines,
                 )
                 pages_index[page_key] = page_data
 
@@ -789,7 +587,7 @@ class KnowledgeExtractionCore:
             )
 
         # Build inverted indices for term-to-chunk lookups
-        term_to_chunks_index, term_to_document_with_page_index = self._build_inverted_indices(final_terms)
+        term_to_chunks_index, term_to_document_with_page_index = self._build_inverted_indices(terms)
 
         # Update document metadata with actual term counts
         for doc_id in documents:
@@ -801,11 +599,11 @@ class KnowledgeExtractionCore:
             keywords_count = 0
 
             for term_key in doc_terms:
-                if term_key in final_terms:
-                    term = final_terms[term_key]
-                    if term.term_type == "acronym":
+                if term_key in terms:
+                    term = terms[term_key]
+                    if term.type == "acronym":
                         acronyms_count += 1
-                    elif term.term_type == "keyword":
+                    elif term.type == "keyword":
                         keywords_count += 1
 
             # Update the document metadata
@@ -814,16 +612,15 @@ class KnowledgeExtractionCore:
             documents[doc_id].total_keywords = keywords_count
 
         # Calculate total statistics across all documents
-        total_acronyms_count = sum(1 for term in final_terms.values() if term.term_type == "acronym")
-        total_keywords_count = sum(1 for term in final_terms.values() if term.term_type == "keyword")
+        total_acronyms_count = sum(1 for term in terms.values() if term.type == "acronym")
+        total_keywords_count = sum(1 for term in terms.values() if term.type == "keyword")
         total_chunks_count = sum(len(chunk_ids) for chunk_ids in document_to_chunk_ids_index.values())
 
         # Create and return LinkedKnowledge object with all indices
         return LinkedKnowledge(
             documents=documents,
             pages=pages_index,
-            terms=final_terms,
-            links=links,
+            terms=terms,
             chunks=chunks,
             document_to_chunk_ids_index=document_to_chunk_ids_index,
             document_page_to_chunks_index=document_page_to_chunks_index,
@@ -836,11 +633,11 @@ class KnowledgeExtractionCore:
             total_chunks=total_chunks_count,
         )
 
-    async def _extract_keywords_from_document(
+    async def _extract_terms_from_document(
         self, document_result: KnowledgeExtractionResultWithChunks
-    ) -> Sequence[KeywordCandidate]:
+    ) -> Sequence[TermCandidate]:
         """
-        Extract keyword candidates from a single document using LLM.
+        Extract term candidates from a single document using LLM.
 
         Args:
             document_result: The parent document result for metadata
@@ -848,88 +645,106 @@ class KnowledgeExtractionCore:
         Returns:
             Sequence of keyword candidates from this document
         """
-        # First, count total words in document for normalization
-        total_words = 0
-        for chunk in document_result.chunks:
-            total_words += len(chunk.text.split())
+        # Transform all chunks together to get consistent vocabulary
+        chunk_texts = [chunk.text for chunk in document_result.chunks]
 
-        # Track term occurrences for scoring
-        term_occurrences: dict[str, int] = {}
-        keywords_candidates: list[KeywordCandidate] = []
+        # Adjust min_df based on the number of chunks available
+        # min_df cannot be greater than the number of documents (chunks)
+        keywords_min_df = min(self._settings.keywords_min_df, len(chunk_texts))
+        acronyms_min_df = min(self._settings.acronyms_min_df, len(chunk_texts))
 
-        # Create BatchProcessor for concurrent chunk processing
-        processor = BatchProcessor[KnowledgeChunk, Tuple[KeywordCandidate, int]](
-            batch_size=8,  # Process 8 chunks concurrently
-            max_retries=2,  # Retry failed chunks up to 2 times
-            retry_min_wait=1,  # Min 1 second between retries
-            retry_max_wait=5,  # Max 5 seconds between retries
+        # Create vectorizer for this document
+        tfidf_counter_keywords = CountVectorizer(
+            stop_words="english",
+            strip_accents="ascii",
+            ngram_range=(2, 3),
+            min_df=keywords_min_df,
+            analyzer="word",
+            dtype=np.int64,
         )
 
-        # Create processor function for chunk extraction
-        async def extract_from_chunk(
-            chunk: KnowledgeChunk,
-        ) -> list[Tuple[KeywordCandidate, int]]:
-            # Call the LLM to extract keywords from this chunk
-            result = await self.calls.chunk_keyword_extraction_call.execute(
-                chunk_text=chunk.text,
-                document_name=document_result.filename,
-                page_number=chunk.page,
-                chunk_index=chunk.index,
-            )
-
-            # Convert extracted keywords to KeywordCandidate objects with term counts
-            chunk_results = []
-            for keyword_data in result.final_response.keywords:
-                normalized_term = self.normalize_term(keyword_data.term)
-
-                # Count occurrences of this term in the chunk
-                term_count = chunk.text.lower().count(normalized_term.lower())
-
-                candidate = KeywordCandidate(
-                    term=normalized_term,
-                    document_id=document_result.id,
-                    document_name=document_result.filename,
-                    page=chunk.page,
-                    chunk=chunk.index,
-                    score=0.0,  # Will calculate after processing all chunks
-                )
-                chunk_results.append((candidate, term_count))
-
-                logger.debug(f"Found keyword '{keyword_data.term}' in chunk {chunk.index} " f"(page {chunk.page})")
-
-            return chunk_results
-
-        # Process all chunks concurrently
-        chunk_results = await processor.process_batch(
-            items=document_result.chunks,
-            processor_func=extract_from_chunk,
-            flatten_results=True,
+        # Create vectorizer for this document - using simple pattern for acronyms (2+ consecutive capitals)
+        tfidf_counter_acronyms = CountVectorizer(
+            stop_words=None,
+            strip_accents="ascii",
+            ngram_range=(1, 1),
+            min_df=acronyms_min_df,
+            token_pattern=r"\b[A-Z]{2,}[_/-]?[A-Z]*\b",
+            lowercase=False,
+            dtype=np.int64,
         )
 
-        # Process results and build term occurrences
-        for candidate, term_count in chunk_results:
-            term_occurrences[candidate.term] = term_occurrences.get(candidate.term, 0) + term_count
-            keywords_candidates.append(candidate)
+        # Check if chunk_texts are empty or only contain stop words
+        if not chunk_texts or all(not text.strip() for text in chunk_texts):
+            logger.warning(f"Document {document_result.filename} has no valid chunk texts")
+            return []
 
-        # Calculate TF scores for all candidates
-        for candidate in keywords_candidates:
-            if total_words > 0:
-                # Term frequency normalized by total words in document
-                tf_score = term_occurrences.get(candidate.term, 1) / total_words
-                # Apply log scaling to avoid very small numbers
-                candidate.score = min(1.0, tf_score * 1000)  # Scale up and cap at 1.0
-            else:
-                candidate.score = 0.0
+        # Extract keywords and acronyms from chunks
+        tfidf_keywords_matrix = tfidf_counter_keywords.fit_transform(chunk_texts)
+        keywords = tfidf_counter_keywords.get_feature_names_out()
+        keywords_scores_matrix = tfidf_keywords_matrix.toarray()  # type: ignore
 
-        logger.info(f"Extracted {len(keywords_candidates)} keyword candidates from {document_result.filename}")
-        return keywords_candidates
+        tfidf_acronyms_matrix = tfidf_counter_acronyms.fit_transform(chunk_texts)
+        acronyms = tfidf_counter_acronyms.get_feature_names_out()
+        acronyms_scores_matrix = tfidf_acronyms_matrix.toarray()  # type: ignore
 
-    @async_timed_operation("Step 5/11: Keyword extraction")
-    async def _extract_keywords_candidates_from_documents(
+        # Check if no features were extracted at all
+        if keywords_scores_matrix.shape[1] == 0 and acronyms_scores_matrix.shape[1] == 0:
+            logger.warning(f"No keywords or acronyms found in document {document_result.filename}")
+            return []
+
+        # Extract keywords for each chunk
+        keyword_candidates = []
+        acronyms_candidates = []
+        for chunk_idx, chunk in enumerate(document_result.chunks):
+            # Process keywords if available
+            if keywords_scores_matrix.shape[1] > 0:
+                chunk_scores_keywords = keywords_scores_matrix[chunk_idx]
+                # Create keyword candidates for this chunk
+                for keyword_idx, score in enumerate(chunk_scores_keywords):
+                    if score > 0:  # Only add non-zero scores
+                        keyword_candidates.append(
+                            TermCandidate(
+                                term=self.normalize_term(keywords[keyword_idx]),
+                                document_name=document_result.filename,
+                                document_id=document_result.id,
+                                total=score,
+                                page=chunk.page,
+                                chunk=chunk.index,
+                                type="keyword",
+                            )
+                        )
+
+            # Process acronyms if available
+            if acronyms_scores_matrix.shape[1] > 0:
+                chunk_scores_acronyms = acronyms_scores_matrix[chunk_idx]
+                # Create acronym candidates for this chunk
+                for acronym_idx, score in enumerate(chunk_scores_acronyms):
+                    if score > 0:  # Only add non-zero scores
+                        acronyms_candidates.append(
+                            TermCandidate(
+                                term=self.normalize_term(acronyms[acronym_idx]),
+                                document_name=document_result.filename,
+                                document_id=document_result.id,
+                                total=score,
+                                page=chunk.page,
+                                chunk=chunk.index,
+                                type="acronym",
+                            )
+                        )
+
+        # Combine and sort all candidates
+        all_candidates = keyword_candidates + acronyms_candidates
+        all_candidates.sort(key=lambda x: x.total, reverse=True)
+
+        return all_candidates
+
+    @async_timed_operation("Step 3/12: Terms extraction")
+    async def _extract_terms_candidates_from_documents(
         self, results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks]
-    ) -> Sequence[KeywordCandidate]:
+    ) -> Sequence[TermCandidate]:
         """
-        Extract keyword candidates from the chunked knowledge extraction output using BatchProcessor.
+        Extract term candidates from the chunked knowledge extraction output using BatchProcessor.
 
         Args:
             results_with_chunks: The chunked extraction output to process.
@@ -940,36 +755,33 @@ class KnowledgeExtractionCore:
         if not results_with_chunks:
             return []
 
-        # Create BatchProcessor for concurrent document processing
-        processor = BatchProcessor[KnowledgeExtractionResultWithChunks, KeywordCandidate](
-            batch_size=5,  # Process 3 documents concurrently
-            max_retries=2,  # Retry failed documents up to 2 times
-            retry_min_wait=1,  # Min 1 second between retries
-            retry_max_wait=5,  # Max 5 seconds between retries
+        # Create ConcurrentProcessor for concurrent document processing
+        processor = ConcurrentProcessor[KnowledgeExtractionResultWithChunks, TermCandidate](
+            concurrency=5,
+            max_retries=3,
         )
 
         # Create processor function for document extraction
-        async def extract_from_document(
+        async def extract_terms_from_document(
             document_result: KnowledgeExtractionResultWithChunks,
-        ) -> list[KeywordCandidate]:
-            logger.info(f"Extracting keywords from document: {document_result.filename}")
-            doc_keywords = await self._extract_keywords_from_document(document_result)
-            return list(doc_keywords)
+        ) -> list[TermCandidate]:
+            logger.info(f"Extracting terms from document: {document_result.filename}")
+            doc_terms = await self._extract_terms_from_document(document_result)
+            return list(doc_terms)
 
         # Process all documents concurrently
-        keywords = await processor.process_batch(
+        terms = await processor.process(
             items=results_with_chunks,
-            processor_func=extract_from_document,
-            flatten_results=True,
+            processor_func=extract_terms_from_document,
         )
 
-        logger.info(f"Extracted {len(keywords)} keyword candidates from {len(results_with_chunks)} documents")
-        return keywords
+        logger.info(f"Extracted {len(terms)} term candidates from {len(results_with_chunks)} documents")
+        return terms
 
-    @timed_operation("Step 4/11: Acronym grouping")
-    def _group_acronym_candidates(self, acronym_candidates: List[AcronymCandidate]) -> Dict[str, GroupedAcronym]:
+    @timed_operation("Step 4/12: Term grouping")
+    def _group_term_candidates(self, term_candidates: List[TermCandidate]) -> Dict[str, TermCandidateGrouped]:
         """
-        Group acronym candidates across all documents and pages.
+        Group term candidates across all documents and pages.
 
         Args:
             acronym_candidates: List of all acronym candidates from extraction
@@ -977,227 +789,103 @@ class KnowledgeExtractionCore:
         Returns:
             Dictionary mapping acronym to GroupedAcronym object
         """
-        groupped: Dict[str, GroupedAcronym] = {}
+        groupped: Dict[str, TermCandidateGrouped] = {}
 
-        for candidate in acronym_candidates:
+        for candidate in term_candidates:
             term = candidate.term
 
             if term not in groupped:
-                groupped[term] = GroupedAcronym(term=term)
+                groupped[term] = TermCandidateGrouped(term=term, type=candidate.type, total=0)
+
+            if groupped[term].type != candidate.type:
+                # Stronger association with acronym if mixed types found
+                groupped[term].type = "acronym"
 
             occurrence = TermOccurrence(
                 document_id=candidate.document_id,
                 document_name=candidate.document_name,
                 page=candidate.page,
                 chunk_index=candidate.chunk,
+                total=candidate.total,
             )
 
             groupped[term].occurrences.append(occurrence)
-            groupped[term].total_count += 1
+            groupped[term].total += candidate.total
 
         return groupped
 
-    @async_timed_operation("Step 9/11: Acronym validation")
-    async def _consolidate_and_validate_acronyms_meanings(
+    @async_timed_operation("Step 6/12: Terms enrichment with meanings")
+    async def _enrich_with_terms_meanings(
         self,
-        consolidated_acronyms: Dict[str, GroupedAcronym],
-        chunks_index: Dict[str, List[KnowledgeChunk]],
-    ) -> Tuple[Dict[str, Term], Dict[str, List[GroupedKeyword]], Dict[str, Dict[str, Any]]]:
-        """
-        Validate consolidated acronyms and extract their meanings using BatchProcessor.
-
-        Args:
-            extraction_output_with_chunks: The chunked extraction output for context
-            consolidated_acronyms: Dictionary of grouped acronym candidates
-            chunks_index: Pre-built index mapping document IDs to chunks
-
-        Returns:
-            Tuple of:
-            - Dictionary of validated acronyms with meanings
-            - Dictionary of rejected acronyms converted to keyword proposals
-            - Dictionary of rejected acronym metadata
-        """
-
-        # Create BatchProcessor for concurrent acronym validation
-        processor = BatchProcessor[Tuple[str, GroupedAcronym], Tuple[str, GroupedAcronym, Any]](
-            batch_size=5,  # Process 5 acronyms concurrently
-            max_retries=3,  # Retry failed acronyms up to 3 times
-            retry_min_wait=1,  # Min 1 second between retries
-            retry_max_wait=10,  # Max 10 seconds between retries
+        groups: Dict[str, TermCandidateGrouped],
+        document_to_chunks_index: Dict[str, Sequence[KnowledgeChunk]],
+    ) -> Dict[str, Term]:
+        # Create BatchProcessor for concurrent term validation
+        processor = ConcurrentProcessor[TermCandidateGrouped, Term](
+            concurrency=5,
+            max_retries=3,
         )
 
-        # Prepare acronym items for batch processing
-        acronym_items = [(acronym, consolidated) for acronym, consolidated in consolidated_acronyms.items()]
+        async def _enrich_term(
+            item: TermCandidateGrouped,
+        ) -> Optional[Term]:
+            occurrences_contexts = [
+                chunk.text
+                for occurrence in item.occurrences
+                for chunk in document_to_chunks_index.get(occurrence.document_id, [])
+                if chunk.index == occurrence.chunk_index
+            ]
 
-        # Create processor function for validation
-        async def validate_acronym(
-            item: Tuple[str, GroupedAcronym],
-        ) -> list[Tuple[str, GroupedAcronym, Any]]:
-            acronym, consolidated = item
-            # Gather contexts for this acronym from chunks
-            acronym = KnowledgeExtractionCore.normalize_term(acronym)
+            cooccurring_terms: Dict[str, List[str]] = defaultdict(list)
+            for cooccurrence in item.cooccurrences:
+                # Look up the co-occurring term in groups
+                cooccurring_term_data = groups.get(cooccurrence.term)
+                if cooccurring_term_data:
+                    # Get contexts for this specific co-occurring term
+                    contexts = [
+                        chunk.text
+                        for occurrence in cooccurring_term_data.occurrences[:3]  # Limit occurrences
+                        for chunk in document_to_chunks_index.get(occurrence.document_id, [])
+                        if chunk.index == occurrence.chunk_index
+                    ]
+                    cooccurring_terms[cooccurrence.term].extend(contexts)
 
-            contexts = self._find_all_contexts_for_term(consolidated, chunks_index)
+            response = await self.calls.term_extraction_call.execute(
+                term=item.term,
+                type=item.type,
+                occurrences_contexts=occurrences_contexts,
+                cooccurring_terms=cooccurring_terms,
+            )
 
-            # Gather contexts for each co-occurring term as a dictionary
-            cooccurrences_with_contexts = []
-            for cooccurrence in consolidated.cooccurrences:
-                cooc_contexts = self._find_all_contexts_for_term(
-                    consolidated_acronyms.get(cooccurrence.term, GroupedAcronym(term=cooccurrence.term)),
-                    chunks_index,
+            unwrapped_result = response.final_response
+            if not unwrapped_result or unwrapped_result.type == "unimportant":
+                logger.warning(f"Term extraction failed or invalid for term: {item.term}")
+                return None
+
+            if unwrapped_result.type != item.type:
+                logger.warning(
+                    f"Term type mismatch for '{item.term}': expected {item.type}, got {unwrapped_result.type}"
                 )
-                cooccurrences_with_contexts.append((cooccurrence, cooc_contexts))
 
-            # Validate the acronym using the validator
-            validation_result = await self._extract_single_acronym(acronym, contexts, cooccurrences_with_contexts)
-
-            # Return tuple with validation results
-            return [(acronym, consolidated, validation_result)]
+            return Term(
+                term=item.term,
+                type=unwrapped_result.type,
+                full_form=unwrapped_result.full_form or item.term,
+                occurrences=item.occurrences,
+                cooccurrences=item.cooccurrences,
+                meaning=unwrapped_result.meaning,
+                total=item.total,
+                reasoning=unwrapped_result.reasoning,
+            )
 
         # Process all acronyms concurrently
-        validation_results = await processor.process_batch(
-            items=acronym_items,
-            processor_func=validate_acronym,
-            flatten_results=True,
+        consolidated_terms = await processor.process(
+            items=list(groups.values()),
+            processor_func=_enrich_term,
         )
+        logger.info(f"Enriched {len(consolidated_terms)} terms with meanings and full forms")
 
-        # Process validation results
-        validated_acronyms: Dict[str, Term] = {}
-        keywords_proposals: Dict[str, List[GroupedKeyword]] = {}
-        rejected_acronym_metadata: Dict[str, Dict[str, Any]] = {}
-
-        for acronym, consolidated, validation_result in validation_results:
-            if not validation_result.is_valid or not validation_result.full_form:
-                if not validation_result.is_valid:
-                    logger.warning(f"📝 Acronym '{acronym}' REJECTED as acronym: {validation_result.reasoning}")
-
-                if not validation_result.full_form:
-                    logger.warning(
-                        f"📝 Acronym '{acronym}' REJECTED as acronym. Received VALID acronym without the full form."
-                    )
-
-                logger.info(
-                    f"➡️  Transferring '{acronym}' to keywords for re-evaluation "
-                    f"(occurrences: {consolidated.total_count})"
-                )
-
-                # Store the rejected acronym metadata including validation results
-                rejected_acronym_metadata[acronym] = {
-                    "term": acronym,
-                    "is_valid": validation_result.is_valid,
-                    "full_form": validation_result.full_form,
-                    "meaning": validation_result.meaning,
-                    "reasoning": validation_result.reasoning,
-                    "total_count": consolidated.total_count,
-                    "mean_score": consolidated.mean_score,
-                }
-
-                # Initialize the list if not present
-                if acronym not in keywords_proposals:
-                    keywords_proposals[acronym] = []
-
-                keywords_proposals[acronym].append(
-                    GroupedKeyword(
-                        term=acronym,
-                        occurrences=consolidated.occurrences,
-                        cooccurrences=consolidated.cooccurrences,
-                        total_count=consolidated.total_count,
-                        mean_score=consolidated.mean_score,
-                    )
-                )
-                continue
-
-            full_form = KnowledgeExtractionCore.normalize_term(validation_result.full_form)
-
-            validated_acronym = Term(
-                term=acronym,
-                term_type="acronym",
-                full_form=full_form,
-                occurrences=consolidated.occurrences,
-                total_count=consolidated.total_count,
-                cooccurrences=consolidated.cooccurrences,
-                mean_score=consolidated.mean_score,
-                meaning=validation_result.meaning,
-                reasoning=validation_result.reasoning,
-            )
-
-            validated_acronyms[acronym] = validated_acronym
-
-        # Log summary of validation results
-        if keywords_proposals:
-            total_transferred = sum(len(keywords) for keywords in keywords_proposals.values())
-            logger.info(
-                f"📊 Acronym validation summary: "
-                f"{len(validated_acronyms)} validated, "
-                f"{len(keywords_proposals)} rejected → "
-                f"{total_transferred} transferred to keywords"
-            )
-
-        return validated_acronyms, keywords_proposals, rejected_acronym_metadata
-
-    async def _extract_single_acronym(
-        self,
-        acronym: str,
-        contexts: List[str],
-        cooccurrences_with_contexts: List[Tuple[TermCooccurrence, List[str]]],
-    ) -> AcronymMeaningExtractionResponse:
-        """
-        Extract and validate a single acronym using the configured validator.
-
-        Args:
-            acronym: The acronym to validate/extract
-            contexts: Sequence of contexts where the acronym appears
-            cooccurrences_with_contexts: Sequence of tuples (TermCooccurrence, Sequence of contexts for that term)
-
-        Returns:
-            AcronymMeaningExtractionResponse with validation results
-        """
-        # Acronym extraction is mandatory - no fallback
-
-        # Execute the user-implemented extraction call
-        result: ConsensusResult[AcronymMeaningExtractionResponse] = await self.calls.acronym_extraction_call.execute(
-            acronym=acronym,
-            contexts=contexts,
-            cooccurrences_with_contexts=cooccurrences_with_contexts,
-            max_display_occurrences=self._settings.max_display_occurrences,
-            max_display_cooccurrences=self._settings.max_display_cooccurrences,
-        )
-
-        return result.final_response
-
-    def _estimate_tokens(self, text: str) -> int:
-        """
-        Estimate token count for a text string using tiktoken for accuracy.
-
-        Args:
-            text: The text to estimate tokens for
-
-        Returns:
-            Estimated token count
-        """
-        if not text:
-            return 0
-
-        encoding = tiktoken.get_encoding(self._settings.encoding_model)
-
-        return len(encoding.encode(text))
-
-    def _truncate_to_token_limit(self, text: str, max_tokens: int) -> str:
-        """
-        Truncate text to fit within token limit.
-
-        Args:
-            text: The text to truncate
-            max_tokens: Maximum number of tokens
-
-        Returns:
-            Truncated text
-        """
-        estimated_chars = max_tokens * 4
-        if len(text) <= estimated_chars:
-            return text
-        # Truncate with ellipsis indicator
-        return text[: estimated_chars - 20] + "\n\n[... truncated to fit token limit ...]"
+        return {term.term: term for term in consolidated_terms}
 
     async def _chunk_extraction_pages(
         self,
@@ -1219,12 +907,10 @@ class KnowledgeExtractionCore:
         Returns:
             Sequence of extracted chunks from all pages (order preserved)
         """
-        # Create BatchProcessor with retry logic
-        processor = BatchProcessor[KnowledgePageData, KnowledgeChunk](
-            batch_size=5,  # Process 5 pages concurrently
-            max_retries=3,  # Retry failed pages up to 3 times
-            retry_min_wait=1,  # Min 1 second between retries
-            retry_max_wait=10,  # Max 10 seconds between retries
+        # Create ConcurrentProcessor with retry logic
+        processor = ConcurrentProcessor[KnowledgePageData, KnowledgeChunk](
+            concurrency=5,  # Process 5 pages concurrently
+            max_retries=3,
         )
 
         # Create a wrapper function that captures the context
@@ -1233,17 +919,16 @@ class KnowledgeExtractionCore:
             chunks = await self._process_page_wrapper(page, document_name, document_id, metadata)
             return list(chunks)
 
-        # Process all pages using BatchProcessor with automatic flattening
-        all_chunks = await processor.process_batch(
+        all_chunks = await processor.process(
             items=pages,
             processor_func=process_page,
-            flatten_results=True,
         )
 
         # Re-index all chunks with global indices after collection
         # This ensures proper sequential indexing regardless of processing order
         for idx, chunk in enumerate(all_chunks):
             chunk.index = idx
+            chunk.doc_id = f"{document_id}_page_{chunk.page}_chunk_{idx}"
 
         logger.info(f"Processed {len(pages)} pages for document {document_name}, extracted {len(all_chunks)} chunks")
         return all_chunks
@@ -1264,23 +949,22 @@ class KnowledgeExtractionCore:
             metadata: Document metadata
         """
 
-        result = await self.calls.chunking_call.execute(page=page, document_name=document_name, metadata=metadata)
+        result = await self.calls.document_chunking_call.execute(page=page, document_name=document_name, metadata=metadata)
 
-        # Convert ChunkingDecision to KnowledgeChunks
         chunks = []
-        for i, chunk_output in enumerate(result.final_response.chunks):
+        for chunk_decision in result.final_response.chunks:
             chunk = KnowledgeChunk(
                 document_id=document_id,
                 document_name=document_name,
-                doc_id=f"{document_id}_p{page.page}_c{i}",
+                doc_id="",
                 index=0,
-                text=chunk_output.text.strip(),
+                text=chunk_decision.root.strip(),
                 page=page.page,
             )
             chunks.append(chunk)
-
         return chunks
 
+    @async_timed_operation("Step 2/12: Document chunking")
     async def _chunk_extraction(
         self,
         raw_extraction: KnowledgeExtractionOutput,
@@ -1291,11 +975,12 @@ class KnowledgeExtractionCore:
         chunked_results: list[KnowledgeExtractionResultWithChunks] = []
 
         # Iterate over all document types in the extraction output
-        for attr_name in dir(raw_extraction):
-            if attr_name.startswith("_") or callable(getattr(raw_extraction, attr_name)):
+        for attr_name, field_info in raw_extraction.model_fields.items():
+            try:
+                extraction_items = getattr(raw_extraction, attr_name)
+            except AttributeError:
                 continue
 
-            extraction_items = getattr(raw_extraction, attr_name)
             if extraction_items is None or not isinstance(extraction_items, list):
                 continue
 
@@ -1334,285 +1019,8 @@ class KnowledgeExtractionCore:
 
         return chunked_results
 
-    def _extract_toc_summary(self, text: str) -> str:
-        """Extract a summary of document structure from headers."""
-        import re
-
-        # Find markdown headers
-        headers = []
-        for match in re.finditer(r"^(#{1,3})\s+(.+)$", text, re.MULTILINE):
-            level = len(match.group(1))
-            title = match.group(2).strip()
-            if len(title) < 100:  # Skip overly long headers
-                headers.append((level, title))
-
-        if not headers:
-            return ""
-
-        # Build condensed TOC (limit to first 10 major sections)
-        toc_parts = []
-        for level, title in headers[:10]:
-            if level == 1:
-                toc_parts.append(title)
-            elif level == 2 and len(toc_parts) < 8:
-                toc_parts.append(f"  - {title}")
-
-        if toc_parts:
-            return "Sections: " + "; ".join(toc_parts[:8])
-        return ""
-
-    def _clean_markdown_whitespace(self, text: str) -> str:
-        """Clean up whitespace while preserving markdown structure."""
-        lines = text.split("\n")
-        cleaned_lines = []
-
-        prev_line_empty = False
-
-        for line in lines:
-            # Keep table rows as-is
-            if "|" in line:
-                cleaned_lines.append(line)
-                prev_line_empty = False
-                continue
-
-            # Keep code blocks as-is
-            if line.strip().startswith("```"):
-                cleaned_lines.append(line)
-                prev_line_empty = False
-                continue
-
-            # Handle empty lines
-            if not line.strip():
-                if not prev_line_empty:
-                    cleaned_lines.append("")
-                    prev_line_empty = True
-                continue
-
-            # Regular line
-            cleaned_lines.append(line.rstrip())
-            prev_line_empty = False
-
-        # Remove trailing empty lines
-        while cleaned_lines and not cleaned_lines[-1].strip():
-            cleaned_lines.pop()
-
-        return "\n".join(cleaned_lines)
-
-    @async_timed_operation("Step 3/11: Acronym extraction")
-    async def _extract_all_acronyms_candidates(
-        self, results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks]
-    ) -> Sequence[AcronymCandidate]:
-        """
-        Extract all acronym candidates from the given text using BatchProcessor.
-
-        Args:
-            results_with_chunks: Chunked extraction output
-
-        Returns:
-            Sequence of acronym candidates
-        """
-        if not results_with_chunks:
-            return []
-
-        # Create BatchProcessor for concurrent document processing
-        processor = BatchProcessor[KnowledgeExtractionResultWithChunks, AcronymCandidate](
-            batch_size=3,  # Process 3 documents concurrently
-            max_retries=2,  # Retry failed documents up to 2 times
-            retry_min_wait=1,  # Min 1 second between retries
-            retry_max_wait=5,  # Max 5 seconds between retries
-        )
-
-        # Create processor function for document extraction
-        async def extract_from_document(
-            item: KnowledgeExtractionResultWithChunks,
-        ) -> list[AcronymCandidate]:
-            acronyms = await self._extract_acronyms_from_chunks(item)
-            return list(acronyms)
-
-        # Process all documents concurrently
-        acronyms_candidates = await processor.process_batch(
-            items=results_with_chunks,
-            processor_func=extract_from_document,
-            flatten_results=True,
-        )
-
-        logger.info(
-            f"Extracted {len(acronyms_candidates)} acronym candidates from {len(results_with_chunks)} documents"
-        )
-        return acronyms_candidates
-
-    async def _extract_acronyms_from_chunks(
-        self, chunked_result: KnowledgeExtractionResultWithChunks
-    ) -> Sequence[AcronymCandidate]:
-        """
-        Extract acronym candidates from chunks using LLM with BatchProcessor.
-
-        Args:
-            chunked_result: Result with chunks to extract acronyms from
-
-        Returns:
-            Sequence of acronym candidates found in chunks
-        """
-        if not chunked_result.chunks:
-            return []
-
-        # Create BatchProcessor for concurrent chunk processing
-        processor = BatchProcessor[KnowledgeChunk, AcronymCandidate](
-            batch_size=8,  # Process 8 chunks concurrently
-            max_retries=2,  # Retry failed chunks up to 2 times
-            retry_min_wait=1,  # Min 1 second between retries
-            retry_max_wait=5,  # Max 5 seconds between retries
-        )
-
-        # Create processor function for chunk extraction
-        async def extract_from_chunk(chunk: KnowledgeChunk) -> list[AcronymCandidate]:
-            # Call the LLM to extract acronyms from this chunk
-            result = await self.calls.chunk_acronym_extraction_call.execute(
-                chunk_text=chunk.text,
-                document_name=chunked_result.filename,
-                page_number=chunk.page,
-                chunk_index=chunk.index,
-            )
-
-            # Convert extracted acronyms to AcronymCandidate objects
-            candidates = []
-            for acronym_data in result.final_response.acronyms:
-                candidate = AcronymCandidate(
-                    term=acronym_data.term.upper(),  # Ensure uppercase for acronyms
-                    document_id=chunked_result.id,
-                    document_name=chunked_result.filename,
-                    page=chunk.page,
-                    chunk=chunk.index,
-                )
-                candidates.append(candidate)
-
-                logger.debug(
-                    f"Found acronym '{acronym_data.term}' ({acronym_data.full_form}) in chunk {chunk.index} "
-                    f"(page {chunk.page})"
-                )
-
-            return candidates
-
-        # Process all chunks concurrently
-        acronym_candidates = await processor.process_batch(
-            items=chunked_result.chunks,
-            processor_func=extract_from_chunk,
-            flatten_results=True,
-        )
-
-        logger.info(
-            f"Extracted {len(acronym_candidates)} acronym candidates from {chunked_result.filename} ({len(chunked_result.chunks)} chunks)"
-        )
-        return acronym_candidates
-
-    def _merge_rejected_acronyms_with_keywords(
-        self,
-        existing_keywords: Dict[str, GroupedKeyword],
-        rejected_acronyms_dict: Dict[str, Any],
-    ) -> Dict[str, GroupedKeyword]:
-        """
-        Merge rejected acronym candidates (now treated as keywords) with existing keywords.
-
-        When an acronym candidate is rejected during validation (because it's not a valid acronym),
-        it should be reconsidered as a potential keyword. This function merges these rejected
-        acronym candidates into the existing keywords dictionary, handling any conflicts.
-
-        Args:
-            existing_keywords: Keywords already extracted through the normal keyword extraction process
-            rejected_acronyms_dict: Dictionary of rejected acronyms (could be various formats)
-
-        Returns:
-            Merged dictionary containing both existing keywords and rejected acronyms as keywords
-        """
-        merged = existing_keywords.copy()
-
-        # Handle the case where rejected_acronyms_dict contains lists of GroupedKeywords
-        for keyword_data in rejected_acronyms_dict.values():
-            # Handle if it's a list of GroupedKeywords
-            if isinstance(keyword_data, list):
-                keyword_candidates = keyword_data
-            else:
-                # Handle if it's a single item
-                keyword_candidates = [keyword_data]
-
-            for keyword_candidate in keyword_candidates:
-                term = keyword_candidate.term
-
-                if term not in merged:
-                    # No conflict - directly add the rejected acronym as a keyword
-                    merged[term] = keyword_candidate
-                    logger.info(
-                        f"✅ Successfully transferred '{term}' from rejected acronyms to keywords "
-                        f"(occurrences: {keyword_candidate.total_count})"
-                    )
-                else:
-                    # Conflict detected - merge the occurrences and co-occurrences
-                    existing = merged[term]
-
-                    logger.warning(
-                        f"⚠️  CONFLICT: Term '{term}' exists both as keyword AND rejected acronym! "
-                        f"Merging occurrences (keyword: {existing.total_count}, rejected acronym: {keyword_candidate.total_count})"
-                    )
-
-                    # Merge occurrences
-                    merged_occurrences = existing.occurrences.copy()
-                    for occurrence in keyword_candidate.occurrences:
-                        # Check if this occurrence already exists
-                        if not any(
-                            occ.document_id == occurrence.document_id and occ.chunk_index == occurrence.chunk_index
-                            for occ in merged_occurrences
-                        ):
-                            merged_occurrences.append(occurrence)
-
-                    # Merge co-occurrences
-                    merged_cooccurrences = existing.cooccurrences.copy()
-                    cooc_dict = {cooc.term: cooc for cooc in merged_cooccurrences}
-
-                    for cooc in keyword_candidate.cooccurrences:
-                        if cooc.term in cooc_dict:
-                            # Update existing co-occurrence with higher frequency and confidence
-                            existing_cooc = cooc_dict[cooc.term]
-                            existing_cooc.frequency += cooc.frequency
-                            existing_cooc.confidence = max(existing_cooc.confidence, cooc.confidence)
-                        else:
-                            merged_cooccurrences.append(cooc)
-
-                    # Update total count and mean score
-                    new_total_count = len(merged_occurrences)
-
-                    # Recalculate mean score if both have scores
-                    if existing.mean_score > 0 and keyword_candidate.mean_score > 0:
-                        new_mean_score = (
-                            existing.mean_score * existing.total_count
-                            + keyword_candidate.mean_score * keyword_candidate.total_count
-                        ) / (existing.total_count + keyword_candidate.total_count)
-                    else:
-                        new_mean_score = existing.mean_score or keyword_candidate.mean_score
-
-                    # Create merged keyword
-                    merged[term] = GroupedKeyword(
-                        term=term,
-                        occurrences=merged_occurrences,
-                        cooccurrences=sorted(
-                            merged_cooccurrences,
-                            key=lambda x: x.confidence,
-                            reverse=True,
-                        )[
-                            :10
-                        ],  # Keep top 10 co-occurrences
-                        total_count=new_total_count,
-                        mean_score=new_mean_score,
-                    )
-
-                    logger.info(
-                        f"✔️  Merged '{term}': occurrences {existing.total_count} + {keyword_candidate.total_count} = {new_total_count}, "
-                        f"co-occurrences: {len(merged[term].cooccurrences)} unique terms"
-                    )
-
-        return merged
-
     def _build_inverted_indices(
-        self, terms: Dict[str, Term]
+        self, terms: Dict[str, TermWithLinks]
     ) -> Tuple[Dict[str, Set[Tuple[str, int]]], Dict[str, Set[Tuple[str, int]]]]:
         """
         Build inverted indices for O(1) term lookups.
@@ -1645,7 +1053,7 @@ class KnowledgeExtractionCore:
 
     def _build_search_indices(
         self,
-        terms: Dict[str, Term],
+        terms: Dict[str, TermWithLinks],
         document_chunks: Dict[str, Sequence[KnowledgeChunk]],
     ) -> Tuple[
         Dict[str, Set[str]],
@@ -1727,227 +1135,12 @@ class KnowledgeExtractionCore:
             dict(document_page_to_chunks),
         )
 
-    @timed_operation("Step 6/11: Keyword grouping")
-    def _group_keyword_candidates(self, keyword_candidates: Sequence[KeywordCandidate]) -> Dict[str, GroupedKeyword]:
-        """
-        Group keyword candidates by their term text.
-
-        Args:
-            keyword_candidates: Sequence of all keyword candidates from extraction
-
-        Returns:
-            Dictionary mapping term to GroupedKeyword object
-        """
-        grouped: Dict[str, GroupedKeyword] = {}
-
-        for candidate in keyword_candidates:
-            term = KnowledgeExtractionCore.normalize_term(candidate.term)
-
-            if term not in grouped:
-                grouped[term] = GroupedKeyword(
-                    term=term,
-                    occurrences=[],
-                    cooccurrences=[],
-                    total_count=0,
-                    mean_score=0.0,
-                )
-
-            occurrence = TermOccurrence(
-                document_id=candidate.document_id,
-                document_name=candidate.document_name,
-                page=candidate.page,
-                chunk_index=candidate.chunk,
-            )
-
-            grouped[term].occurrences.append(occurrence)
-            grouped[term].total_count += 1
-
-            # Update mean score
-            current_mean = grouped[term].mean_score
-            grouped[term].mean_score = (current_mean * (grouped[term].total_count - 1) + candidate.score) / grouped[
-                term
-            ].total_count
-
-        return grouped
-
-    def _find_all_contexts_for_term(
+    @timed_operation("Step 5/12: Co-occurrence extraction")
+    def _enrich_with_cooccurrences(
         self,
-        grouped: GroupedAcronym | GroupedKeyword,
-        chunks_index: Dict[str, List[KnowledgeChunk]],
-    ) -> List[str]:
-        """
-        Find all contexts for a given term across document chunks.
-
-        Args:
-            term: The term to find contexts for
-            chunks_index: Pre-built index mapping document IDs to chunks
-
-        Returns:
-            Sequence of context strings where the term appears
-        """
-        contexts = []
-        term = grouped.term
-
-        for item in grouped.occurrences:
-            if item.document_id in chunks_index:
-                for chunk in chunks_index[item.document_id]:
-                    if self._find_term_positions(term, chunk.text):
-                        contexts.append(chunk.text)
-                        break
-        return contexts
-
-    @async_timed_operation("Step 8/11: Keyword validation")
-    async def _consolidate_and_extract_keyword_meanings(
-        self,
-        grouped_keywords: Dict[str, GroupedKeyword],
-        chunks_index: Dict[str, List[KnowledgeChunk]],
-    ) -> Dict[str, Term]:
-        """
-        Validate grouped keywords and extract their meanings using BatchProcessor.
-
-        Args:
-            grouped_keywords: Dictionary of grouped keyword candidates
-            chunks_index: Pre-built index mapping document IDs to chunks
-
-        Returns:
-            Dictionary of validated keywords with meanings
-        """
-
-        # Filter keywords by minimum score first
-        valid_keywords = {
-            term: grouped
-            for term, grouped in grouped_keywords.items()
-            if grouped.mean_score >= self._settings.min_term_score
-        }
-
-        skipped_count = len(grouped_keywords) - len(valid_keywords)
-        if skipped_count > 0:
-            logger.info(f"Step 8/11: Skipped {skipped_count} keywords due to low mean score")
-
-        if not valid_keywords:
-            logger.info("Step 8/11: No valid keywords to process")
-            return {}
-
-        # Create BatchProcessor for concurrent keyword validation
-        processor = BatchProcessor[Tuple[str, GroupedKeyword], Tuple[str, GroupedKeyword, Any]](
-            batch_size=5,  # Process 5 keywords concurrently
-            max_retries=3,  # Retry failed keywords up to 3 times
-            retry_min_wait=1,  # Min 1 second between retries
-            retry_max_wait=10,  # Max 10 seconds between retries
-        )
-
-        # Prepare keyword items for batch processing
-        keyword_items = [(term, grouped) for term, grouped in valid_keywords.items()]
-
-        # Create processor function for validation
-        async def validate_keyword(
-            item: Tuple[str, GroupedKeyword],
-        ) -> list[Tuple[str, GroupedKeyword, Any]]:
-            term, grouped = item
-            contexts = self._find_all_contexts_for_term(grouped, chunks_index)
-
-            # Gather contexts for each co-occurring term as a dictionary (same as acronyms)
-            cooccurrences_with_contexts = []
-            for cooccurrence in grouped.cooccurrences:
-                cooc_contexts = self._find_all_contexts_for_term(
-                    grouped_keywords.get(cooccurrence.term, GroupedKeyword(term=cooccurrence.term)),
-                    chunks_index,
-                )
-                cooccurrences_with_contexts.append((cooccurrence, cooc_contexts))
-
-            # Validate the term using the validator
-            validation_result = await self._extract_keyword_meaning(term, contexts, cooccurrences_with_contexts)
-
-            # Return tuple with validation results
-            return [(term, grouped, validation_result)]
-
-        # Process all keywords concurrently
-        validation_results = await processor.process_batch(
-            items=keyword_items,
-            processor_func=validate_keyword,
-            flatten_results=True,
-        )
-
-        # Process validation results
-        consolidated_keywords: Dict[str, Term] = {}
-
-        for term, grouped, validation_result in validation_results:
-            if not validation_result.is_valid:
-                logger.info(f"Step 8/11: Skipping term '{term}' due to non valid keyword failure")
-                continue
-
-            # Create Term for keyword
-            # Use the full_form from validation if provided, otherwise use the term itself
-            full_form = validation_result.full_form if validation_result.full_form else grouped.term
-
-            consolidated_keyword = Term(
-                term=grouped.term,
-                term_type="keyword",
-                full_form=full_form,
-                occurrences=grouped.occurrences,
-                cooccurrences=grouped.cooccurrences,
-                total_count=grouped.total_count,
-                mean_score=grouped.mean_score,
-                meaning=validation_result.meaning,
-                reasoning=validation_result.reasoning,
-            )
-
-            consolidated_keywords[term] = consolidated_keyword
-
-        return consolidated_keywords
-
-    async def _extract_keyword_meaning(
-        self,
-        term: str,
-        contexts: List[str],
-        cooccurrences_with_contexts: List[Tuple[TermCooccurrence, List[str]]],
-    ) -> Any:  # Returns KeywordMeaningExtractionResponseComputed but typing is complex with ConsensusResult
-        """
-        Extract meaning/definition for a keyword using LLM.
-
-        Args:
-            term: The keyword to extract meaning for
-            contexts: Sequence of contexts where the keyword appears
-            cooccurrences_with_contexts: Sequence of tuples (TermCooccurrence, Sequence of contexts for that term)
-
-        Returns:
-            TermMeaningExtractionResponse with meaning extraction results
-        """
-        # Keyword extraction is mandatory - no fallback
-
-        # Execute the user-implemented extraction call
-        # This will return KeywordMeaningExtractionResponseComputed due to post-processing
-        result = await self.calls.keyword_extraction_call.execute(
-            term=term,
-            contexts=contexts,
-            cooccurrences_with_contexts=cooccurrences_with_contexts,
-            max_display_occurrences=self._settings.max_display_occurrences,
-            max_display_cooccurrences=self._settings.max_display_cooccurrences,
-        )
-
-        return result.final_response
-
-    @timed_operation("Step 7/11: Co-occurrence extraction")
-    def _extract_cooccurrences(
-        self,
-        grouped_terms: Dict[str, Any],
+        grouped_terms: Dict[str, TermCandidateGrouped],
         chunks_index: Dict[str, Sequence[KnowledgeChunk]],
     ) -> Dict[str, Any]:
-        """
-        Extract and calculate co-occurrences between terms in the same chunks.
-
-        This method:
-        1. Builds an index of term positions in each chunk
-        2. Calculates weighted cooccurrence scores based on term proximity
-        3. Adds the top cooccurrences to each term
-
-        Args:
-            grouped_terms: Dictionary of grouped terms (keywords/acronyms)
-            chunks_index: Dictionary mapping document IDs to chunks
-
-        Returns:
-            Updated terms dictionary with cooccurrence data
-        """
         # Build index of term positions in each chunk
         chunk_terms_index = self._build_chunk_term_index(grouped_terms, chunks_index)
 
@@ -1959,7 +1152,7 @@ class KnowledgeExtractionCore:
 
             # For each pair of terms in the same chunk
             for i, term1 in enumerate(terms_list):
-                for term2 in terms_list[i + 1 :]:
+                for term2 in terms_list[i + 1:]:
                     if term1 != term2:
                         # Calculate weighted score based on minimum distance
                         weight = self._calculate_cooccurrence_weight(terms_positions[term1], terms_positions[term2])
@@ -1974,21 +1167,18 @@ class KnowledgeExtractionCore:
 
             if term_key in cooccurrence_scores:
                 for cooccurring_term, weighted_score in cooccurrence_scores[term_key].items():
-                    # Calculate confidence based on normalized score
-                    confidence = weighted_score / term.total_count if term.total_count > 0 else 0.0
-                    # Convert weighted score to frequency
-                    frequency = max(1, int(weighted_score + 0.5))
+                    # Calculate score based on normalized score,
+                    # level of how probable the co-occurrence is
+                    score = 1 / (1 + math.exp(-weighted_score))
 
                     cooccurrences.append(
                         TermCooccurrence(
                             term=cooccurring_term,
-                            frequency=frequency,
-                            confidence=min(confidence, 1.0),
+                            score=min(score, 1.0),
                         )
                     )
 
-                # Sort by confidence and take top 10
-                cooccurrences.sort(key=lambda x: x.confidence, reverse=True)
+                cooccurrences.sort(key=lambda x: x.score, reverse=True)
                 cooccurrences = cooccurrences[:10]
 
             # Update term with cooccurrences (empty list if none found)
@@ -1996,107 +1186,132 @@ class KnowledgeExtractionCore:
 
         return updated_terms
 
-    def _calculate_acronym_keyword_match(self, full_form: str, keyword: str) -> float:
-        """
-        Match acronym full forms to keywords using token-based fuzzy matching.
-
-        Args:
-            full_form: The full form of the acronym (e.g., "Application Programming Interface")
-            keyword: The keyword to match against (e.g., "Programming")
-
-        Returns:
-            Float between 0 and 1 representing match strength
-        """
+    def _calculate_fuzzy_match(self, x1: str, x2: str) -> float:
         # Handle edge cases
-        if not keyword or not keyword.strip():
+        if not x1 or not x2:
             return 0.0
 
-        if len(keyword) == 1:
+        if len(x1) == 1:
             # Single character matching is unreliable
             return 0.0
 
-        full_lower = full_form.lower()
-        keyword_lower = keyword.lower()
+        x1 = x1.lower()
+        x2 = x2.lower()
 
         # Direct substring match (highest confidence)
-        if keyword_lower in full_lower:
+        if x2 in x1:
             # Scale by relative length - longer matches are better
-            length_ratio = len(keyword_lower) / len(full_lower)
+            length_ratio = len(x2) / len(x1)
             return 0.7 + (0.3 * length_ratio)
 
         # Token set ratio - handles partial word matches perfectly
         # This ignores word order and duplicates
-        token_set_score = fuzz.token_set_ratio(full_lower, keyword_lower) / 100.0
+        token_set_score = fuzz.token_set_ratio(x1, x2) / 100.0
 
         # Partial ratio - finds best matching substring
-        partial_score = fuzz.partial_ratio(full_lower, keyword_lower) / 100.0
+        partial_score = fuzz.partial_ratio(x1, x2) / 100.0
 
         # Weight token_set higher since it's better for this use case
         return (token_set_score * 0.7) + (partial_score * 0.3)
 
-    @timed_operation("Step 10/11: Acronym-keyword linking")
-    def _link_acronyms_with_keywords(
+    def _apply_links_to_terms(
         self,
-        consolidated_keywords: Dict[str, Term],
-        consolidated_acronyms: Dict[str, Term],
-    ) -> Sequence[TermLink]:
+        terms: Dict[str, Term],
+        links: List[TermLink],
+    ) -> Dict[str, TermWithLinks]:
         """
-        Link acronyms with keywords based on similarity between acronym full forms and keyword text.
+        Apply term links to the original terms dictionary.
 
         Args:
-            consolidated_keywords: Dictionary containing validated keywords
-            consolidated_acronyms: Dictionary containing validated acronyms
+            terms: Original terms dictionary
+            links: List of TermLink objects representing linked terms
 
         Returns:
-            Sequence of TermLink objects representing linked acronyms and keywords
+            Updated terms dictionary with links applied
         """
+        # Create a copy of the original terms with links field
+        terms_with_links: Dict[str, TermWithLinks] = {
+            term_key: TermWithLinks(**term.model_dump(), links=[]) for term_key, term in terms.items()
+        }
 
-        links = []
+        # Apply links to the corresponding terms
+        for link in links:
+            if link.link_from in terms_with_links:
+                terms_with_links[link.link_from].links.append(link)
+            if link.link_to in terms_with_links:
+                reverse_link = TermLink(
+                    link_from=link.link_to,
+                    link_to=link.link_from,
+                    score=link.score,
+                )
+                terms_with_links[link.link_to].links.append(reverse_link)
 
-        # For each acronym, find matching keywords based on similarity
-        for _, acronym_data in consolidated_acronyms.items():
-            if not acronym_data.full_form:
-                logger.warning(f"Acronym '{acronym_data.term}' has no full form, skipping linking")
-                continue
+        return terms_with_links
 
-            acronym_full_form = acronym_data.full_form
+    @timed_operation("Step 7/12: Term linking")
+    def _link_terms(
+        self,
+        terms: Dict[str, Term],
+    ) -> Dict[str, TermWithLinks]:
+        """
+        Link terms based on similarity between their full forms or term text.
 
-            for _, keyword_data in consolidated_keywords.items():
-                # Calculate semantic similarity between acronym full form and keyword
-                match_score = self._calculate_acronym_keyword_match(acronym_full_form, keyword_data.term)
+        This creates connections between:
+        - Acronyms and keywords (using acronym's full form)
+        - Keywords and keywords (using their text)
+        - Any term with a full form to any other term
+
+        Args:
+            terms: Dictionary containing all terms (both acronyms and keywords)
+
+        Returns:
+            Sequence of TermLink objects representing linked terms
+        """
+        links: List[TermLink] = []
+        terms_list = list(terms.items())
+
+        # Compare every term pair
+        for i, (term1_key, term1_data) in enumerate(terms_list):
+            term1_text = term1_data.full_form
+
+            for term2_key, term2_data in terms_list[i + 1:]:  # Avoid duplicate comparisons
+                # Skip linking a term to itself
+                if term1_key == term2_key:
+                    continue
+
+                term2_text = term2_data.full_form
+
+                # Calculate similarity between the two terms
+                # Check both directions: term1_text vs term2_text AND term1_text vs term2.term
+                match_score1 = self._calculate_fuzzy_match(term1_text, term2_data.term)
+                match_score2 = self._calculate_fuzzy_match(term2_text, term1_data.term)
+
+                # Take the best match score
+                match_score = max(match_score1, match_score2)
 
                 # Create link if similarity is above threshold
                 if match_score >= self._settings.linking_threshold:
                     link = TermLink(
-                        acronym=acronym_data.term,
-                        keyword=keyword_data.term,
-                        match_score=match_score,
+                        link_from=term1_data.term,
+                        link_to=term2_data.term,
+                        score=match_score,
                     )
                     links.append(link)
 
                     logger.info(
-                        f"Linked acronym '{acronym_data.term}' ({acronym_full_form}) with keyword '{keyword_data.term}' (match_score: {match_score:.2f})"
+                        f"Linked '{term1_data.term}' ({term1_data.type}: {term1_text}) "
+                        f"with '{term2_data.term}' ({term2_data.type}: {term2_text}) "
+                        f"(match_score: {match_score:.2f})"
                     )
 
-        return links
+        return self._apply_links_to_terms(terms, links)
 
-    def _persist(self, subname: str, results: Dict[str, Any]) -> Path:
-        """
-        Save extraction results to JSON file.
+    def _save_pickle(self, filename: str, model: PydanticLike) -> None:
+        pickle_path = self._output_dir / f"{filename}.pkl"
 
-        Args:
-            subname: Prefix for the filename
-            results: Extraction results (will be converted to dict if needed)
+        os.makedirs(self._output_dir, exist_ok=True)
 
-        Returns:
-            Path to saved JSON file
-        """
-        timestamp = getattr(results, "timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
-        output_file = self._output_dir / f"{subname}_{timestamp}.json"
-
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False)
-
-        logger.info(f"Saved {subname} results to {output_file}")
-
-        return output_file
+        with open(pickle_path, "wb") as f:
+            pickle.dump(model, f)
+        file_size_mb = pickle_path.stat().st_size / (1024 * 1024)
+        logger.info(f"Saved to {pickle_path} ({file_size_mb:.2f} MB)")

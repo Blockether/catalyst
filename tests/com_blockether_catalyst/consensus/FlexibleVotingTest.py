@@ -11,11 +11,11 @@ from typing import Any, List
 import pytest
 
 from com_blockether_catalyst.consensus.ConsensusCore import ConsensusCore
-from com_blockether_catalyst.consensus.internal.ConsensusTypes import (
+from com_blockether_catalyst.consensusConsensusTypes import (
     ConsensusSettings,
     TypedCallBaseForConsensus,
 )
-from com_blockether_catalyst.consensus.internal.VotingComparison import (
+from com_blockether_catalyst.consensusVotingComparison import (
     ComparisonStrategy,
     VotingField,
 )

@@ -16,11 +16,9 @@ from fastapi.templating import Jinja2Templates
 from pydantic import Field
 
 from com_blockether_catalyst.asgi.ASGICoreModule import ASGICoreModule
-from com_blockether_catalyst.knowledge.internal.KnowledgeExtractionTypes import (
-    KnowledgeChunkWithTerms,
-)
 
-from .internal.KnowledgeExtractionTypes import (
+
+from .KnowledgeExtractionTypes import (
     LinkedKnowledge,
     Term,
 )
@@ -317,9 +315,9 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                     if hasattr(term, "occurrences"):
                         for occ in term.occurrences:
                             if occ.document_id == doc_id and occ.chunk_index == chunk_index:
-                                if term.term_type == "acronym":
+                                if term.type == "acronym":
                                     chunk_acronyms.append(term.term)
-                                elif term.term_type == "keyword":
+                                elif term.type == "keyword":
                                     chunk_keywords.append(term.term)
                                 break
 
@@ -496,7 +494,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             # Find acronyms that appear in this document
             doc_acronyms = []
             for term_id, term in self.linked_knowledge.terms.items():
-                if term.term_type == "acronym":
+                if term.type == "acronym":
                     if any(occ.document_id == doc_id for occ in term.occurrences):
                         doc_acronyms.append((term_id, term))
 
@@ -553,7 +551,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             # Find keywords that appear in this document
             doc_keywords = []
             for term_id, term in self.linked_knowledge.terms.items():
-                if term.term_type == "keyword":
+                if term.type == "keyword":
                     if any(occ.document_id == doc_id for occ in term.occurrences):
                         doc_keywords.append((term_id, term))
 
@@ -672,9 +670,9 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                     if hasattr(term, "occurrences"):
                         for occ in term.occurrences:
                             if occ.document_id == doc_id and occ.chunk_index == chunk_index:
-                                if term.term_type == "acronym":
+                                if term.type == "acronym":
                                     chunk_acronyms.append(term.term)
-                                elif term.term_type == "keyword":
+                                elif term.type == "keyword":
                                     chunk_keywords.append(term.term)
                                 break
 
@@ -842,7 +840,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             search_lower = search.lower().strip() if search else ""
 
             for term_id, term in self.linked_knowledge.terms.items():
-                is_acronym = term.term_type == "acronym"
+                is_acronym = term.type == "acronym"
 
                 # Apply filters
                 if is_acronym and not show_acronyms:
@@ -1012,7 +1010,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 return "<div class='text-red-500'>Term not found</div>"
 
             term = self.linked_knowledge.terms[term_id]
-            is_acronym = term.term_type == "acronym"
+            is_acronym = term.type == "acronym"
 
             # Build markdown content
             markdown_parts = []

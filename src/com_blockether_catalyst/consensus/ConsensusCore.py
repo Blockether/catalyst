@@ -8,8 +8,8 @@ including -inspired multi-model consensus mechanisms.
 from typing import Generic, List, Optional, TypeVar
 
 from ..utils.TypedCalls import ArityOneTypedCall
-from .internal.Consensus import Consensus
-from .internal.ConsensusTypes import (
+from .Consensus import Consensus
+from .ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
     TypedCallBaseForConsensus,

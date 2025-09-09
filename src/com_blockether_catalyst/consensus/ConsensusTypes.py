@@ -17,7 +17,7 @@ from typing import Any, Deque, Dict, Generic, List, Optional, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation, field_validator
 
-from ...utils.TypedCalls import ArityOneTypedCall
+from ..utils.TypedCalls import ArityOneTypedCall
 from .VotingComparison import (
     BaseModelWithReasoning,
     ComparisonStrategy,
@@ -83,7 +83,7 @@ class TypedCallBaseForConsensus(BaseModelWithReasoning):
                 # Use semantic hashing for text similarity
                 if isinstance(field_value, str):
                     # Import here to avoid circular dependency
-                    from ..internal.Consensus import Consensus
+                    from .Consensus import Consensus
 
                     voting_data[field_name] = Consensus._semantic_hash(field_value, threshold=voting_meta.threshold)
                 else:
