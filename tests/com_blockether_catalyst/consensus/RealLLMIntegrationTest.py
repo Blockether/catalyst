@@ -11,12 +11,15 @@ from typing import Any
 import pytest
 
 from com_blockether_catalyst.consensus.ConsensusCore import ConsensusCore
-from com_blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
+from com_blockether_catalyst.consensus.ConsensusTypes import (
+    ConsensusSettings,
+    TypedCallBaseForConsensus,
+)
 from com_blockether_catalyst.consensus.VotingComparison import (
     ComparisonStrategy,
     VotingField,
 )
-from com_blockether_catalyst.knowledge.KnowledgeExtractionBaseTypes import (
+from com_blockether_catalyst.knowledge.KnowledgeExtractionTypes import (
     ChunkingDecision,
     ChunkOutput,
 )
@@ -28,7 +31,7 @@ from com_blockether_catalyst.utils.instructor.InstructorLLMCall import (
 class TestRealLLMIntegration:
     """Test consensus with real LLM connections."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chunking_consensus_with_real_llms(self) -> None:
         """Test chunking consensus using real LLMs with ordered derived comparison."""
 
@@ -39,20 +42,20 @@ class TestRealLLMIntegration:
         # Create real LLM calls for chunking models
         model1_call = InstructorLLMCall(
             response_model=ChunkingDecision,
-            model="gpt-5-mini",  # Using gpt-5-mini as specified
+            model="gpt-4o",  # Using gpt-4o as specified
             temperature=0.3,
         )
 
         model2_call = InstructorLLMCall(
             response_model=ChunkingDecision,
-            model="gpt-5-mini",  # Using same model with different temperature for variety
+            model="gpt-4o",  # Using same model with different temperature for variety
             temperature=0.7,
         )
 
         # Judge model for tie-breaking
         judge_call = InstructorLLMCall(
             response_model=ChunkingDecision,
-            model="gpt-5-mini",
+            model="gpt-4o",
             temperature=0.1,  # Low temperature for consistent judging
         )
 
@@ -109,53 +112,36 @@ class TestRealLLMIntegration:
         They are widely adopted due to their simplicity, scalability, and stateless nature.
         """
 
-        try:
-            result = await consensus.call(prompt)
+        result = await consensus.call(prompt)
 
-            # Verify basic consensus achievement
-            assert result.final_response is not None, "Should have a final response"
-            assert isinstance(result.final_response, ChunkingDecision), "Response should be ChunkingDecision"
+        # Verify basic consensus achievement
+        assert result.final_response is not None, "Should have a final response"
+        assert isinstance(result.final_response, ChunkingDecision), "Response should be ChunkingDecision"
 
-            # Check that chunks were created
-            chunks = result.final_response.chunks
-            assert len(chunks) > 0, "Should have at least one chunk"
+        # Check that chunks were created
+        chunks = result.final_response.chunks
+        assert len(chunks) > 0, "Should have at least one chunk"
 
-            # Verify chunk structure
-            for chunk in chunks:
-                assert isinstance(chunk, ChunkOutput), "Each chunk should be ChunkOutput"
-                assert chunk.text, "Chunk should have text"
-                assert chunk.start_position >= 0, "Start position should be non-negative"
-                assert chunk.end_position > chunk.start_position, "End should be after start"
+        # Verify chunk structure
+        for chunk in chunks:
+            assert isinstance(chunk, ChunkOutput), "Each chunk should be ChunkOutput"
+            assert chunk.root, "Chunk should have text"
 
-            # Log results for debugging
-            print(f"Consensus achieved: {result.consensus_achieved}")
-            print(f"Convergence score: {result.convergence_score}")
-            print(f"Number of rounds: {result.total_rounds}")
-            print(f"Number of chunks: {len(chunks)}")
+        # Log results for debugging
+        print(f"Consensus achieved: {result.consensus_achieved}")
+        print(f"Convergence score: {result.convergence_score}")
+        print(f"Number of rounds: {result.total_rounds}")
+        print(f"Number of chunks: {len(chunks)}")
 
-            # If consensus was achieved, verify quality
-            if result.consensus_achieved:
-                assert result.convergence_score >= 0.7, "Should have good convergence"
+        assert result.convergence_score >= 0.7, "Should have good convergence"
 
-        except Exception as e:
-            # If connection fails, skip the test
-            if "Connection" in str(e) or "refused" in str(e):
-                pytest.skip(f"LLM server not available: {e}")
-            else:
-                raise
-
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_simple_consensus_with_real_llms(self) -> None:
         """Test a simple consensus case with real LLMs."""
 
         # Set environment variables
         os.environ["INSTRUCTOR_API_BASE_URL"] = "http://localhost:3005/v1"
         os.environ["INSTRUCTOR_API_KEY"] = "test-key"
-
-        # Simple response model for testing
-        from com_blockether_catalyst.consensusConsensusTypes import (
-            TypedCallBaseForConsensus,
-        )
 
         class SimpleResponse(TypedCallBaseForConsensus):
             answer: str = VotingField(
@@ -172,20 +158,20 @@ class TestRealLLMIntegration:
         # Create real LLM calls
         model1 = InstructorLLMCall(
             response_model=SimpleResponse,
-            model="gpt-5-mini",
+            model="gpt-4o",
             temperature=0.5,
         )
 
         model2 = InstructorLLMCall(
             response_model=SimpleResponse,
-            model="gpt-5-mini",
+            model="gpt-4o",
             temperature=0.5,
         )
 
         # Judge model for tie-breaking
         judge = InstructorLLMCall(
             response_model=SimpleResponse,
-            model="gpt-5-mini",
+            model="gpt-4o",
             temperature=0.1,  # Low temperature for consistent judging
         )
 

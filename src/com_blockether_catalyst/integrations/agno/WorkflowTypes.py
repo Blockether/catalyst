@@ -21,11 +21,11 @@ from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel, ConfigDict, Field
 
 # Type variable for message content
-T = TypeVar("T")
+T = TypeVar("T", bound=BaseModel)
 
 # Type alias for the workflow run callback callable that returns RunResponse (no streaming)
 # Takes workflow instance and **kwargs containing message and request_context
-OnRunCallable = Callable[..., Coroutine[Any, Any, RunResponse]]
+OnRunCallable = Callable[..., Coroutine[Any, Any, T]]
 
 
 class RequestContextModel(BaseModel):
@@ -74,10 +74,11 @@ class WorkflowInputModel(BaseModel):
         message: Primary input message/query for the workflow to process
     """
 
-    model_config = ConfigDict(extra="allow")  # Allow additional fields
+    model_config = ConfigDict(extra="allow")
 
     message: str = Field(description="The main message/query to process")
-    # Additional fields can be added by extending this model
+    user_id: Optional[str] = Field(default=None, description="Optional user identifier")
+    session_id: Optional[str] = Field(default=None, description="Optional session identifier")
 
 
 class WorkflowInputWithContextModel(WorkflowInputModel):
@@ -93,14 +94,6 @@ class WorkflowInputWithContextModel(WorkflowInputModel):
     """
 
     request_context: RequestContextModel = Field(description="Automatically injected request context (required)")
-
-
-class WorkflowRunRequestModel(BaseModel):
-    """Model for workflow run request body."""
-
-    input: Dict[str, Any] = Field(description="Input data for the workflow")
-    session_: Optional[str] = Field(default=None, description="User identifier")
-    user_id: Optional[str] = Field(default=None, description="User identifier")
 
 
 class WorkflowConfig(BaseModel):
@@ -123,29 +116,6 @@ class WorkflowConfig(BaseModel):
     monitoring: bool = Field(default=False, description="Enable monitoring")
     telemetry: bool = Field(default=False, description="Enable telemetry")
     app_id: Optional[str] = Field(default=None, description="Application identifier")
-
-
-class CORSConfig(BaseModel):
-    """Cross-Origin Resource Sharing (CORS) configuration.
-
-    Controls browser security policies for cross-origin requests
-    to the workflow API. Essential for web-based integrations.
-
-    Attributes:
-        allow_origins: List of allowed origin domains
-        allow_credentials: Whether to include cookies/auth headers
-        allow_methods: Allowed HTTP methods
-        allow_headers: Allowed request headers
-        max_age: Cache duration for preflight requests
-        expose_headers: Additional headers visible to browser
-    """
-
-    allow_origins: List[str] = Field(default=["*"], description="Allowed origins")
-    allow_credentials: bool = Field(default=True, description="Allow credentials")
-    allow_methods: List[str] = Field(default=["*"], description="Allowed HTTP methods")
-    allow_headers: List[str] = Field(default=["*"], description="Allowed headers")
-    max_age: int = Field(default=3600, description="Max age for preflight requests in seconds")
-    expose_headers: List[str] = Field(default=[], description="Headers to expose to the browser")
 
 
 class MCPToolDefinition(BaseModel):

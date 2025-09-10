@@ -71,7 +71,7 @@ class AlignmentPrincipleList(RootModel[List[AlignmentPrinciple]]):
     """A list of alignment principles with DERIVED comparison."""
 
     root: List[AlignmentPrinciple] = VotingField(
-        comparison=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+        comparison=ComparisonStrategy.DERIVED,
         default_factory=list,
     )
 

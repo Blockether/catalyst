@@ -58,33 +58,21 @@ class TypedCallBaseForConsensus(BaseModelWithReasoning):
                     voting_comparison = extra["voting_comparison"]
                     if isinstance(voting_comparison, dict):
                         # Parse the dict into VotingMetadata - safely extract fields
-                        voting_meta_kwargs: Dict[
-                            str, Union[ComparisonStrategy, float, int]
-                        ] = {}
-                        if "strategy" in voting_comparison and isinstance(
-                            voting_comparison["strategy"], (str, int)
-                        ):
-                            voting_meta_kwargs["strategy"] = ComparisonStrategy(
-                                voting_comparison["strategy"]
-                            )
+                        voting_meta_kwargs: Dict[str, Union[ComparisonStrategy, float, int]] = {}
+                        if "strategy" in voting_comparison and isinstance(voting_comparison["strategy"], (str, int)):
+                            voting_meta_kwargs["strategy"] = ComparisonStrategy(voting_comparison["strategy"])
                         if "tolerance" in voting_comparison and isinstance(
                             voting_comparison["tolerance"], (int, float)
                         ):
-                            voting_meta_kwargs["tolerance"] = float(
-                                voting_comparison["tolerance"]
-                            )
+                            voting_meta_kwargs["tolerance"] = float(voting_comparison["tolerance"])
                         if "decimal_places" in voting_comparison and isinstance(
                             voting_comparison["decimal_places"], (int, float)
                         ):
-                            voting_meta_kwargs["decimal_places"] = int(
-                                voting_comparison["decimal_places"]
-                            )
+                            voting_meta_kwargs["decimal_places"] = int(voting_comparison["decimal_places"])
                         if "threshold" in voting_comparison and isinstance(
                             voting_comparison["threshold"], (int, float)
                         ):
-                            voting_meta_kwargs["threshold"] = float(
-                                voting_comparison["threshold"]
-                            )
+                            voting_meta_kwargs["threshold"] = float(voting_comparison["threshold"])
                         voting_meta = VotingMetadata(**voting_meta_kwargs)  # type: ignore[arg-type]
 
             strategy = voting_meta.strategy
@@ -97,9 +85,7 @@ class TypedCallBaseForConsensus(BaseModelWithReasoning):
                     # Import here to avoid circular dependency
                     from .Consensus import Consensus
 
-                    voting_data[field_name] = Consensus._semantic_hash(
-                        field_value, threshold=voting_meta.threshold
-                    )
+                    voting_data[field_name] = Consensus._semantic_hash(field_value, threshold=voting_meta.threshold)
                 else:
                     voting_data[field_name] = field_value
             elif strategy == ComparisonStrategy.RANGE:
@@ -128,17 +114,9 @@ class TypedCallBaseForConsensus(BaseModelWithReasoning):
                         voting_data[field_name] = "range_zero"
                 else:
                     voting_data[field_name] = field_value
-            elif strategy in (
-                ComparisonStrategy.SEQUENCE_ORDERED_DERIVED,
-                ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
-                ComparisonStrategy.DERIVED,
-                ComparisonStrategy.SEQUENCE_ORDERED_ALIKE,
-                ComparisonStrategy.SEQUENCE_UNORDERED_ALIKE,
-            ):
+            elif strategy in (ComparisonStrategy.DERIVED,):
                 # For derived and alike strategies, create a structural hash using actual model objects
-                voting_data[field_name] = self._create_derived_hash(
-                    actual_field_value, strategy, voting_meta
-                )
+                voting_data[field_name] = self._hash_model_structure(actual_field_value, voting_meta.threshold)
             else:
                 # EXACT or CUSTOM - use exact value
                 voting_data[field_name] = field_value
@@ -147,28 +125,6 @@ class TypedCallBaseForConsensus(BaseModelWithReasoning):
         voting_json = json.dumps(voting_data, sort_keys=True, default=str)
         hash_result = hashlib.sha256(voting_json.encode()).hexdigest()[:16]
         return hash_result
-
-    def _create_derived_hash(
-        self,
-        field_value: Any,
-        strategy: "ComparisonStrategy",
-        voting_meta: "VotingMetadata",
-    ) -> str:
-        """Create a structural hash for derived comparison strategies."""
-        if strategy == ComparisonStrategy.SEQUENCE_ORDERED_DERIVED:
-            return self._hash_sequence_ordered(field_value, voting_meta.threshold)
-        elif strategy == ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED:
-            return self._hash_sequence_unordered(field_value, voting_meta.threshold)
-        elif strategy == ComparisonStrategy.DERIVED:
-            return self._hash_model_structure(field_value, voting_meta.threshold)
-        elif strategy == ComparisonStrategy.SEQUENCE_ORDERED_ALIKE:
-            return self._hash_sequence_ordered_alike(field_value, voting_meta.threshold)
-        elif strategy == ComparisonStrategy.SEQUENCE_UNORDERED_ALIKE:
-            return self._hash_sequence_unordered_alike(
-                field_value, voting_meta.threshold
-            )
-        else:
-            return str(field_value)
 
     def _hash_sequence_ordered(self, seq: Any, threshold: float) -> str:
         """Hash a sequence preserving order for comparison."""
@@ -239,9 +195,7 @@ class TypedCallBaseForConsensus(BaseModelWithReasoning):
 
         # Extract ordered content fingerprint
         content_elements = []
-        for item in seq[
-            : int(len(seq) * max(threshold, 0.5))
-        ]:  # Use prefix based on threshold
+        for item in seq[: int(len(seq) * max(threshold, 0.5))]:  # Use prefix based on threshold
             if hasattr(item, "__class__") and hasattr(item.__class__, "__name__"):
                 if hasattr(item, "term"):
                     content_elements.append(f"term:{item.term}")
@@ -249,13 +203,9 @@ class TypedCallBaseForConsensus(BaseModelWithReasoning):
                     text_preview = item.text[:20] if len(item.text) > 20 else item.text
                     content_elements.append(f"text:{text_preview}")
                 elif hasattr(item, "__dict__"):
-                    first_field = (
-                        list(item.__dict__.items())[0] if item.__dict__ else None
-                    )
+                    first_field = list(item.__dict__.items())[0] if item.__dict__ else None
                     if first_field:
-                        content_elements.append(
-                            f"{first_field[0]}:{str(first_field[1])[:20]}"
-                        )
+                        content_elements.append(f"{first_field[0]}:{str(first_field[1])[:20]}")
                 else:
                     content_elements.append(str(item)[:20])
             else:
@@ -309,13 +259,9 @@ class TypedCallBaseForConsensus(BaseModelWithReasoning):
                     content_elements.append(f"text:{text_preview}")
                 elif hasattr(item, "__dict__"):
                     # Generic Pydantic model - use first field value
-                    first_field = (
-                        list(item.__dict__.items())[0] if item.__dict__ else None
-                    )
+                    first_field = list(item.__dict__.items())[0] if item.__dict__ else None
                     if first_field:
-                        content_elements.append(
-                            f"{first_field[0]}:{str(first_field[1])[:20]}"
-                        )
+                        content_elements.append(f"{first_field[0]}:{str(first_field[1])[:20]}")
                 else:
                     content_elements.append(str(item)[:20])
             else:
@@ -366,9 +312,7 @@ class ModelConfiguration(BaseModel, Generic[T]):
     """Configuration for a model in the consensus system."""
 
     id: str = Field(description="Unique identifier for the model")
-    executor: ArityOneTypedCall[str, T] = Field(
-        description="The typed call implementation for this model"
-    )
+    executor: ArityOneTypedCall[str, T] = Field(description="The typed call implementation for this model")
     perspective: str = Field(
         description="The perspective or role the model should take (e.g., 'As a mathematician', 'From a security perspective')",
     )
@@ -383,12 +327,8 @@ class ModelConfiguration(BaseModel, Generic[T]):
 class ConsensusQualityMetrics(BaseModel):
     """Metrics for consensus quality assessment using voting."""
 
-    convergence_speed: float = Field(
-        description="How quickly consensus was reached (rounds/max_rounds)"
-    )
-    agreement_strength: float = Field(
-        ge=0.0, le=1.0, description="Proportion of models voting together (0-1)"
-    )
+    convergence_speed: float = Field(description="How quickly consensus was reached (rounds/max_rounds)")
+    agreement_strength: float = Field(ge=0.0, le=1.0, description="Proportion of models voting together (0-1)")
     vote_distribution: Dict[str, int] = Field(
         default_factory=dict,
         description="Distribution of votes in final round",
@@ -430,15 +370,9 @@ class ResponseEvolution(BaseModel, Generic[T]):
         default_factory=dict,
         description="Map of field names to change values",
     )
-    vote_changed: bool = Field(
-        default=False, description="Whether the model changed its vote"
-    )
-    reasoning_evolution: str = Field(
-        default="", description="How the reasoning changed"
-    )
-    influenced_by: List[str] = Field(
-        default_factory=list, description="Model IDs that influenced this evolution"
-    )
+    vote_changed: bool = Field(default=False, description="Whether the model changed its vote")
+    reasoning_evolution: str = Field(default="", description="How the reasoning changed")
+    influenced_by: List[str] = Field(default_factory=list, description="Model IDs that influenced this evolution")
 
 
 class DisagreementAnalysis(BaseModel):
@@ -448,38 +382,24 @@ class DisagreementAnalysis(BaseModel):
         default_factory=dict,
         description="Fields with disagreements mapped to string representations of different values",
     )
-    consensus_fields: List[str] = Field(
-        default_factory=list, description="Fields where all models agree"
-    )
+    consensus_fields: List[str] = Field(default_factory=list, description="Fields where all models agree")
 
 
 class GossipHistory(BaseModel):
     """Tracks the gossip history and information flow."""
 
     round_number: int = Field(description="The round number")
-    refined_from_peers: bool = Field(
-        default=False, description="Whether this round involved peer refinement"
-    )
-    peer_models_seen: List[str] = Field(
-        default_factory=list, description="Peer models whose responses were seen"
-    )
+    refined_from_peers: bool = Field(default=False, description="Whether this round involved peer refinement")
+    peer_models_seen: List[str] = Field(default_factory=list, description="Peer models whose responses were seen")
 
 
 class ResponseMetadata(BaseModel):
     """Metadata for model responses."""
 
-    initial_response: bool = Field(
-        default=False, description="Whether this is an initial response"
-    )
-    refined: bool = Field(
-        default=False, description="Whether this response was refined from peers"
-    )
-    round: Optional[int] = Field(
-        default=None, description="Round number for refinement"
-    )
-    judge_decision: bool = Field(
-        default=False, description="Whether this is a judge decision"
-    )
+    initial_response: bool = Field(default=False, description="Whether this is an initial response")
+    refined: bool = Field(default=False, description="Whether this response was refined from peers")
+    round: Optional[int] = Field(default=None, description="Round number for refinement")
+    judge_decision: bool = Field(default=False, description="Whether this is a judge decision")
     resolved_tie: bool = Field(default=False, description="Whether this resolved a tie")
 
 
@@ -497,24 +417,16 @@ class ModelResponse(BaseModel, Generic[T]):
         default_factory=lambda: datetime.now(timezone.utc),
         description="When the response was generated",
     )
-    gossip_history: List[GossipHistory] = Field(
-        default_factory=list, description="History of information flow"
-    )
+    gossip_history: List[GossipHistory] = Field(default_factory=list, description="History of information flow")
 
 
 class ConsensusRound(BaseModel, Generic[T]):
     """Represents a single round in the consensus process."""
 
     round_number: int = Field(description="The round number (0-indexed)")
-    responses: List[ModelResponse[T]] = Field(
-        default_factory=list, description="All model responses for this round"
-    )
-    consensus_achieved: bool = Field(
-        default=False, description="Whether consensus was reached this round"
-    )
-    consensus_response: Optional[T] = Field(
-        default=None, description="The consensus response if achieved"
-    )
+    responses: List[ModelResponse[T]] = Field(default_factory=list, description="All model responses for this round")
+    consensus_achieved: bool = Field(default=False, description="Whether consensus was reached this round")
+    consensus_response: Optional[T] = Field(default=None, description="The consensus response if achieved")
     information_flow: Dict[str, List[str]] = Field(
         default_factory=dict,
         description="Tracks which models influenced each other",
@@ -532,43 +444,25 @@ class ModelMetrics(BaseModel):
 
     id: str = Field(description="Model identifier")
     total_rounds: int = Field(default=0, description="Total rounds participated")
-    consistency_score: float = Field(
-        default=1.0, description="Consistency across rounds"
-    )
-    contribution_score: float = Field(
-        default=1.0, description="Overall contribution to consensus quality"
-    )
+    consistency_score: float = Field(default=1.0, description="Consistency across rounds")
+    contribution_score: float = Field(default=1.0, description="Overall contribution to consensus quality")
 
 
 class ConsensusMetrics(BaseModel):
     """Metrics for consensus results."""
 
-    duration_ms: float = Field(
-        description="Duration of consensus process in milliseconds"
-    )
-    rounds_to_convergence: int = Field(
-        description="Number of rounds to reach convergence"
-    )
+    duration_ms: float = Field(description="Duration of consensus process in milliseconds")
+    rounds_to_convergence: int = Field(description="Number of rounds to reach convergence")
     total_model_calls: int = Field(description="Total number of model calls made")
     convergence_achieved: bool = Field(description="Whether convergence was achieved")
-    dissent_rate: float = Field(
-        ge=0.0, le=1.0, description="Rate of dissent among models"
-    )
+    dissent_rate: float = Field(ge=0.0, le=1.0, description="Rate of dissent among models")
     model_contributions: Dict[str, float] = Field(
         default_factory=dict, description="Individual model contribution scores"
     )
-    consensus_confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence in consensus result"
-    )
-    convergence_indicator: float = Field(
-        ge=0.0, le=1.0, description="Convergence indicator score"
-    )
-    total_refinements: int = Field(
-        default=0, description="Total number of refinements across all rounds"
-    )
-    avg_refinements_per_round: float = Field(
-        default=0.0, description="Average refinements per round"
-    )
+    consensus_confidence: float = Field(ge=0.0, le=1.0, description="Confidence in consensus result")
+    convergence_indicator: float = Field(ge=0.0, le=1.0, description="Convergence indicator score")
+    total_refinements: int = Field(default=0, description="Total number of refinements across all rounds")
+    avg_refinements_per_round: float = Field(default=0.0, description="Average refinements per round")
     information_flows: List[Dict[str, List[str]]] = Field(
         default_factory=list, description="Information flow between models per round"
     )
@@ -580,17 +474,11 @@ class ConsensusResult(BaseModelWithReasoning, Generic[T]):
     # reasoning field inherited from BaseModelWithReasoning
     consensus_achieved: bool = Field(description="Whether consensus was reached")
     final_response: T = Field(description="The final consensus response")
-    rounds: List[ConsensusRound[T]] = Field(
-        description="All rounds in the consensus process"
-    )
+    rounds: List[ConsensusRound[T]] = Field(description="All rounds in the consensus process")
     total_rounds: int = Field(description="Total number of rounds executed")
     convergence_score: float = Field(description="Final convergence score (0-1)")
-    participating_models: List[str] = Field(
-        description="List of models that participated"
-    )
-    dissenting_models: List[str] = Field(
-        default_factory=list, description="Models that didn't converge"
-    )
+    participating_models: List[str] = Field(description="List of models that participated")
+    dissenting_models: List[str] = Field(default_factory=list, description="Models that didn't converge")
     model_contributions: Dict[str, float] = Field(
         default_factory=dict, description="Contribution scores for each model"
     )
@@ -627,9 +515,7 @@ class ConsensusSettings(BaseModel):
         default=0.85,
         description="Threshold for plurality acceptance (e.g., 0.85 = 85% of votes needed for consensus)",
     )
-    max_rounds: int = Field(
-        default=5, ge=1, le=20, description="Maximum number of consensus rounds"
-    )
+    max_rounds: int = Field(default=5, ge=1, le=20, description="Maximum number of consensus rounds")
     max_concurrent_calls: int = Field(
         default=10,
         ge=1,
@@ -640,9 +526,7 @@ class ConsensusSettings(BaseModel):
         default=VerbosityLevel.SILENT,
         description="Logging verbosity level for consensus operations",
     )
-    state_tracking: bool = Field(
-        default=False, description="Whether to track consensus call history in state"
-    )
+    state_tracking: bool = Field(default=False, description="Whether to track consensus call history in state")
     max_history_size: Optional[int] = Field(
         default=None,
         description="Maximum number of consensus calls to store in history (None = unlimited)",
@@ -655,12 +539,8 @@ class ConsensusCallRecord(BaseModel, Generic[T]):
     timestamp: datetime = Field(description="When this consensus call was made")
     input_prompt: str = Field(description="The input prompt for this consensus call")
     result: ConsensusResult[T] = Field(description="The complete consensus result")
-    round_metrics: List[Dict[str, Any]] = Field(
-        default_factory=list, description="Metrics for each round of consensus"
-    )
-    convergence_path: List[float] = Field(
-        default_factory=list, description="Convergence scores throughout the rounds"
-    )
+    round_metrics: List[Dict[str, Any]] = Field(default_factory=list, description="Metrics for each round of consensus")
+    convergence_path: List[float] = Field(default_factory=list, description="Convergence scores throughout the rounds")
     duration_ms: float = Field(description="Total duration of this consensus call")
 
 
@@ -702,9 +582,7 @@ class ConsensusState(BaseModel, Generic[T]):
             return {
                 "total_calls": self._total_calls,
                 "total_duration_ms": self._total_duration_ms,
-                "avg_duration_ms": self._total_duration_ms / self._total_calls
-                if self._total_calls > 0
-                else 0,
+                "avg_duration_ms": self._total_duration_ms / self._total_calls if self._total_calls > 0 else 0,
                 "history_size": len(self._call_history),
                 "enabled": self._enabled,
             }

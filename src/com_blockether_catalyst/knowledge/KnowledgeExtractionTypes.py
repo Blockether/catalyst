@@ -260,6 +260,13 @@ class KnowledgeProcessorSettings(BaseModel):
         ge=1,
     )
 
+    image_optimization_level: int = Field(
+        default=6,
+        description="PNG optimization level (0-6) for extracted images",
+        ge=0,
+        le=6,
+    )
+
     keywords_min_df: int = Field(
         default=5,
         description="Minimum document frequency for keywords to be considered",

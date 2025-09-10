@@ -8,11 +8,13 @@ to identify where the issue is occurring.
 import pytest
 from pydantic import BaseModel
 
-from com_blockether_catalyst.prompt.internal import (
+from com_blockether_catalyst.prompt.PrincipleBasedAlignmentStrategy import (
+    PrincipleBasedAlignmentStrategy,
+)
+from com_blockether_catalyst.prompt.PromptAlignmentTypes import (
     AlignmentFeedback,
     AlignmentPrinciple,
     AlignmentPrincipleList,
-    PrincipleBasedAlignmentStrategy,
 )
 
 

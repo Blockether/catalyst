@@ -8,12 +8,13 @@ showing model responses, similarity scores, and field-by-field comparisons.
 import json
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Union
 from io import StringIO
+from typing import Any, Dict, List, Optional, Set, Union
 
 from pydantic import BaseModel, RootModel
 
 from .ConsensusTypes import (
+    ConsensusResult,
     ConsensusRound,
     DisagreementAnalysis,
     ModelResponse,
@@ -80,7 +81,7 @@ class ConsensusPrettyPrinter:
             result.append("-" * 40)
             for model_id, prompt in prompts.items():
                 prompt_display = (
-                    prompt[:ConsensusPrettyPrinter._PROMPT_PREVIEW_LENGTH] + "..."
+                    prompt[: ConsensusPrettyPrinter._PROMPT_PREVIEW_LENGTH] + "..."
                     if len(prompt) > ConsensusPrettyPrinter._PROMPT_PREVIEW_LENGTH
                     else prompt
                 )
@@ -101,12 +102,10 @@ class ConsensusPrettyPrinter:
 
             # Determine consensus status
             group_size = vote_groups.get(vote_hash, 1)
-            consensus_status = ConsensusPrettyPrinter._format_consensus_status_plain(
-                group_size, total_models
-            )
+            consensus_status = ConsensusPrettyPrinter._format_consensus_status_plain(group_size, total_models)
 
             result.append(f"\n[{model_id}]")
-            result.append(f"Vote Hash: {vote_hash[:ConsensusPrettyPrinter._VOTE_HASH_DISPLAY_LENGTH]}")
+            result.append(f"Vote Hash: {vote_hash[: ConsensusPrettyPrinter._VOTE_HASH_DISPLAY_LENGTH]}")
             result.append(f"Status: {consensus_status}")
             result.append("-" * 40)
 
@@ -136,14 +135,14 @@ class ConsensusPrettyPrinter:
             if verbosity == VerbosityLevel.VERBOSE and reasoning:
                 result.append("\n  Reasoning:")
                 if len(reasoning) > ConsensusPrettyPrinter._MAX_STRING_DISPLAY_LENGTH:
-                    reasoning = reasoning[:ConsensusPrettyPrinter._MAX_STRING_DISPLAY_LENGTH] + "..."
+                    reasoning = reasoning[: ConsensusPrettyPrinter._MAX_STRING_DISPLAY_LENGTH] + "..."
                 result.append(f"    {reasoning}")
 
         # Disagreement analysis if available
         if round_data.disagreement_analysis:
-            result.append(ConsensusPrettyPrinter._format_disagreement_analysis(
-                round_data.disagreement_analysis, verbosity
-            ))
+            result.append(
+                ConsensusPrettyPrinter._format_disagreement_analysis(round_data.disagreement_analysis, verbosity)
+            )
 
         result.append("\n" + "=" * ConsensusPrettyPrinter._SEPARATOR_WIDTH + "\n")
         return "\n".join(result)
@@ -167,7 +166,7 @@ class ConsensusPrettyPrinter:
         result = []
         result.append("\n" + "=" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
         result.append("✅ CONSENSUS ACHIEVED!")
-        
+
         status_line = f"Round: {round_num} | Models: {num_responses}"
         if duration_ms:
             status_line += f" | Duration: {duration_ms:.1f}ms"
@@ -199,9 +198,16 @@ class ConsensusPrettyPrinter:
 
         # Table header
         header_format = "{:<8} {:<8} {:<15} {:<12} {:<25} {:<25}"
-        result.append(header_format.format(
-            "Round", "Models", "Unique Votes", "Agreement %", "Consensus Fields", "Disputed Fields"
-        ))
+        result.append(
+            header_format.format(
+                "Round",
+                "Models",
+                "Unique Votes",
+                "Agreement %",
+                "Consensus Fields",
+                "Disputed Fields",
+            )
+        )
         result.append("-" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
 
         # Table rows
@@ -209,7 +215,22 @@ class ConsensusPrettyPrinter:
             # Calculate metrics
             num_models: int = len(round_data.responses)
             unique_votes: int = len(ConsensusPrettyPrinter._get_unique_votes(round_data.responses))
-            agreement_pct: float = ((num_models - unique_votes + 1) / num_models * 100) if num_models > 0 else 0
+            # Calculate agreement with special handling for complete disagreement
+            # - All models agree = 100%
+            # - All models disagree (each votes differently) = 0%
+            # - Partial agreement = largest_group / total_models × 100
+            #   e.g., 3 models where 2 agree = 2/3 = 66.7%
+            if num_models == 0:
+                agreement_pct: float = 0.0
+            elif unique_votes == 1:
+                agreement_pct: float = 100.0  # All models agree
+            elif unique_votes == num_models:
+                agreement_pct: float = 0.0  # All models completely disagree
+            else:
+                # Partial agreement: use largest group percentage
+                vote_groups = ConsensusPrettyPrinter._get_vote_groups(round_data.responses)
+                max_group_size = max(vote_groups.values()) if vote_groups else 1
+                agreement_pct: float = (max_group_size / num_models) * 100
 
             # Get field info
             consensus_fields: List[str] = []
@@ -248,10 +269,10 @@ class ConsensusPrettyPrinter:
                 if verbosity == VerbosityLevel.VERBOSE and len(value) <= ConsensusPrettyPrinter._MAX_LIST_ITEMS_DISPLAY:
                     # Show list items in verbose mode if not too many
                     items_str = []
-                    for i, item in enumerate(value[:ConsensusPrettyPrinter._MAX_LIST_ITEMS_DISPLAY]):
+                    for i, item in enumerate(value[: ConsensusPrettyPrinter._MAX_LIST_ITEMS_DISPLAY]):
                         item_str = json.dumps(item) if not isinstance(item, str) else f'"{item}"'
                         if len(item_str) > ConsensusPrettyPrinter._MAX_STRING_DISPLAY_SHORT:
-                            item_str = item_str[:ConsensusPrettyPrinter._MAX_STRING_DISPLAY_SHORT - 3] + "..."
+                            item_str = item_str[: ConsensusPrettyPrinter._MAX_STRING_DISPLAY_SHORT - 3] + "..."
                         items_str.append(item_str)
                     return f"[{', '.join(items_str)}]"
                 else:
@@ -259,13 +280,15 @@ class ConsensusPrettyPrinter:
             else:
                 return f"{{{len(value)} fields}}"
         elif isinstance(value, str):
-            max_len = (ConsensusPrettyPrinter._MAX_STRING_DISPLAY_LENGTH
-                      if verbosity == VerbosityLevel.VERBOSE
-                      else ConsensusPrettyPrinter._MAX_STRING_DISPLAY_SHORT)
+            max_len = (
+                ConsensusPrettyPrinter._MAX_STRING_DISPLAY_LENGTH
+                if verbosity == VerbosityLevel.VERBOSE
+                else ConsensusPrettyPrinter._MAX_STRING_DISPLAY_SHORT
+            )
             if len(value) <= max_len:
                 return f'"{value}"'
             else:
-                return f'"{value[:max_len - 3]}..."'
+                return f'"{value[: max_len - 3]}..."'
         else:
             return json.dumps(value)
 
@@ -287,7 +310,7 @@ class ConsensusPrettyPrinter:
         elif group_size > 1:
             return f"⚠ Minority ({group_size}/{total_models})"
         else:
-            return "✗ Outlier (1/1)"
+            return f"✗ Outlier ({group_size}/{total_models})"
 
     @staticmethod
     def _format_disagreement_analysis(
@@ -335,7 +358,7 @@ class ConsensusPrettyPrinter:
             row = header_format.format(
                 field if len(field) <= 30 else field[:27] + "...",
                 str(num_different),
-                ", ".join(examples)
+                ", ".join(examples),
             )
             result.append(row)
 
@@ -520,7 +543,7 @@ class ConsensusPrettyPrinter:
                 else:
                     value_str = f"{{{len(value)} fields}}"
             elif isinstance(value, str) and len(value) > ConsensusPrettyPrinter._FIELD_SUMMARY_LENGTH:
-                value_str = f'"{value[:ConsensusPrettyPrinter._FIELD_SUMMARY_LENGTH - 3]}..."'
+                value_str = f'"{value[: ConsensusPrettyPrinter._FIELD_SUMMARY_LENGTH - 3]}..."'
             else:
                 value_str = json.dumps(value)
             items.append(f"{key}: {value_str}")
@@ -544,7 +567,7 @@ class ConsensusPrettyPrinter:
         output = ConsensusPrettyPrinter.format_round_summary(
             round_num, round_data, query, verbosity, max_fields_normal, prompts
         )
-        print(output, end='')
+        print(output, end="")
 
     @staticmethod
     def print_consensus_achieved(
@@ -557,7 +580,7 @@ class ConsensusPrettyPrinter:
         This method prints immediately. For buffered output, use format_consensus_achieved.
         """
         output = ConsensusPrettyPrinter.format_consensus_achieved(round_num, num_responses, duration_ms)
-        print(output, end='')
+        print(output, end="")
 
     @staticmethod
     def print_round_comparison(
@@ -570,4 +593,333 @@ class ConsensusPrettyPrinter:
         """
         output = ConsensusPrettyPrinter.format_round_comparison(rounds, verbosity)
         if output:
-            print(output, end='')
+            print(output, end="")
+
+    @staticmethod
+    def format_final_consensus_result(
+        result: "ConsensusResult",
+        query: str,
+        verbosity: VerbosityLevel = VerbosityLevel.NORMAL,
+        show_metrics: bool = True,
+        show_evolution: bool = True,
+        show_final_response: bool = True,
+    ) -> str:
+        """Format the complete consensus result in a beautiful, comprehensive way.
+
+        This is the main function to display consensus results at the end of processing.
+        
+        In NORMAL mode: Returns empty string (no output)
+        In VERBOSE mode: Shows everything - all rounds, responses, metrics, evolution
+
+        Args:
+            result: The ConsensusResult object containing all consensus data
+            query: The original query that was processed
+            verbosity: Level of detail to display (NORMAL = nothing, VERBOSE = everything)
+            show_metrics: Whether to show performance metrics (ignored in NORMAL mode)
+            show_evolution: Whether to show round-by-round evolution (ignored in NORMAL mode)
+            show_final_response: Whether to display the final response content (ignored in NORMAL mode)
+
+        Returns:
+            Beautifully formatted string representation of the complete consensus result
+        """
+        # In NORMAL mode, show nothing
+        if verbosity != VerbosityLevel.VERBOSE:
+            return ""
+        
+        # VERBOSE mode - show everything
+        output = []
+        
+        # Header
+        output.append("\n" + "🌟" + "=" * (ConsensusPrettyPrinter._SEPARATOR_WIDTH - 2) + "🌟")
+        output.append("                    📊 CONSENSUS RESULT SUMMARY 📊")
+        output.append("🌟" + "=" * (ConsensusPrettyPrinter._SEPARATOR_WIDTH - 2) + "🌟")
+        
+        # Query Section
+        output.append("\n💭 ORIGINAL QUERY:")
+        output.append("-" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
+        wrapped_query = ConsensusPrettyPrinter._wrap_text(query, ConsensusPrettyPrinter._SEPARATOR_WIDTH - 4)
+        for line in wrapped_query.split("\n"):
+            output.append(f"  {line}")
+        
+        # Consensus Status
+        output.append("\n📈 CONSENSUS STATUS:")
+        output.append("-" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
+        
+        if result.consensus_achieved:
+            output.append(f"  ✅ CONSENSUS ACHIEVED in {result.total_rounds} round(s)")
+            output.append(f"  🎯 Convergence Score: {result.convergence_score:.2%}")
+        else:
+            output.append(f"  ⚠️  NO CONSENSUS after {result.total_rounds} round(s)")
+            output.append("  📊 Final Decision: Majority Vote")
+            output.append(f"  📉 Convergence Score: {result.convergence_score:.2%}")
+        
+        # Participating Models
+        output.append(f"\n  🤖 Participating Models ({len(result.participating_models)}):")
+        for model_id in result.participating_models:
+            contribution = result.metrics.model_contributions.get(model_id, 0.0) if result.metrics else 0.0
+            status = "✓" if model_id not in result.dissenting_models else "✗"
+            output.append(f"    {status} {model_id} (contribution: {contribution:.2%})")
+        
+        # Dissenting Models (if any)
+        if result.dissenting_models:
+            output.append(f"\n  ⚠️  Dissenting Models ({len(result.dissenting_models)}):")
+            for model_id in result.dissenting_models:
+                output.append(f"    • {model_id}")
+        
+        # Performance Metrics
+        output.append("\n⚡ PERFORMANCE METRICS:")
+        output.append("-" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
+        
+        metrics = result.metrics
+        output.append(f"  ⏱️  Duration: {metrics.duration_ms:.1f}ms")
+        output.append(f"  🔄 Total Rounds: {metrics.rounds_to_convergence}")
+        output.append(f"  📞 Total Model Calls: {metrics.total_model_calls}")
+        output.append(f"  🎯 Consensus Confidence: {metrics.consensus_confidence:.2%}")
+        
+        if metrics.dissent_rate > 0:
+            output.append(f"  ⚠️  Dissent Rate: {metrics.dissent_rate:.2%}")
+        
+        output.append(f"  🔀 Total Refinements: {metrics.total_refinements}")
+        output.append(f"  📊 Avg Refinements/Round: {metrics.avg_refinements_per_round:.1f}")
+        
+        # Detailed Round-by-Round Display
+        output.append("\n🔄 DETAILED ROUND-BY-ROUND BREAKDOWN:")
+        output.append("=" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
+        
+        for round_num, round_data in enumerate(result.rounds):
+            output.append(f"\n  📍 ROUND {round_num}")
+            output.append("  " + "-" * (ConsensusPrettyPrinter._SEPARATOR_WIDTH - 2))
+            
+            # Round metrics
+            num_models = len(round_data.responses)
+            unique_votes = len(ConsensusPrettyPrinter._get_unique_votes(round_data.responses))
+            # Calculate agreement: 100% if all agree, 0% if all disagree
+            # Agreement = (models in agreement - 1) / (total models - 1) × 100
+            # This gives: 2 models same vote = 100%, 2 different = 0%
+            if num_models <= 1:
+                agreement_pct = 100.0  # Single model always agrees with itself
+            elif unique_votes == 1:
+                agreement_pct = 100.0  # All models agree
+            elif unique_votes == num_models:
+                agreement_pct = 0.0  # All models disagree
+            else:
+                # Partial agreement: find largest group
+                vote_groups = ConsensusPrettyPrinter._get_vote_groups(round_data.responses)
+                max_group_size = max(vote_groups.values()) if vote_groups else 1
+                # Agreement = how many models agree beyond just themselves
+                agreement_pct = ((max_group_size - 1) / (num_models - 1)) * 100
+            
+            output.append("    📊 Round Metrics:")
+            output.append(f"      • Models: {num_models}")
+            output.append(f"      • Unique Votes: {unique_votes}")
+            output.append(f"      • Agreement: {agreement_pct:.1f}%")
+            if round_data.consensus_achieved:
+                output.append("      • Status: ✅ CONSENSUS ACHIEVED")
+            else:
+                output.append("      • Status: ⚠️  No consensus yet")
+            
+            # Model responses for this round
+            output.append("\n    🤖 Model Responses:")
+            
+            # Group responses by vote
+            vote_groups = ConsensusPrettyPrinter._get_vote_groups(round_data.responses)
+            
+            for response in round_data.responses:
+                vote_hash = ConsensusPrettyPrinter._get_vote_hash(response)
+                group_size = vote_groups.get(vote_hash, 1)
+                consensus_status = ConsensusPrettyPrinter._format_consensus_status_plain(group_size, num_models)
+                
+                output.append(f"\n      [{response.id}]")
+                output.append(f"        Vote Hash: {vote_hash[:ConsensusPrettyPrinter._VOTE_HASH_DISPLAY_LENGTH]}")
+                output.append(f"        Status: {consensus_status}")
+                
+                # Show response content
+                content_dict = response.content.model_dump()
+                reasoning = content_dict.pop("reasoning", None)
+                
+                output.append("        Response:")
+                for key, value in content_dict.items():
+                    value_str = ConsensusPrettyPrinter._format_value(value, VerbosityLevel.VERBOSE)
+                    # Wrap long values
+                    if len(value_str) > 60:
+                        output.append(f"          {key}:")
+                        wrapped = ConsensusPrettyPrinter._wrap_text(value_str, 70)
+                        for line in wrapped.split("\n"):
+                            output.append(f"            {line}")
+                    else:
+                        output.append(f"          {key}: {value_str}")
+                
+                if reasoning:
+                    output.append("        Reasoning:")
+                    wrapped_reasoning = ConsensusPrettyPrinter._wrap_text(reasoning, 70)
+                    for line in wrapped_reasoning.split("\n"):
+                        output.append(f"          {line}")
+            
+            # Disagreement analysis for this round
+            if round_data.disagreement_analysis and round_data.disagreement_analysis.disagreement_fields:
+                output.append("\n    ⚠️  Disagreements:")
+                for field, values in round_data.disagreement_analysis.disagreement_fields.items():
+                    unique_values = len(set(values))
+                    output.append(f"      • {field}: {unique_values} unique values")
+                    # Show the actual values
+                    value_counts = {}
+                    for v in values:
+                        value_counts[v] = value_counts.get(v, 0) + 1
+                    for value, count in sorted(value_counts.items(), key=lambda x: x[1], reverse=True):
+                        value_display = value if len(value) <= 50 else value[:47] + "..."
+                        output.append(f"        - \"{value_display}\" ({count} votes)")
+            
+            # Information flow for this round
+            if round_data.information_flow:
+                output.append("\n    🔀 Information Flow:")
+                for model, peers in round_data.information_flow.items():
+                    output.append(f"      • {model} ← {', '.join(peers)}")
+            
+            # Response evolution for this round
+            if round_data.response_evolutions:
+                output.append("\n    📈 Response Evolution:")
+                for evolution in round_data.response_evolutions:
+                    if evolution.vote_changed:
+                        output.append(f"      • {evolution.id}: CHANGED VOTE")
+                        if evolution.influenced_by:
+                            output.append(f"        Influenced by: {', '.join(evolution.influenced_by)}")
+                    else:
+                        output.append(f"      • {evolution.id}: maintained position")
+        
+        # Consensus Evolution Summary Table
+        output.append("\n📊 CONSENSUS EVOLUTION SUMMARY:")
+        output.append("-" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
+        
+        # Create evolution table
+        header_format = "{:<8} {:<8} {:<15} {:<12} {:<25}"
+        output.append(
+            header_format.format(
+                "Round",
+                "Models",
+                "Unique Votes",
+                "Agreement %",
+                "Key Changes",
+            )
+        )
+        output.append("-" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
+        
+        for i, round_data in enumerate(result.rounds):
+            num_models = len(round_data.responses)
+            unique_votes = len(ConsensusPrettyPrinter._get_unique_votes(round_data.responses))
+            # Calculate agreement: 100% if all agree, 0% if all disagree
+            # Agreement = (models in agreement - 1) / (total models - 1) × 100
+            # This gives: 2 models same vote = 100%, 2 different = 0%
+            if num_models <= 1:
+                agreement_pct = 100.0  # Single model always agrees with itself
+            elif unique_votes == 1:
+                agreement_pct = 100.0  # All models agree
+            elif unique_votes == num_models:
+                agreement_pct = 0.0  # All models disagree
+            else:
+                # Partial agreement: find largest group
+                vote_groups = ConsensusPrettyPrinter._get_vote_groups(round_data.responses)
+                max_group_size = max(vote_groups.values()) if vote_groups else 1
+                # Agreement = how many models agree beyond just themselves
+                agreement_pct = ((max_group_size - 1) / (num_models - 1)) * 100
+            
+            # Determine key changes
+            key_changes = []
+            if i == 0:
+                key_changes.append("Initial responses")
+            else:
+                if round_data.response_evolutions:
+                    vote_changes = sum(1 for e in round_data.response_evolutions if e.vote_changed)
+                    if vote_changes > 0:
+                        key_changes.append(f"{vote_changes} vote changes")
+                if round_data.consensus_achieved:
+                    key_changes.append("✓ Consensus!")
+            
+            row = header_format.format(
+                str(i),
+                str(num_models),
+                str(unique_votes),
+                f"{agreement_pct:.1f}%",
+                ", ".join(key_changes) if key_changes else "—",
+            )
+            output.append(row)
+        
+        # Final Response
+        output.append("\n🎯 FINAL CONSENSUS RESPONSE:")
+        output.append("-" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
+        
+        # Format the final response
+        response_dict = result.final_response.model_dump()
+        
+        # Show all fields in verbose mode
+        for key, value in response_dict.items():
+            value_str = ConsensusPrettyPrinter._format_value(value, VerbosityLevel.VERBOSE)
+            if key == "reasoning":
+                output.append(f"\n  {key}:")
+                wrapped_reasoning = ConsensusPrettyPrinter._wrap_text(
+                    value_str.strip('"'), 
+                    ConsensusPrettyPrinter._SEPARATOR_WIDTH - 6
+                )
+                for line in wrapped_reasoning.split("\n"):
+                    output.append(f"    {line}")
+            else:
+                output.append(f"  {key}: {value_str}")
+        
+        # Reasoning Summary
+        if result.reasoning:
+            output.append("\n💡 CONSENSUS PROCESS SUMMARY:")
+            output.append("-" * ConsensusPrettyPrinter._SEPARATOR_WIDTH)
+            wrapped_reasoning = ConsensusPrettyPrinter._wrap_text(
+                result.reasoning,
+                ConsensusPrettyPrinter._SEPARATOR_WIDTH - 4
+            )
+            for line in wrapped_reasoning.split("\n"):
+                output.append(f"  {line}")
+        
+        # Footer
+        output.append("\n" + "🌟" + "=" * (ConsensusPrettyPrinter._SEPARATOR_WIDTH - 2) + "🌟")
+        output.append("                    ✨ END OF CONSENSUS RESULT ✨")
+        output.append("🌟" + "=" * (ConsensusPrettyPrinter._SEPARATOR_WIDTH - 2) + "🌟\n")
+        
+        return "\n".join(output)
+
+    @staticmethod
+    def print_final_consensus_result(
+        result: "ConsensusResult",
+        query: str,
+        verbosity: VerbosityLevel = VerbosityLevel.NORMAL,
+        show_metrics: bool = True,
+        show_evolution: bool = True,
+        show_final_response: bool = True,
+    ) -> None:
+        """Print the complete consensus result in a beautiful, comprehensive way.
+
+        This is the main function to display consensus results at the end of processing.
+        For buffered output, use format_final_consensus_result.
+
+        Args:
+            result: The ConsensusResult object containing all consensus data
+            query: The original query that was processed
+            verbosity: Level of detail to display
+            show_metrics: Whether to show performance metrics
+            show_evolution: Whether to show round-by-round evolution
+            show_final_response: Whether to display the final response content
+        """
+        output = ConsensusPrettyPrinter.format_final_consensus_result(
+            result, query, verbosity, show_metrics, show_evolution, show_final_response
+        )
+        print(output, end="")
+
+    @staticmethod
+    def _wrap_text(text: str, max_width: int) -> str:
+        """Wrap text to fit within specified width.
+
+        Args:
+            text: Text to wrap
+            max_width: Maximum line width
+
+        Returns:
+            Wrapped text
+        """
+        import textwrap
+        
+        return textwrap.fill(text, width=max_width, break_long_words=False, break_on_hyphens=False)

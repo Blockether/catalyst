@@ -33,9 +33,8 @@ from pydantic import BaseModel, RootModel
 from rapidfuzz import fuzz
 from sklearn.feature_extraction.text import CountVectorizer
 
-from com_blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore
-
 from ..utils import ConcurrentProcessor
+from .ImageOptimizer import ImageOptimizer
 from .KnowledgeExtractionCallBase import ExtractionCallsSettings
 from .KnowledgeExtractionTypes import (
     DocumentMetadata,
@@ -57,8 +56,8 @@ from .KnowledgeExtractionTypes import (
     TermOccurrence,
     TermWithLinks,
 )
+from .KnowledgeSearchCore import KnowledgeSearchCore
 from .PDFKnowledgeExtractor import PDFKnowledgeExtractor
-
 
 logger = logging.getLogger(__name__)
 
@@ -143,8 +142,13 @@ class KnowledgeExtractionCore:
         if not self.calls.document_chunking_call:
             raise ValueError("document_chunking_call is mandatory in settings")
 
+        image_output_dir = self._output_dir / "images"
+        image_output_dir.mkdir(parents=True, exist_ok=True)
+
+        self._image_optimizer = ImageOptimizer(image_output_dir, level=settings.image_optimization_level)
+
         # Define extractors for each supported extension
-        self.extractors = {".pdf": PDFKnowledgeExtractor(self._settings)}
+        self.extractors = {".pdf": PDFKnowledgeExtractor(image_output_dir, self._settings)}
 
         # Future: Add more extractors here
         # ".docx": self.docx_extractor
@@ -207,79 +211,14 @@ class KnowledgeExtractionCore:
         return normalized
 
     def _resolve_glob_patterns(self, globs: list[str]) -> list[Path]:
-        """
-        Resolve glob patterns to actual file paths.
+        all_files: Set[Path] = set()
 
-        Args:
-            globs: Sequence of glob patterns or file paths
+        for pattern in globs:
+            logger.info(f"Resolving glob pattern: {pattern}")
+            matched_files = list(Path().rglob(pattern))
+            all_files.update(matched_files)
 
-        Returns:
-            Sequence of resolved file paths
-
-        Raises:
-            FileNotFoundError: If no files match any of the provided patterns
-            ValueError: If the glob patterns are invalid
-        """
-        if not globs:
-            raise ValueError("No glob patterns provided")
-
-        all_files = []
-        pattern_results = {}  # Track results per pattern for better error reporting
-
-        for glob_pattern in globs:
-            pattern_files = []
-            path = Path(glob_pattern)
-
-            if path.is_file():
-                # Direct file path
-                pattern_files.append(path)
-            else:
-                # Glob pattern
-                if "*" in glob_pattern or "?" in glob_pattern or "[" in glob_pattern:
-                    # It's a glob pattern
-                    parent = Path(glob_pattern).parent if "/" in glob_pattern else Path(".")
-                    pattern = Path(glob_pattern).name
-
-                    if not parent.exists():
-                        pattern_results[glob_pattern] = f"Directory '{parent}' does not exist"
-                        continue
-
-                    matches = list(parent.glob(pattern))
-                    pattern_files.extend(matches)
-
-                    if not matches:
-                        pattern_results[glob_pattern] = f"No files matching pattern in '{parent}'"
-                    else:
-                        pattern_results[glob_pattern] = f"Found {len(matches)} file(s)"
-                else:
-                    # It might be a directory or non-existent path
-                    path_obj = Path(glob_pattern)
-                    if path_obj.is_dir():
-                        # Get all files in directory
-                        dir_files = list(path_obj.iterdir())
-                        pattern_files.extend([f for f in dir_files if f.is_file()])
-                        pattern_results[glob_pattern] = f"Found {len(pattern_files)} file(s) in directory"
-                    elif not path_obj.exists():
-                        pattern_results[glob_pattern] = "Path does not exist"
-                    else:
-                        pattern_results[glob_pattern] = "Path exists but is not a file or directory"
-
-            all_files.extend(pattern_files)
-
-        # If no files were found, provide detailed error message
-        if not all_files:
-            error_msg = "No files found matching any of the provided patterns:\n"
-            for pattern, result in pattern_results.items():
-                error_msg += f"  • '{pattern}': {result}\n"
-
-            error_msg += "\n💡 Examples of valid patterns:\n"
-            error_msg += "  • 'input/*.pdf' - all PDFs in input directory\n"
-            error_msg += "  • 'docs/**/*.pdf' - all PDFs recursively in docs\n"
-            error_msg += "  • 'data/file.pdf' - specific file path"
-
-            raise FileNotFoundError(error_msg)
-
-        return all_files
+        return list(all_files)
 
     def _group_files_by_extension(self, files: list[Path]) -> dict[str, list[Path]]:
         """
@@ -524,11 +463,15 @@ class KnowledgeExtractionCore:
         # Serialize to pickle file
         self._save_pickle("linked_knowledge", linked_knowledge)
 
+        # Step 10: Optimize extracted images
+        logger.info("Step 10/12: Optimizing extracted images")
+        self._image_optimizer.optimize()
+
         # Copy source documents to output directory
         self._copy_source_documents(all_files)
 
-        # Step 10: Create and persist KnowledgeSearchCore
-        logger.info("Step 10/12: Creating KnowledgeSearchCore with vector indices")
+        # Step 11: Create and persist KnowledgeSearchCore
+        logger.info("Step 12/12: Creating KnowledgeSearchCore with vector indices")
         search_core = KnowledgeSearchCore(
             linked_knowledge=linked_knowledge,
             pickle_path=self._output_dir / "knowledge_search.pkl",

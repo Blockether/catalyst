@@ -15,13 +15,11 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from com_blockether_catalyst.knowledge.KnowledgeExtractionBaseTypes import (
-    KnowledgeTableData,
-)
 from com_blockether_catalyst.knowledge.KnowledgeExtractionTypes import (
     DocumentMetadata,
     KnowledgeChunkWithTerms,
     KnowledgePageData,
+    KnowledgeTableData,
     LinkedKnowledge,
     Term,
     TermCooccurrence,

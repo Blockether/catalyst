@@ -8,6 +8,7 @@ prompts using the PromptAlignmentCore system.
 import asyncio
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,6 @@ from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.syntax import Syntax
 from rich.table import Table
-import re
 
 from com_blockether_catalyst.prompt import PromptAlignmentCore
 from com_blockether_catalyst.prompt.PromptAlignmentCore import (
@@ -73,7 +73,6 @@ class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
     def _init_components(self):
         """Initialize LLM components and prompt aligner."""
         pass
-
 
     def _get_current_data(self) -> Optional[Any]:
         """
@@ -141,7 +140,6 @@ class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
 
         self.console.print(f"[green]✓ Response saved to: {filepath}[/green]")
         return filepath
-
 
     def _view_saved_responses(self):
         """View saved response files in the output directory."""

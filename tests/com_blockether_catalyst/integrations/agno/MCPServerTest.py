@@ -83,7 +83,7 @@ class TestMCPServer:
         # Check that memory mode is always ephemeral
         assert server.memory_mode == "ephemeral"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_new_session_tool(self) -> None:
         """Test that ephemeral mode doesn't have new_session tool."""
         mock_workflow = MagicMock(spec=Workflow)
@@ -100,7 +100,7 @@ class TestMCPServer:
         assert "new_session" not in tool_names
         assert "send_message" in tool_names
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_message_tool(self) -> None:
         """Test the send_message MCP tool."""
         mock_workflow = MagicMock(spec=Workflow)
@@ -126,7 +126,7 @@ class TestMCPServer:
 
         assert result == "Test response"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_playground_api_with_mcp_server(self) -> None:
         """Test WorkflowApiASGIModule with MCP server enabled."""
 
@@ -155,7 +155,7 @@ class TestMCPServer:
         assert mcp_info is not None
         assert mcp_info[1] == "/mcp"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_playground_api_with_custom_formatter(self) -> None:
         """Test WorkflowApiASGIModule with custom MCP formatter."""
 

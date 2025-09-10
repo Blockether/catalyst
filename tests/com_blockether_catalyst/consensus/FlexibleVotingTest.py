@@ -50,10 +50,9 @@ class FlexibleResponse(TypedCallBaseForConsensus):
         description="Category name with semantic matching",
     )
 
-    # Tags compared as sets (order doesn't matter)
     tags: List[str] = VotingField(
         default_factory=list,
-        comparison=ComparisonStrategy.SEQUENCE_UNORDERED_ALIKE,
+        comparison=ComparisonStrategy.DERIVED,
         description="Tags in any order",
     )
 

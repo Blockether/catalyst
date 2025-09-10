@@ -45,7 +45,7 @@ class PDFTableData(KnowledgeTableData):
 class PDFKnowledgeExtractor:
     """Advanced PDF processor using pdfplumber for sophisticated extraction."""
 
-    def __init__(self, knowledge_settings: KnowledgeProcessorSettings) -> None:
+    def __init__(self, image_output_dir: Path, knowledge_settings: KnowledgeProcessorSettings) -> None:
         """
         Initialize PDF processor with optional configuration.
 
@@ -61,6 +61,7 @@ class PDFKnowledgeExtractor:
         self._pdf_image_processing_settings = self._settings.pdf_image_processing or PDFImageProcessingSettings()
         self._current_document: Optional[str] = None
         self._current_document_path: Optional[Path] = None
+        self._image_output_dir = image_output_dir
 
     @property
     def settings(self) -> PDFKnowledgeProcessorSettings:
@@ -303,9 +304,7 @@ class PDFKnowledgeExtractor:
                     # Create filename based on PDF name and page number
                     pdf_stem = self._current_document_path.stem if self._current_document_path else "document"
                     image_filename = f"{pdf_stem}_page_{page.page_number}_img_{idx + 1}.png"
-                    output_dir = Path(self._knowledge_settings.extraction_output_dir) / "images"
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    image_path = output_dir / image_filename
+                    image_path = self._image_output_dir / image_filename
                     image = page_image.original
 
                     if not self._current_document:

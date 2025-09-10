@@ -17,7 +17,7 @@ from com_blockether_catalyst.consensus.VotingComparison import (
     ComparisonStrategy,
     VotingField,
 )
-from com_blockether_catalyst.knowledge.KnowledgeExtractionBaseTypes import (
+from com_blockether_catalyst.knowledge.KnowledgeExtractionTypes import (
     ChunkAcronymExtractionResponse,
     ChunkingDecision,
     ChunkKeywordExtractionResponse,
@@ -105,20 +105,13 @@ class TestRecursiveComparisonWithLLMConsensus:
             fixed_responses=[
                 ChunkingDecision(
                     reasoning="Judge decision for chunking tie-breaking to resolve disagreements between models for optimal text segmentation.",
-                    chunks=[
-                        ChunkOutput(
-                            text="Judge chunk",
-                            start_position=0,
-                            end_position=10,
-                        )
-                    ],
+                    chunks=[ChunkOutput(root="Judge chunk")],
                 )
             ],
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_keyword_extraction_consensus_with_unordered_derived(self, mock_judge_keyword: Any) -> None:
-        """Test keyword extraction consensus using SEQUENCE_UNORDERED_DERIVED comparison."""
         # Create LLM calls for different models with slight variations in behavior
         model1_call: ArityOneTypedCall[str, ChunkKeywordExtractionResponse] = MockInstructorLLMCall(
             response_model=ChunkKeywordExtractionResponse,
@@ -222,9 +215,8 @@ class TestRecursiveComparisonWithLLMConsensus:
         # Verify voting worked correctly - models should have same voting keys for overlapping keywords
         assert result.total_rounds <= 2, "Should reach consensus within 2 rounds"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acronym_extraction_consensus_with_unordered_derived(self, mock_judge_acronym: Any) -> None:
-        """Test acronym extraction consensus using SEQUENCE_UNORDERED_DERIVED comparison."""
         model1_call: ArityOneTypedCall[str, ChunkAcronymExtractionResponse] = MockInstructorLLMCall(
             response_model=ChunkAcronymExtractionResponse,
             model_name="acronym_model1",
@@ -304,9 +296,8 @@ class TestRecursiveComparisonWithLLMConsensus:
         assert "API" in acronym_terms
         assert "HTTP" in acronym_terms
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chunking_consensus_with_ordered_derived(self, mock_judge_chunking: Any) -> None:
-        """Test chunking consensus using SEQUENCE_ORDERED_DERIVED comparison."""
         # Model 1: Creates 3 chunks
         model1_call: ArityOneTypedCall[str, ChunkingDecision] = MockInstructorLLMCall(
             response_model=ChunkingDecision,
@@ -317,19 +308,13 @@ class TestRecursiveComparisonWithLLMConsensus:
                     reasoning="Divided the text into logical sections based on semantic boundaries and content structure to maintain readability and comprehension.",
                     chunks=[
                         ChunkOutput(
-                            text="# Introduction\nThis document explains REST API concepts.",
-                            start_position=0,
-                            end_position=50,
+                            root="# Introduction\nThis document explains REST API concepts.",
                         ),
                         ChunkOutput(
-                            text="## HTTP Methods\nGET, POST, PUT, DELETE operations.",
-                            start_position=51,
-                            end_position=100,
+                            root="## HTTP Methods\nGET, POST, PUT, DELETE operations.",
                         ),
                         ChunkOutput(
-                            text="## Conclusion\nREST APIs provide standardized communication.",
-                            start_position=101,
-                            end_position=150,
+                            root="## Conclusion\nREST APIs provide standardized communication.",
                         ),
                     ],
                 )
@@ -346,19 +331,13 @@ class TestRecursiveComparisonWithLLMConsensus:
                     reasoning="Applied semantic segmentation strategy to create coherent chunks that preserve document structure and maintain contextual understanding.",
                     chunks=[
                         ChunkOutput(
-                            text="# Introduction\nThis document explains REST API concepts and their usage.",
-                            start_position=0,
-                            end_position=52,
+                            root="# Introduction\nThis document explains REST API concepts and their usage.",
                         ),
                         ChunkOutput(
-                            text="## HTTP Methods\nGET, POST, PUT, DELETE are the main operations.",
-                            start_position=53,
-                            end_position=105,
+                            root="## HTTP Methods\nGET, POST, PUT, DELETE are the main operations.",
                         ),
                         ChunkOutput(
-                            text="## Conclusion\nREST APIs enable standardized system communication.",
-                            start_position=106,
-                            end_position=158,
+                            root="## Conclusion\nREST APIs enable standardized system communication.",
                         ),
                     ],
                 )
@@ -390,19 +369,17 @@ class TestRecursiveComparisonWithLLMConsensus:
 
         result = await consensus.call(prompt)
 
-        # Verify consensus on ordered chunking
         assert result.consensus_achieved, f"Chunking consensus should be achieved. Score: {result.convergence_score}"
         assert result.final_response is not None
         assert len(result.final_response.chunks) == 3
         assert len(result.final_response.chunks) == 3
 
-        # Verify chunk order is preserved (SEQUENCE_ORDERED_DERIVED)
         chunks = result.final_response.chunks
-        assert "Introduction" in chunks[0].text
-        assert "HTTP Methods" in chunks[1].text
-        assert "Conclusion" in chunks[2].text
+        assert "Introduction" in chunks[0].root
+        assert "HTTP Methods" in chunks[1].root
+        assert "Conclusion" in chunks[2].root
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_consensus_failure_with_incompatible_responses(self, mock_judge_keyword: Any) -> None:
         """Test that consensus fails appropriately when responses are too different."""
         # Model 1: Returns keywords
@@ -469,12 +446,9 @@ class TestRecursiveComparisonWithLLMConsensus:
         # But should still return a fallback response
         assert result.final_response is not None, "Should have fallback response even without consensus"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_model_derived_comparison_in_consensus(self, mock_judge_keyword: Any) -> None:
         """Test that DERIVED comparison works correctly for individual model objects."""
-        # This test uses the fact that ExtractedKeyword uses DERIVED internally
-        # when compared as part of SEQUENCE_UNORDERED_DERIVED
-
         model1_call: ArityOneTypedCall[str, ChunkKeywordExtractionResponse] = MockInstructorLLMCall(
             response_model=ChunkKeywordExtractionResponse,
             model_name="semantic_model1",
@@ -549,7 +523,7 @@ class TestEdgeCasesWithLLMConsensus:
             ],
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_response_consensus(self, mock_judge_keyword: Any) -> None:
         """Test consensus when models return empty lists."""
         model1_call: ArityOneTypedCall[str, ChunkKeywordExtractionResponse] = MockInstructorLLMCall(
@@ -602,7 +576,7 @@ class TestEdgeCasesWithLLMConsensus:
         assert result.consensus_achieved, "Empty lists should reach consensus"
         assert result.final_response.keywords == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_consensus_with_threshold_boundary(self, mock_judge_keyword: Any) -> None:
         """Test consensus behavior at threshold boundaries."""
         # This test verifies that threshold calculations work correctly with derived comparisons

@@ -38,8 +38,7 @@ dependencies = [
     "numpy>=2.3.2",
     "tenacity>=9.1.2",
     "trio>=0.30.0",
-    "scikit-learn>=1.7.1",
-    "openai>=1.107.0",
+    "scikit-learn>=1.7.1"
 ]
 
 [project.urls]
@@ -58,10 +57,19 @@ extraction = [
     "scikit-learn>=1.7.1",
     "llama-cpp-python>=0.3.16",
     "prompt-toolkit>=3.0.52",
+    "pyoxipng>=9.1.1",
+    "pypdf>=6.0.0"
 ]
 
 [dependency-groups]
-test = ["pytest>=8.4.1", "pytest-cov>=6.2.1", "pytest-timeout>=2.4.0", "pytest-randomly>=3.16.0", "mangum>=0.19.0"]
+test = [
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "pytest-timeout>=2.4.0",
+    "pytest-randomly>=3.16.0",
+    "mangum>=0.19.0",
+    "anyio>=4.10.0",
+]
 
 # Development tools
 dev = ["mypy>=1.17.1", "ruff>=0.12.8", "isort>=5.10.0", "black>=24.0.0", "poethepoet>=0.37.0", "instructor>=1.10.0"]
@@ -87,6 +95,7 @@ timeout_method = "thread"
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "anyio: marks tests as async tests with anyio",
 ]
 
 [tool.mypy]

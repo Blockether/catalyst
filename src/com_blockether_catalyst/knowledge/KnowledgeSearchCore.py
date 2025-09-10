@@ -6,10 +6,11 @@ with knowledge about terms, their meanings, co-occurrences, and relationships.
 """
 
 import logging
+import pickle
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
-import pickle
+
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import InMemoryVectorStore
@@ -169,7 +170,7 @@ class KnowledgeSearchSnapshot:
 
     def __init__(
         self,
-        linked_knowledge: LinkedKnowledge,
+        linked_knowlede: LinkedKnowledge,
         vector_store_dump: str,
         term_mappings: Dict[str, str],
     ):
@@ -177,11 +178,11 @@ class KnowledgeSearchSnapshot:
         Initialize snapshot.
 
         Args:
-            linked_knowledge: Complete knowledge structure
+            _linked_knowledge: Complete knowledge structure
             vector_store_dump: Serialized vector store as JSON string
             term_mappings: Mappings between terms and their variants
         """
-        self.linked_knowledge = linked_knowledge
+        self._linked_knowledge = linked_knowlede
         self.vector_store_dump = vector_store_dump
         self.term_mappings = term_mappings
 
@@ -217,7 +218,7 @@ class KnowledgeSearchCore:
         Initialize the knowledge search core.
 
         Args:
-            linked_knowledge: Complete knowledge structure with documents, terms, and links
+            _linked_knowledge: Complete knowledge structure with documents, terms, and links
             pickle_path: Path to pickle file for persistence/loading
             auto_load: If True and pickle_path exists, automatically load from pickle
 
@@ -236,11 +237,11 @@ class KnowledgeSearchCore:
             logger.info(f"KnowledgeSearchCore initialization from pickle took {init_time:.3f}s")
             return
 
-        # Otherwise, initialize from linked_knowledge
+        # Otherwise, initialize from _linked_knowledge
         if linked_knowledge is None:
-            raise ValueError("linked_knowledge is required when not loading from pickle")
+            raise ValueError("linked_knowlede is required when not loading from pickle")
 
-        self.linked_knowledge = linked_knowledge
+        self._linked_knowledge = linked_knowledge
 
         # Initialize embeddings and vector store
         self._embeddings = EncoderEmbeddings()
@@ -252,18 +253,22 @@ class KnowledgeSearchCore:
         self._acronym_to_full_form: Dict[str, str] = {}
         self._full_form_to_acronym: Dict[str, str] = {}
 
-        self._term_to_documents_index = linked_knowledge.term_to_documents_index
-        self._document_to_terms_index = linked_knowledge.document_to_terms_index
+        self._term_to_documents_index = self._linked_knowledge.term_to_documents_index
+        self._document_to_terms_index = self._linked_knowledge.document_to_terms_index
 
         # Build acronym mappings from terms
-        for _, term in linked_knowledge.terms.items():
+        for _, term in self._linked_knowledge.terms.items():
             if term.type == "acronym" and term.full_form:
                 self._acronym_to_full_form[term.term] = term.full_form
                 self._full_form_to_acronym[term.full_form] = term.term
 
-
         init_time = time.time() - start_time
         logger.info(f"KnowledgeSearchCore initialization took {init_time:.3f}s")
+
+    @property
+    def linked_knowledge(self) -> LinkedKnowledge:
+        """Get the underlying linked knowledge structure."""
+        return self._linked_knowledge
 
     def _search(
         self,
@@ -405,7 +410,7 @@ class KnowledgeSearchCore:
 
             # Extract primary terms from the result text
             result_text_lower = enh_result.text.lower()
-            for term_key, term in self.linked_knowledge.terms.items():
+            for term_key, term in self.__linked_knowledge.terms.items():
                 if term_key.lower() in result_text_lower:
                     enh_result.primary_terms.append(term)
                     enh_result.all_terms.add(term.term)
@@ -416,8 +421,8 @@ class KnowledgeSearchCore:
                 for link in term.links:
                     linked_term_key = link.link_to
 
-                    if linked_term_key and linked_term_key in self.linked_knowledge.terms:
-                        linked_term = self.linked_knowledge.terms[linked_term_key]
+                    if linked_term_key and linked_term_key in self.__linked_knowledge.terms:
+                        linked_term = self.__linked_knowledge.terms[linked_term_key]
                         if linked_term not in enh_result.related_terms:
                             enh_result.related_terms.append(linked_term)
                             enh_result.all_terms.add(linked_term.term)
@@ -425,8 +430,8 @@ class KnowledgeSearchCore:
                 # Add co-occurring terms
                 if term.cooccurrences and max_cooccurrences > 0:
                     for cooccurrence in term.cooccurrences[:max_cooccurrences]:
-                        if cooccurrence.term in self.linked_knowledge.terms:
-                            cooccurring_term = self.linked_knowledge.terms[cooccurrence.term]
+                        if cooccurrence.term in self.__linked_knowledge.terms:
+                            cooccurring_term = self.__linked_knowledge.terms[cooccurrence.term]
                             if cooccurring_term not in enh_result.related_terms:
                                 enh_result.related_terms.append(cooccurring_term)
                                 enh_result.all_terms.add(cooccurring_term.term)
@@ -458,9 +463,7 @@ class KnowledgeSearchCore:
 
         # Sort results by combined score (similarity + term relevance)
         enhanced_results.sort(
-            key=lambda r: (
-                r.score * self.SIMILARITY_WEIGHT + r.term_relevance_score * self.TERM_RELEVANCE_WEIGHT
-            ),
+            key=lambda r: (r.score * self.SIMILARITY_WEIGHT + r.term_relevance_score * self.TERM_RELEVANCE_WEIGHT),
             reverse=True,
         )
 
@@ -514,8 +517,8 @@ class KnowledgeSearchCore:
             page: Page number
         """
         page_key = (document_id, page)
-        if page_key in self.linked_knowledge.pages:
-            page_data = self.linked_knowledge.pages[page_key]
+        if page_key in self.__linked_knowledge.pages:
+            page_data = self.__linked_knowledge.pages[page_key]
 
             result.images.extend(page_data.images)
 
@@ -549,7 +552,7 @@ class KnowledgeSearchCore:
 
         # Create a serializable state object with the vector store directly
         state = {
-            "linked_knowledge": self.linked_knowledge,
+            "__linked_knowledge": self.__linked_knowledge,
             "vector_store": self._vector_store.store,  # Store the vector store data directly
             "term_to_embedding_id": self._term_to_embedding_id,
             "embedding_id_to_term": self._embedding_id_to_term,
@@ -596,7 +599,7 @@ class KnowledgeSearchCore:
                 state = pickle.load(f)
 
             # Restore all state
-            self.linked_knowledge = state["linked_knowledge"]
+            self.__linked_knowledge = state["__linked_knowledge"]
 
             # Initialize embeddings
             self._embeddings = EncoderEmbeddings()
@@ -613,9 +616,9 @@ class KnowledgeSearchCore:
             self._document_to_terms_index = state["document_to_terms_index"]
 
             logger.info(f"Successfully loaded KnowledgeSearchCore from {load_path}")
-            logger.info(f"  - Documents: {len(self.linked_knowledge.documents)}")
-            logger.info(f"  - Terms: {len(self.linked_knowledge.terms)}")
-            logger.info(f"  - Chunks: {len(self.linked_knowledge.chunks)}")
+            logger.info(f"  - Documents: {len(self.__linked_knowledge.documents)}")
+            logger.info(f"  - Terms: {len(self.__linked_knowledge.terms)}")
+            logger.info(f"  - Chunks: {len(self.__linked_knowledge.chunks)}")
 
         except Exception as e:
             raise ValueError(f"Failed to load pickle file: {e}") from e

@@ -22,12 +22,8 @@ from mangum import Mangum
 
 from com_blockether_catalyst.asgi import ASGICoreApplication, ASGIConfig
 from com_blockether_catalyst.asgi.ASGITypes import CORSConfig as ASGICORSConfig
-from com_blockether_catalyst.integrations.agno import (
-    AgnoWorkflowAPIModule,
-    MCPConfig,
-    WorkflowApiASGIModule,
-    WorkflowConfig,
-)
+from com_blockether_catalyst.integrations.agno.WorkflowASGIModule import WorkflowApiASGIModule
+from com_blockether_catalyst.integrations.agno.WorkflowTypes import AgnoWorkflowAPIModule, MCPConfig, WorkflowConfig
 from com_blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore
 from com_blockether_catalyst.knowledge.KnowledgeVisualizationASGIModule import KnowledgeVisualizationASGIModule
 from com_blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
@@ -37,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-knowledge_search_core = KnowledgeSearchCore.from_pickle("public/knowledge_extraction/knowledge_search.pkl")
+search = KnowledgeSearchCore.from_pickle("public/knowledge_extraction/knowledge_search.pkl")
 
 # ============================================================================
 # Knowledge Q&A Response Models
@@ -163,7 +159,7 @@ async def knowledge_workflow(_workflow_instance, **kwargs) -> RunResponse:
     # First, search the knowledge base for relevant information
     search_start_time = time.time()
     logger.info("📊 Beginning knowledge base search...")
-    search_results = knowledge_search_core.search_enhanced(
+    search_results = search.search_enhanced(
         query=message,
         k=10,
         threshold=0.1,
@@ -301,14 +297,10 @@ def create_app() -> ASGICoreApplication:
 
     # Create and mount the visualization module
     visualization_module = KnowledgeVisualizationASGIModule(
-        prefix="/viz"
+        prefix="/viz",
+        search=search
     )
-    # Load the knowledge data without creating a new search core
-    visualization_module.load_from_pickle(
-        Path("public/knowledge_extraction/linked_knowledge.pkl")
-    )
-    # Use the existing search core
-    visualization_module.search_core = knowledge_search_core
+
     # Mount the visualization module
     app.mount_module(visualization_module)
 

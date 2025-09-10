@@ -1,15 +1,23 @@
 """Main workflow implementation for Agno integration."""
 
-from typing import Any, Callable, Coroutine, Dict, Optional
+from typing import Any, Callable, Coroutine, Dict, Generic, Optional, TypeVar
 
 import anyio
 from agno.run.response import RunResponse
 from agno.workflow import Workflow
+from pydantic import BaseModel
 
-from .WorkflowTypes import OnRunCallable, RequestContextModel
+from .WorkflowTypes import (
+    OnRunCallable,
+    RequestContextModel,
+    WorkflowInputWithContextModel,
+)
+
+K = TypeVar("K", bound=WorkflowInputWithContextModel)
+T = TypeVar("T", bound=BaseModel)
 
 
-class MainWorkflow(Workflow):
+class MainWorkflow(Workflow, Generic[K, T]):
     """
     Workflow implementation with request context extraction and validation.
 
@@ -39,7 +47,7 @@ class MainWorkflow(Workflow):
         super().__init__(description=description, telemetry=telemetry, **kwargs)
         self._run_callback = run_callback
 
-    async def arun(self, **kwargs: Any) -> RunResponse:  # type: ignore[override]
+    async def arun(self, payload: K) -> T:  # type: ignore
         """
         Asynchronous run method with request context extraction and validation.
 
@@ -62,38 +70,21 @@ class MainWorkflow(Workflow):
             ValueError: If streaming is enabled, request_context is missing,
                        or message field is missing
         """
-        # Check for stream parameter and reject it
-        if kwargs.get("stream", False):
-            raise ValueError("Streaming is disabled. This API only supports non-streaming responses.")
-
-        # Extract request context (required)
-        if "request_context" not in kwargs:
-            raise ValueError("request_context is required but not found in input")
-
         # Handle both dict and RequestContextModel instances
-        request_context_data = kwargs["request_context"]
-        if isinstance(request_context_data, RequestContextModel):
-            request_context = request_context_data
-        else:
-            request_context = RequestContextModel(**request_context_data)
+        request_context = payload.request_context
 
         # Extract message
-        message = kwargs.get("message")
+        message = payload.message
+
         if message is None:
             raise ValueError("message field is required but not found in input")
-
-        # Remove processed fields from kwargs
-        remaining_kwargs = kwargs.copy()
-        remaining_kwargs.pop("message", None)
-        remaining_kwargs.pop("request_context", None)
-        remaining_kwargs.pop("stream", None)  # Remove stream if present
 
         # Call run_callback and get RunResponse directly
         return await self._run_callback(
             self,
             message=message,
             request_context=request_context,
-            **remaining_kwargs,
+            payload=payload,
         )
 
     def deep_copy(self, update: Optional[Dict[str, Any]] = None) -> "MainWorkflow":  # type: ignore

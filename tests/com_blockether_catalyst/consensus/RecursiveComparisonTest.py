@@ -1,7 +1,7 @@
 """
 Tests for recursive comparison strategies in the consensus voting system.
 
-This module tests SEQUENCE_ORDERED_DERIVED, SEQUENCE_UNORDERED_DERIVED, and DERIVED
+This module tests SEQUENCE_ORDERED_DERIVED, DERIVED, and DERIVED
 comparison strategies to ensure they work correctly with complex nested structures.
 """
 
@@ -14,18 +14,10 @@ from com_blockether_catalyst.consensus.VotingComparison import (
     FieldComparator,
     VotingField,
 )
-from com_blockether_catalyst.knowledge.KnowledgeExtractionBaseTypes import (
-    ChunkAcronymExtractionResponse,
-    ChunkingDecision,
-    ChunkKeywordExtractionResponse,
-    ChunkOutput,
-    ExtractedAcronym,
-    ExtractedKeyword,
-)
 
 
 class TestSequenceUnorderedDerived:
-    """Test SEQUENCE_UNORDERED_DERIVED comparison strategy."""
+    """Test DERIVED comparison strategy."""
 
     def test_identical_lists_return_true(self) -> None:
         """Identical lists should return True."""
@@ -38,7 +30,7 @@ class TestSequenceUnorderedDerived:
         result = FieldComparator.compare_fields(
             list1,
             list2,
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.8,
         )
         assert result is True
@@ -54,7 +46,7 @@ class TestSequenceUnorderedDerived:
         result = FieldComparator.compare_fields(
             list1,
             list2,
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.8,
         )
         assert result is True
@@ -70,7 +62,7 @@ class TestSequenceUnorderedDerived:
         FieldComparator.compare_fields(
             list1,
             list2,
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.8,
         )
         # This should work if semantic comparison handles case insensitivity
@@ -89,7 +81,7 @@ class TestSequenceUnorderedDerived:
         result = FieldComparator.compare_fields(
             list1,
             list2,
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.4,  # Low threshold should pass
         )
         assert result is True
@@ -97,7 +89,7 @@ class TestSequenceUnorderedDerived:
         result_high_threshold = FieldComparator.compare_fields(
             list1,
             list2,
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.8,  # High threshold should fail
         )
         assert result_high_threshold is False
@@ -107,7 +99,7 @@ class TestSequenceUnorderedDerived:
         result = FieldComparator.compare_fields(
             [],
             [],
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.8,
         )
         assert result is True
@@ -119,7 +111,7 @@ class TestSequenceUnorderedDerived:
         result = FieldComparator.compare_fields(
             [kw1],
             [],
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.8,
         )
         assert result is False
@@ -241,19 +233,18 @@ class TestIntegrationWithConsensusTypes:
         kw2 = ExtractedKeyword(term="REST")
 
         response1 = ChunkKeywordExtractionResponse(
-            reasoning="Found technical keywords in the chunk that are relevant for understanding the software architecture and system design patterns used.",
+            reasoning="Found technical keywords in the chunk that are relevant for understanding the software architecture and system design patterns used. These keywords provide essential context for comprehending the implementation details and technical specifications.",
             keywords=[kw1, kw2],
         )
 
         response2 = ChunkKeywordExtractionResponse(
-            reasoning="Different reasoning but same keywords to test if voting system works correctly with unordered derived comparison.",
+            reasoning="Different reasoning but same keywords to test if voting system works correctly with unordered derived comparison. This ensures that the order of keywords does not affect the voting key generation and consensus mechanism.",
             keywords=[kw2, kw1],  # Different order
         )
 
         key1 = response1.get_voting_key()
         key2 = response2.get_voting_key()
 
-        # Keys should be the same despite different order due to SEQUENCE_UNORDERED_DERIVED
         assert key1 == key2
 
     def test_chunk_acronym_response_voting_key_generation(self) -> None:
@@ -262,12 +253,12 @@ class TestIntegrationWithConsensusTypes:
         acronym2 = ExtractedAcronym(term="HTTP", full_form="Hypertext Transfer Protocol")
 
         response1 = ChunkAcronymExtractionResponse(
-            reasoning="Found common software acronyms that are essential for understanding the technical documentation and system architecture.",
+            reasoning="Found common software acronyms that are essential for understanding the technical documentation and system architecture. These acronyms represent fundamental concepts in software engineering and are crucial for technical communication.",
             acronyms=[acronym1, acronym2],
         )
 
         response2 = ChunkAcronymExtractionResponse(
-            reasoning="Identified technical abbreviations that provide context for the system design and implementation details discussed.",
+            reasoning="Identified technical abbreviations that provide context for the system design and implementation details discussed. These acronyms help clarify complex technical concepts and improve the readability of technical documentation for developers.",
             acronyms=[acronym2, acronym1],  # Different order
         )
 
@@ -291,12 +282,12 @@ class TestIntegrationWithConsensusTypes:
         )
 
         decision1 = ChunkingDecision(
-            reasoning="Divided document into logical sections based on content structure and semantic boundaries for optimal comprehension.",
+            reasoning="Divided document into logical sections based on content structure and semantic boundaries for optimal comprehension. This chunking strategy ensures that related information stays together while maintaining appropriate context boundaries.",
             chunks=[chunk1, chunk2],
         )
 
         decision2 = ChunkingDecision(
-            reasoning="Applied semantic segmentation strategy to create coherent chunks that maintain context and readability throughout.",
+            reasoning="Applied semantic segmentation strategy to create coherent chunks that maintain context and readability throughout. The segmentation preserves the logical flow of information while ensuring each chunk can be understood independently.",
             chunks=[chunk2, chunk1],  # Different order
         )
 
@@ -343,7 +334,7 @@ class TestEdgeCases:
         result = FieldComparator.compare_fields(
             list1,
             list2,
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.8,
         )
         assert result is True
@@ -360,7 +351,7 @@ class TestEdgeCases:
         result_at_boundary = FieldComparator.compare_fields(
             list1,
             list2,
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.5,
         )
         assert result_at_boundary is True
@@ -369,7 +360,7 @@ class TestEdgeCases:
         result_above_boundary = FieldComparator.compare_fields(
             list1,
             list2,
-            strategy=ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED,
+            strategy=ComparisonStrategy.DERIVED,
             threshold=0.6,
         )
         assert result_above_boundary is False

@@ -17,7 +17,7 @@ from com_blockether_catalyst.prompt import (
     PromptAlignmentCore,
     PromptConfiguration,
 )
-from com_blockether_catalyst.prompt.internal import (
+from com_blockether_catalyst.prompt.PromptAlignmentTypes import (
     AlignmentFeedback,
     AlignmentPrinciple,
     AlignmentPrincipleList,

@@ -7,10 +7,12 @@ which systematically extracts and applies reusable guidelines.
 
 import pytest
 
-from com_blockether_catalyst.prompt.internal import (
+from com_blockether_catalyst.prompt.PrincipleBasedAlignmentStrategy import (
+    PrincipleBasedAlignmentStrategy,
+)
+from com_blockether_catalyst.prompt.PromptAlignmentTypes import (
     AlignmentFeedback,
     AlignmentPrinciple,
-    PrincipleBasedAlignmentStrategy,
 )
 
 

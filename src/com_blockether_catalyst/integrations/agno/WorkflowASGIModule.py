@@ -2,28 +2,44 @@
 
 import json
 import logging
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Type, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Coroutine,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
 from uuid import uuid4
 
 from agno.app.playground.schemas import WorkflowRunRequest
 from agno.run.response import RunResponse
+from agno.storage.in_memory import InMemoryStorage
 from agno.workflow import Workflow
 from fastapi import APIRouter, HTTPException, Request
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 from pydantic import BaseModel, Field
 
-from com_blockether_catalyst.asgi.ASGICoreModule import ASGICoreModule
-
+from ...asgi.ASGICoreModule import ASGICoreModule
 from .MainWorkflow import MainWorkflow
 from .WorkflowTypes import (
     AgnoWorkflowAPIModule,
     MCPToolDefinition,
     RequestContextModel,
     WorkflowConfig,
+    WorkflowInputWithContextModel,
 )
 
 logger = logging.getLogger(__name__)
+
+K = TypeVar("K", bound=WorkflowInputWithContextModel)
+T = TypeVar("T", bound=BaseModel)
 
 
 class SessionInfo(BaseModel):
@@ -39,12 +55,12 @@ class MessageRequest(BaseModel):
 
     message: str = Field(description="The message to send to the workflow")
     session_id: Optional[str] = Field(default=None, description="Session ID for continuing conversation")
-    context: Optional[Dict[str, Any]] = Field(default=None, description="Optional context data to pass to the workflow")
+    user_id: Optional[str] = Field(default=None, description="Optional user identifier")
 
 
 async def setup_workflow_instance(
-    workflow: Workflow, session_id: str | None = None, user_id: str | None = None
-) -> Workflow:
+    workflow: MainWorkflow, session_id: str | None = None, user_id: str | None = None
+) -> MainWorkflow:
     new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow.workflow_id})
 
     if session_id is not None:
@@ -71,7 +87,7 @@ async def setup_workflow_instance(
     return new_workflow_instance
 
 
-async def create_workflow_run(workflow: Workflow, body: WorkflowRunRequest) -> RunResponse:
+async def create_workflow_run(workflow: MainWorkflow, body: WorkflowRunRequest) -> Any:
     if body.session_id is not None:
         logger.debug(f"Continuing session: {body.session_id}")
     else:
@@ -82,13 +98,13 @@ async def create_workflow_run(workflow: Workflow, body: WorkflowRunRequest) -> R
     # Return based on the response type
     try:
         result = await workflow_instance.arun(**body.input)
-        return cast(RunResponse, result)
+        return result
     except Exception as e:
         # Handle unexpected runtime errors
         raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
 
-class MCPServer:
+class MCPServer(Generic[K, T]):
     """MCP server wrapper for Agno workflows.
 
     Provides a Model Context Protocol interface to interact with Agno workflows,
@@ -101,7 +117,7 @@ class MCPServer:
     def __init__(
         self,
         server_name: str,
-        workflow: Workflow,
+        workflow: MainWorkflow[K, T],
         custom_tools: Optional[Dict[str, Union[Callable, MCPToolDefinition]]] = None,
     ):
         """Initialize the MCP server.
@@ -127,7 +143,7 @@ class MCPServer:
         if custom_tools:
             self._register_custom_tools(custom_tools)
 
-    async def _setup_ephemeral_workflow(self) -> Workflow:
+    async def _setup_ephemeral_workflow(self) -> MainWorkflow[K, T]:
         """Setup workflow with ephemeral memory for a session.
 
         Args:
@@ -137,8 +153,6 @@ class MCPServer:
         Returns:
             Workflow instance with ephemeral memory
         """
-        from agno.storage.in_memory import InMemoryStorage
-
         # Create a copy of the workflow
         workflow_instance = self.workflow.deep_copy(update={"workflow_id": self.workflow.workflow_id})
 
@@ -146,44 +160,6 @@ class MCPServer:
         workflow_instance.storage = InMemoryStorage(mode="workflow")
 
         return workflow_instance
-
-    async def _create_workflow_run(
-        self, session_id: str, input_data: Dict[str, Any], user_id: Optional[str] = None
-    ) -> RunResponse:
-        """Create a workflow run using the workflow instance.
-
-        Args:
-            session_id: Session identifier
-            input_data: Input data for the workflow
-            user_id: Optional user identifier
-
-        Returns:
-            RunResponse from the workflow
-        """
-        if self.memory_mode == "ephemeral":
-            # Use ephemeral memory for this session
-            workflow_instance = await self._setup_ephemeral_workflow()
-        else:
-            # Use inherited memory from the workflow
-            workflow_instance = await setup_workflow_instance(self.workflow, session_id=session_id, user_id=user_id)
-
-        # Create and execute workflow run request
-        request = WorkflowRunRequest(input=input_data, session_id=session_id, user_id=user_id)
-
-        # Run the workflow directly
-        if request.input is None:
-            request.input = {}
-
-        if "context" not in request.input:
-            request.input["context"] = {
-                "session_id": session_id,
-                "user_id": user_id,
-            }
-
-        request.input["context"]["is_ephemeral"] = self.memory_mode == "ephemeral"
-
-        result = await workflow_instance.arun(**request.input)
-        return cast(RunResponse, result)
 
     def _register_default_tools(self) -> None:
         """Register default MCP tools for workflow interaction."""
@@ -207,7 +183,7 @@ class MCPServer:
                 return session_info
 
         @self.mcp.tool(description="Send a message to the workflow")
-        async def send_message(request: MessageRequest) -> str:
+        async def send_message(request: MessageRequest) -> T:
             """Send a message to the workflow within a session context.
 
             Args:
@@ -228,28 +204,23 @@ class MCPServer:
                 "context": request.context or {},
             }
 
-            run_response = await self._create_workflow_run(session_id, input_data)
+            run_response = await create_workflow_run(self.workflow, input_data)
 
-            # Format and return response
-            return str(run_response.content)
+            return run_response
 
-    def _register_custom_tools(self, custom_tools: Dict[str, Union[Callable, MCPToolDefinition]]) -> None:
+    def _register_custom_tools(self, custom_tools: Dict[str, MCPToolDefinition]) -> None:
         """Register custom MCP tools.
 
         Args:
             custom_tools: Dictionary mapping tool names to callables or MCPToolDefinition objects
         """
         for name, tool_def in custom_tools.items():
-            if isinstance(tool_def, MCPToolDefinition):
-                # Extract metadata from MCPToolDefinition
-                self.mcp.tool(
-                    name=name,
-                    description=tool_def.description,
-                    title=tool_def.title,
-                )(tool_def.function)
-            else:
-                # Simple callable - just use the name
-                self.mcp.tool(name=name)(tool_def)
+            # Extract metadata from MCPToolDefinition
+            self.mcp.tool(
+                name=name,
+                description=tool_def.description,
+                title=tool_def.title,
+            )(tool_def.function)
 
     def get_asgi_app(self) -> Any:
         """Get the ASGI app for mounting in FastAPI.
@@ -260,38 +231,7 @@ class MCPServer:
         return self.mcp.sse_app()
 
 
-class WorkflowApiASGIModule(ASGICoreModule):
-    """Minimal API for Agno workflows.
-
-    Provides REST API endpoints for interacting with a single Agno workflow.
-    Features:
-    - REST API endpoints for workflow execution
-    - Session management
-    - Request context injection
-    - Optional MCP server integration
-
-    Example:
-        ```python
-        from com_blockether_catalyst.asgi import ASGICoreApplication
-
-        # Create the API module
-        api = WorkflowApiASGIModule(
-            workflow=WorkflowConfig(
-                run_callback=my_workflow_function,
-                description="My workflow"
-            ),
-            api=AgnoWorkflowAPIModule(
-                name="My API"
-            )
-        )
-
-        # Create the application and mount the module
-        app = ASGICoreApplication()
-        app.mount_module(api)
-        ```
-    """
-
-    # Add Pydantic fields for this module - using private attributes
+class WorkflowApiASGIModule(ASGICoreModule, Generic[K, T]):
     mcp_server_instance: Optional[MCPServer] = Field(default=None, exclude=True, description="MCP server instance")
     api_configuration: AgnoWorkflowAPIModule = Field(
         default_factory=AgnoWorkflowAPIModule,
@@ -301,7 +241,7 @@ class WorkflowApiASGIModule(ASGICoreModule):
     workflow_configuration: Optional[WorkflowConfig] = Field(
         default=None, exclude=True, description="Workflow configuration"
     )
-    workflow_instance: Optional[Workflow] = Field(default=None, exclude=True, description="Workflow instance")
+    workflow_instance: Optional[MainWorkflow] = Field(default=None, exclude=True, description="Workflow instance")
     workflow_sessions: Dict[str, Workflow] = Field(
         default_factory=dict, exclude=True, description="Active workflow sessions"
     )
@@ -372,7 +312,7 @@ class WorkflowApiASGIModule(ASGICoreModule):
         if self.api_configuration.mcp:
             self._initialize_mcp_server(self.api_configuration)
 
-    def _create_workflow(self, run_callback: Callable, workflow_settings: Dict[str, Any]) -> Workflow:
+    def _create_workflow(self, run_callback: Callable, workflow_settings: Dict[str, Any]) -> MainWorkflow[K, T]:
         """
         Create a workflow instance with injected run method.
 
@@ -399,7 +339,7 @@ class WorkflowApiASGIModule(ASGICoreModule):
         workflow_init_params.pop("run_callback", None)
 
         # Create MainWorkflow instance with injected callback
-        workflow = MainWorkflow(
+        workflow = MainWorkflow[K, T](
             run_callback=run_callback,
             description=description,
             telemetry=telemetry,
@@ -447,7 +387,7 @@ class WorkflowApiASGIModule(ASGICoreModule):
             }
 
         # Add workflow run endpoint - single workflow, no ID needed
-        @router.post("/workflow/run", response_model=None)
+        @router.post("/workflow/run", response_model=T)
         async def handle_workflow_run(request: Request) -> RunResponse:
             """Execute workflow with request context injection."""
             # Internal workflow_id is always "mainworkflow", no need to check
@@ -485,7 +425,9 @@ class WorkflowApiASGIModule(ASGICoreModule):
             input_data["request_context"] = request_context.model_dump()
 
             # Create workflow run request
-            workflow_run_request = WorkflowRunRequest(input=input_data, session_id=session_id, user_id=user_id)
+            workflow_run_request = WorkflowRunRequest(
+                input=input_data, session_id=session_id, user_id=user_id, stream=False
+            )
 
             # Execute workflow using the module-level function
             if not self.workflow_instance:

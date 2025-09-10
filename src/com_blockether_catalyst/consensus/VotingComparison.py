@@ -25,19 +25,14 @@ class ComparisonStrategy(str, Enum):
     # Numeric fields within a range are considered equal
     RANGE = "range"
 
-    SEMANTIC = "semantic"  # Semantic similarity using embeddings (for text)
-    CUSTOM = "custom"  # Use a custom comparison function
+    # Semantic similarity using embeddings (for text)
+    SEMANTIC = "semantic"
 
-    # Recursive/derived comparison strategies
-    SEQUENCE_ORDERED_DERIVED = (
-        "sequence_ordered_derived"  # List[T], Tuple[T] - order matters, compare each T recursively
-    )
-    SEQUENCE_UNORDERED_DERIVED = "sequence_unordered_derived"  # List[T] as set - order ignored, find best matches
-    DERIVED = "derived"  # BaseModel - recursive field comparison using each field's strategy
+    # Use a custom comparison function
+    CUSTOM = "custom"
 
-    # Partial/alike comparison strategies - support different sized collections
-    SEQUENCE_ORDERED_ALIKE = "sequence_ordered_alike"  # List[T] - order matters, allows partial overlap
-    SEQUENCE_UNORDERED_ALIKE = "sequence_unordered_alike"  # List[T] - order ignored, allows partial overlap
+    # BaseModel - recursive field comparison using each field's strategy
+    DERIVED = "derived"
 
 
 class VotingMetadata(BaseModel):
@@ -105,20 +100,8 @@ class FieldComparator:
                 return custom_comparator(value1, value2)
             return bool(value1 == value2)
 
-        if strategy == ComparisonStrategy.SEQUENCE_ORDERED_DERIVED:
-            return FieldComparator._compare_sequence_ordered_derived(value1, value2, threshold or 0.8)
-
-        if strategy == ComparisonStrategy.SEQUENCE_UNORDERED_DERIVED:
-            return FieldComparator._compare_sequence_unordered_derived(value1, value2, threshold or 0.8)
-
         if strategy == ComparisonStrategy.DERIVED:
             return FieldComparator._compare_model_derived(value1, value2, threshold or 0.8)
-
-        if strategy == ComparisonStrategy.SEQUENCE_ORDERED_ALIKE:
-            return FieldComparator._compare_sequence_ordered_alike(value1, value2, threshold or 0.8)
-
-        if strategy == ComparisonStrategy.SEQUENCE_UNORDERED_ALIKE:
-            return FieldComparator._compare_sequence_unordered_alike(value1, value2, threshold or 0.8)
 
         # Default to exact comparison
         return bool(value1 == value2)

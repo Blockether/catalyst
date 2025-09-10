@@ -17,7 +17,6 @@ from pydantic import Field
 
 from com_blockether_catalyst.asgi.ASGICoreModule import ASGICoreModule
 
-
 from .KnowledgeExtractionTypes import (
     LinkedKnowledge,
     Term,
@@ -34,21 +33,21 @@ logger = logging.getLogger(__name__)
 class KnowledgeVisualizationASGIModule(ASGICoreModule):
     """Web-based visualization for LinkedKnowledge using FastAPI + HTMX + Tailwind."""
 
-    output_dir: Path = Field(
-        default_factory=lambda: Path("public/knowledge_extraction"),
+    linked_knowledge: LinkedKnowledge = Field(
+        description="The linked knowledge data structure"
+    )
+    knowledge_dir: Path = Field(
         description="Directory containing knowledge extraction outputs",
     )
-    linked_knowledge: Optional[LinkedKnowledge] = Field(
-        default=None, exclude=True, description="Loaded LinkedKnowledge data"
-    )
-    search_core: Optional[KnowledgeSearchCore] = Field(
-        default=None, exclude=True, description="Knowledge search core"
-    )
+
+    search: KnowledgeSearchCore = Field(description="Knowledge search core")
 
     def __init__(
         self,
-        output_dir: Optional[Path] = None,
+        search: KnowledgeSearchCore,
+        knowledge_dir: Path = Path("public/knowledge_extraction"),
         prefix: str = "/knowledge",
+        templates: Optional[List[Path]] = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the web visualization module.
@@ -58,24 +57,22 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             prefix: URL prefix for this module
             **kwargs: Additional arguments passed to parent
         """
+        self.search = search
+        self.linked_knowledge = search.linked_knowledge
+        self.knowledge_dir = knowledge_dir
+
         # Prepare initialization data
         init_data = {
             "prefix": prefix,
             "title": "Knowledge Visualization",
             "description": "Web-based visualization for LinkedKnowledge",
-            "template_dirs": [Path(__file__).parent / "templates"],
+            "template_dirs": templates or [Path(__file__).parent / "templates"],
             "htmx_enabled": True,
             **kwargs,
         }
 
-        if output_dir is not None:
-            init_data["output_dir"] = output_dir
-
         # Initialize parent ASGICoreModule with all fields
         super().__init__(**init_data)
-
-        # Create output directory if it doesn't exist
-        self.output_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def app(self) -> FastAPI:
@@ -95,20 +92,6 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             self._app.include_router(router, prefix=self.prefix)
         return self._app
 
-    def load_from_pickle(
-        self, pickle_path: Path
-    ) -> None:
-        """Load LinkedKnowledge from pickle file.
-
-        Args:
-            pickle_path: Path to the pickle file
-
-        Returns:
-            LinkedKnowledge object
-        """
-        with open(pickle_path, "rb") as f:
-            self.linked_knowledge = pickle.load(f)
-
     def _get_document_filename(self, doc_id: str) -> Optional[str]:
         """Get the filename for a document if it exists in source_documents.
 
@@ -118,18 +101,16 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
         Returns:
             Filename if found, None otherwise
         """
-        docs_dir = self.output_dir / "source_documents"
+        docs_dir = self.knowledge_dir / "source_documents"
         if not docs_dir.exists():
             return None
 
         # Get document name from linked knowledge
         if self.linked_knowledge and doc_id in self.linked_knowledge.documents:
             doc = self.linked_knowledge.documents[doc_id]
-            if hasattr(doc, "filename"):
-                # Look for matching file in source_documents
-                for file_path in docs_dir.iterdir():
-                    if doc.filename in file_path.name:
-                        return file_path.name
+            for file_path in docs_dir.iterdir():
+                if doc.filename in file_path.name:
+                    return file_path.name
         return None
 
     def setup_routes(self, router: APIRouter) -> None:
@@ -156,9 +137,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             }
 
         @router.get("/api/documents", response_class=HTMLResponse)
-        async def get_documents(
-            page: int = Query(1, ge=1), per_page: int = Query(10, ge=1, le=50)
-        ) -> str:
+        async def get_documents(page: int = Query(1, ge=1), per_page: int = Query(10, ge=1, le=50)) -> str:
             """Get paginated documents list as HTML partial for HTMX."""
             if not self.linked_knowledge:
                 return "<div>No data loaded</div>"
@@ -249,9 +228,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 # Page numbers
                 for p in range(max(1, page - 2), min(total_pages + 1, page + 3)):
                     if p == page:
-                        html.append(
-                            f'<span class="px-3 py-1 text-sm bg-yellow-400 rounded font-semibold">{p}</span>'
-                        )
+                        html.append(f'<span class="px-3 py-1 text-sm bg-yellow-400 rounded font-semibold">{p}</span>')
                     else:
                         html.append(
                             f"""
@@ -284,21 +261,14 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
         @router.get("/api/documents/{doc_id}/chunks", response_class=HTMLResponse)
         async def get_document_chunks(doc_id: str) -> str:
             """Get chunks view for a document."""
-            if (
-                not self.linked_knowledge
-                or doc_id not in self.linked_knowledge.documents
-            ):
+            if not self.linked_knowledge or doc_id not in self.linked_knowledge.documents:
                 return "<div class='text-red-500'>Document not found</div>"
 
-            chunk_ids = self.linked_knowledge.document_to_chunk_ids_index.get(
-                doc_id, set()
-            )
+            chunk_ids = self.linked_knowledge.document_to_chunk_ids_index.get(doc_id, set())
             # Sort chunks by their index to display in ascending order
             sorted_chunk_ids = sorted(
                 chunk_ids,
-                key=lambda cid: self.linked_knowledge.chunks[cid].index
-                if self.linked_knowledge
-                else 0,
+                key=lambda cid: self.linked_knowledge.chunks[cid].index if self.linked_knowledge else 0,
             )
             html = []
             html.append('<div class="space-y-3 max-h-[720px] overflow-y-auto">')
@@ -309,9 +279,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 chunk_index = chunk.index
                 # Create both truncated and full text versions
                 is_truncated = len(chunk.text) > 500
-                chunk_text_short = (
-                    chunk.text[:500] + "..." if is_truncated else chunk.text
-                )
+                chunk_text_short = chunk.text[:500] + "..." if is_truncated else chunk.text
                 chunk_text_full = chunk.text
                 # Don't escape HTML - let the markdown renderer handle it
 
@@ -322,10 +290,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 for term_id, term in self.linked_knowledge.terms.items():
                     if hasattr(term, "occurrences"):
                         for occ in term.occurrences:
-                            if (
-                                occ.document_id == doc_id
-                                and occ.chunk_index == chunk_index
-                            ):
+                            if occ.document_id == doc_id and occ.chunk_index == chunk_index:
                                 if term.type == "acronym":
                                     chunk_acronyms.append(term.term)
                                 elif term.type == "keyword":
@@ -460,10 +425,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
         @router.get("/api/documents/{doc_id}/tables", response_class=HTMLResponse)
         async def get_document_tables(doc_id: str) -> str:
             """Get tables view for a document."""
-            if (
-                not self.linked_knowledge
-                or doc_id not in self.linked_knowledge.documents
-            ):
+            if not self.linked_knowledge or doc_id not in self.linked_knowledge.documents:
                 return "<div class='text-red-500'>Document not found</div>"
 
             pages = self.linked_knowledge.pages
@@ -476,9 +438,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                     for table in page_data.tables:
                         tables.append((page_num, table))
 
-            html = [
-                f'<h3 class="text-lg font-semibold mb-3">Document Tables ({len(tables)} total)</h3>'
-            ]
+            html = [f'<h3 class="text-lg font-semibold mb-3">Document Tables ({len(tables)} total)</h3>']
             html.append('<div class="space-y-4 max-h-[720px] overflow-y-hidden">')
 
             if tables:
@@ -496,9 +456,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                     """
                     )
             else:
-                html.append(
-                    '<div class="text-gray-500 text-center py-8">No tables found in this document</div>'
-                )
+                html.append('<div class="text-gray-500 text-center py-8">No tables found in this document</div>')
 
             html.append("</div>")
             return "".join(html)
@@ -506,10 +464,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
         @router.get("/api/documents/{doc_id}/acronyms", response_class=HTMLResponse)
         async def get_document_acronyms(doc_id: str) -> str:
             """Get acronyms view for a document."""
-            if (
-                not self.linked_knowledge
-                or doc_id not in self.linked_knowledge.documents
-            ):
+            if not self.linked_knowledge or doc_id not in self.linked_knowledge.documents:
                 return "<div class='text-red-500'>Document not found</div>"
 
             # Find acronyms that appear in this document
@@ -521,22 +476,16 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
 
             # Sort by frequency in this document
             doc_acronyms.sort(
-                key=lambda item: sum(
-                    1 for o in item[1].occurrences if o.document_id == doc_id
-                ),
+                key=lambda item: sum(1 for o in item[1].occurrences if o.document_id == doc_id),
                 reverse=True,
             )
 
-            html = [
-                f'<h3 class="text-lg font-semibold mb-3">Document Acronyms ({len(doc_acronyms)} unique)</h3>'
-            ]
+            html = [f'<h3 class="text-lg font-semibold mb-3">Document Acronyms ({len(doc_acronyms)} unique)</h3>']
             html.append('<div class="space-y-3 max-h-[720px] overflow-y-auto">')
 
             if doc_acronyms:
                 for term_id, acronym in doc_acronyms:
-                    doc_occurrences = [
-                        o for o in acronym.occurrences if o.document_id == doc_id
-                    ]
+                    doc_occurrences = [o for o in acronym.occurrences if o.document_id == doc_id]
                     html.append(
                         f"""
                         <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
@@ -564,9 +513,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                     """
                     )
             else:
-                html.append(
-                    '<div class="text-gray-500 text-center py-8">No acronyms found in this document</div>'
-                )
+                html.append('<div class="text-gray-500 text-center py-8">No acronyms found in this document</div>')
 
             html.append("</div>")
             return "".join(html)
@@ -574,10 +521,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
         @router.get("/api/documents/{doc_id}/keywords", response_class=HTMLResponse)
         async def get_document_keywords(doc_id: str) -> str:
             """Get keywords view for a document."""
-            if (
-                not self.linked_knowledge
-                or doc_id not in self.linked_knowledge.documents
-            ):
+            if not self.linked_knowledge or doc_id not in self.linked_knowledge.documents:
                 return "<div class='text-red-500'>Document not found</div>"
 
             # Find keywords that appear in this document
@@ -589,22 +533,16 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
 
             # Sort by frequency in this document
             doc_keywords.sort(
-                key=lambda item: sum(
-                    1 for o in item[1].occurrences if o.document_id == doc_id
-                ),
+                key=lambda item: sum(1 for o in item[1].occurrences if o.document_id == doc_id),
                 reverse=True,
             )
 
-            html = [
-                f'<h3 class="text-lg font-semibold mb-3">Document Keywords ({len(doc_keywords)} unique)</h3>'
-            ]
+            html = [f'<h3 class="text-lg font-semibold mb-3">Document Keywords ({len(doc_keywords)} unique)</h3>']
             html.append('<div class="space-y-3 max-h-[720px] overflow-y-auto">')
 
             if doc_keywords:
                 for term_id, keyword in doc_keywords:
-                    doc_occurrences = [
-                        o for o in keyword.occurrences if o.document_id == doc_id
-                    ]
+                    doc_occurrences = [o for o in keyword.occurrences if o.document_id == doc_id]
                     html.append(
                         f"""
                         <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
@@ -632,9 +570,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                     """
                     )
             else:
-                html.append(
-                    '<div class="text-gray-500 text-center py-8">No keywords found in this document</div>'
-                )
+                html.append('<div class="text-gray-500 text-center py-8">No keywords found in this document</div>')
 
             html.append("</div>")
             return "".join(html)
@@ -649,9 +585,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 return "<div class='text-red-500'>Document not found</div>"
 
             doc = self.linked_knowledge.documents[doc_id]
-            chunk_ids = self.linked_knowledge.document_to_chunk_ids_index.get(
-                doc_id, set()
-            )
+            chunk_ids = self.linked_knowledge.document_to_chunk_ids_index.get(doc_id, set())
 
             html = [
                 f"""
@@ -689,8 +623,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 chunk_ids,
                 key=lambda cid: (
                     self.linked_knowledge.chunks[cid].index
-                    if self.linked_knowledge
-                    and hasattr(self.linked_knowledge.chunks[cid], "index")
+                    if self.linked_knowledge and hasattr(self.linked_knowledge.chunks[cid], "index")
                     else 0
                 ),
             )
@@ -701,9 +634,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 chunk_index = chunk.index if hasattr(chunk, "index") else i
                 # Create both truncated and full text versions
                 is_truncated = len(chunk.text) > 500
-                chunk_text_short = (
-                    chunk.text[:500] + "..." if is_truncated else chunk.text
-                )
+                chunk_text_short = chunk.text[:500] + "..." if is_truncated else chunk.text
                 chunk_text_full = chunk.text
                 # Don't escape HTML - let the markdown renderer handle it
 
@@ -714,10 +645,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 for term_id, term in self.linked_knowledge.terms.items():
                     if hasattr(term, "occurrences"):
                         for occ in term.occurrences:
-                            if (
-                                occ.document_id == doc_id
-                                and occ.chunk_index == chunk_index
-                            ):
+                            if occ.document_id == doc_id and occ.chunk_index == chunk_index:
                                 if term.type == "acronym":
                                     chunk_acronyms.append(term.term)
                                 elif term.type == "keyword":
@@ -903,11 +831,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                     full_form = (term.full_form or "").lower()
                     meaning = (term.meaning or "").lower()
 
-                    if (
-                        search_lower not in term_text
-                        and search_lower not in meaning
-                        and search_lower not in full_form
-                    ):
+                    if search_lower not in term_text and search_lower not in meaning and search_lower not in full_form:
                         continue
 
                 # Add to filtered list
@@ -1002,9 +926,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
 
             # Close terms-list div
             if not terms_page:
-                html.append(
-                    "<div class='text-gray-500 text-center py-8'>No terms found matching your criteria</div>"
-                )
+                html.append("<div class='text-gray-500 text-center py-8'>No terms found matching your criteria</div>")
 
             html.append("</div>")  # Close terms-list
 
@@ -1028,9 +950,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 # Page numbers
                 for p in range(max(1, page - 2), min(total_pages + 1, page + 3)):
                     if p == page:
-                        html.append(
-                            f'<span class="px-3 py-1 text-sm bg-yellow-400 rounded font-semibold">{p}</span>'
-                        )
+                        html.append(f'<span class="px-3 py-1 text-sm bg-yellow-400 rounded font-semibold">{p}</span>')
                     else:
                         html.append(
                             f"""
@@ -1079,61 +999,40 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             else:
                 markdown_parts.append(f"## Keyword: {term.term}")
 
-            markdown_parts.append(
-                f"\n**Meaning:** {term.meaning or 'No description available'}"
-            )
+            markdown_parts.append(f"\n**Meaning:** {term.meaning or 'No description available'}")
 
             # Statistics
             markdown_parts.append("\n### Statistics")
-            markdown_parts.append(
-                f"- **Total Occurrences:** {term.total_count if hasattr(term, 'total_count') else 0}"
-            )
+            markdown_parts.append(f"- **Total Occurrences:** {term.total_count if hasattr(term, 'total_count') else 0}")
             if not is_acronym and hasattr(term, "mean_score"):
                 markdown_parts.append(f"- **Mean Score:** {term.mean_score:.3f}")
 
             # Occurrences
             if term.occurrences:
-                markdown_parts.append(
-                    f"\n### Occurrences ({len(term.occurrences)} total)"
-                )
+                markdown_parts.append(f"\n### Occurrences ({len(term.occurrences)} total)")
                 for i, occ in enumerate(term.occurrences, 1):
                     doc_name = (
                         self.linked_knowledge.documents[occ.document_id].filename
                         if occ.document_id in self.linked_knowledge.documents
                         else occ.document_id
                     )
-                    markdown_parts.append(
-                        f"{i}. **{doc_name}** - Page {occ.page}, Chunk {occ.chunk_index}"
-                    )
+                    markdown_parts.append(f"{i}. **{doc_name}** - Page {occ.page}, Chunk {occ.chunk_index}")
 
                     # Get chunk text if available
-                    if (
-                        occ.document_id
-                        in self.linked_knowledge.document_to_chunk_ids_index
-                    ):
-                        chunk_ids = self.linked_knowledge.document_to_chunk_ids_index[
-                            occ.document_id
-                        ]
+                    if occ.document_id in self.linked_knowledge.document_to_chunk_ids_index:
+                        chunk_ids = self.linked_knowledge.document_to_chunk_ids_index[occ.document_id]
                         for chunk_id in chunk_ids:
                             chunk = self.linked_knowledge.chunks[chunk_id]
                             if chunk.index == occ.chunk_index:
                                 # Show excerpt
-                                excerpt = (
-                                    chunk.text[:200] + "..."
-                                    if len(chunk.text) > 200
-                                    else chunk.text
-                                )
+                                excerpt = chunk.text[:200] + "..." if len(chunk.text) > 200 else chunk.text
                                 markdown_parts.append(f"   > {excerpt}")
                                 break
 
             # Cooccurrences
             if hasattr(term, "cooccurrences") and term.cooccurrences:
-                markdown_parts.append(
-                    f"\n### Co-occurring Terms ({len(term.cooccurrences)} total)"
-                )
-                for cooc in sorted(
-                    term.cooccurrences, key=lambda x: x.frequency, reverse=True
-                ):
+                markdown_parts.append(f"\n### Co-occurring Terms ({len(term.cooccurrences)} total)")
+                for cooc in sorted(term.cooccurrences, key=lambda x: x.frequency, reverse=True):
                     markdown_parts.append(
                         f"- **{cooc.term}** (appears together {cooc.frequency} times, confidence: {cooc.confidence:.2f})"
                     )
@@ -1142,16 +1041,10 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             markdown_text = "\n".join(markdown_parts)
 
             # Escape for HTML attribute
-            escaped_markdown = (
-                markdown_text.replace('"', "&quot;")
-                .replace("\n", "\\n")
-                .replace("\r", "")
-            )
+            escaped_markdown = markdown_text.replace('"', "&quot;").replace("\n", "\\n").replace("\r", "")
 
             # Return container with markdown data attribute for client-side rendering
-            html_content = (
-                f'<div data-markdown="{escaped_markdown}">{markdown_text}</div>'
-            )
+            html_content = f'<div data-markdown="{escaped_markdown}">{markdown_text}</div>'
 
             import re
 
@@ -1167,9 +1060,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 ]
 
                 # Header
-                header_cells = [
-                    cell.strip() for cell in lines[0].split("|") if cell.strip()
-                ]
+                header_cells = [cell.strip() for cell in lines[0].split("|") if cell.strip()]
                 html_table.append('<thead class="bg-gray-50">')
                 html_table.append("<tr>")
                 for cell in header_cells:
@@ -1181,13 +1072,9 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
 
                 # Body (skip separator line)
                 if len(lines) > 2:
-                    html_table.append(
-                        '<tbody class="bg-white divide-y divide-gray-200">'
-                    )
+                    html_table.append('<tbody class="bg-white divide-y divide-gray-200">')
                     for line in lines[2:]:
-                        cells = [
-                            cell.strip() for cell in line.split("|") if cell.strip()
-                        ]
+                        cells = [cell.strip() for cell in line.split("|") if cell.strip()]
                         html_table.append('<tr class="hover:bg-gray-50">')
                         for cell in cells:
                             html_table.append(
@@ -1200,9 +1087,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 return "".join(html_table)
 
             # Convert tables
-            html_content = re.sub(
-                r"(\|[^\n]+\|(?:\n\|[^\n]+\|)+)", convert_markdown_table, html_content
-            )
+            html_content = re.sub(r"(\|[^\n]+\|(?:\n\|[^\n]+\|)+)", convert_markdown_table, html_content)
 
             # Headers with better Tailwind classes
             html_content = html_content.replace(
@@ -1214,12 +1099,8 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 "<h2 class='text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2'>",
             )
             html_content = html_content.replace("\n<h", "</p>\n<h")
-            html_content = html_content.replace(
-                "</h3>\n", "</h3>\n<div class='text-sm text-gray-700 space-y-2'>"
-            )
-            html_content = html_content.replace(
-                "</h2>\n", "</h2>\n<div class='text-sm text-gray-700 space-y-2'>"
-            )
+            html_content = html_content.replace("</h3>\n", "</h3>\n<div class='text-sm text-gray-700 space-y-2'>")
+            html_content = html_content.replace("</h2>\n", "</h2>\n<div class='text-sm text-gray-700 space-y-2'>")
 
             # Bold text with Tailwind
             html_content = re.sub(
@@ -1276,15 +1157,9 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             )
 
             # Wrap in proper containers
-            html_content = (
-                "<div class='prose prose-sm max-w-none'>" + html_content + "</div>"
-            )
-            html_content = html_content.replace(
-                "\n\n", "</div>\n<div class='text-sm text-gray-700 space-y-2 mt-4'>"
-            )
-            html_content = html_content.replace(
-                "<div class='text-sm text-gray-700 space-y-2'></div>", ""
-            )
+            html_content = "<div class='prose prose-sm max-w-none'>" + html_content + "</div>"
+            html_content = html_content.replace("\n\n", "</div>\n<div class='text-sm text-gray-700 space-y-2 mt-4'>")
+            html_content = html_content.replace("<div class='text-sm text-gray-700 space-y-2'></div>", "")
 
             return f"""<div class="max-h-[500px] overflow-y-scroll px-2">{html_content}</div>"""
 
@@ -1295,7 +1170,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
             show_comparison: str = Form("false"),
         ) -> str:
             """Perform search with optional comparison."""
-            if not self.search_core:
+            if not self.search:
                 return "<div class='text-red-500'>Search not available - no data loaded</div>"
 
             if not query.strip():
@@ -1306,12 +1181,10 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
 
             if show_comparison_bool:
                 # Show side-by-side comparison - enhanced search vs pure semantic
-                enhanced_results: List[KnowledgeSearchResult] = (
-                    self.search_core.search_enhanced(query, k=5)
-                )
+                enhanced_results: List[KnowledgeSearchResult] = self.search.search_enhanced(query, k=5)
                 # For comparison, similarity search with higher threshold
-                semantic_results: List[SimilaritySearchResult] = (
-                    self.search_core.search_similarity(query, k=5, threshold=0.3)
+                semantic_results: List[SimilaritySearchResult] = self.search.search_similarity(
+                    query, k=5, threshold=0.3
                 )
 
                 html.append(
@@ -1327,16 +1200,8 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 if enhanced_results:
                     for i, result in enumerate(enhanced_results, 1):
                         match_type = result.metadata.get("match_type", "unknown")
-                        badge_color = (
-                            "bg-green-500"
-                            if match_type == "direct_keyword"
-                            else "bg-blue-500"
-                        )
-                        badge_text = (
-                            "Keyword Match"
-                            if match_type == "direct_keyword"
-                            else "Semantic Match"
-                        )
+                        badge_color = "bg-green-500" if match_type == "direct_keyword" else "bg-blue-500"
+                        badge_text = "Keyword Match" if match_type == "direct_keyword" else "Semantic Match"
 
                         html.append(
                             f"""
@@ -1387,9 +1252,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                         """
                         )
                 else:
-                    html.append(
-                        '<div class="text-gray-500 text-center py-4">No results found</div>'
-                    )
+                    html.append('<div class="text-gray-500 text-center py-4">No results found</div>')
 
                 html.append(
                     """
@@ -1453,9 +1316,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                         """
                         )
                 else:
-                    html.append(
-                        '<div class="text-gray-500 text-center py-4">No results found</div>'
-                    )
+                    html.append('<div class="text-gray-500 text-center py-4">No results found</div>')
 
                 html.append(
                     """
@@ -1467,16 +1328,12 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
 
             else:
                 # Single search result
-                results: Union[
-                    List[KnowledgeSearchResult], List[SimilaritySearchResult]
-                ]
+                results: Union[List[KnowledgeSearchResult], List[SimilaritySearchResult]]
                 if use_optimized:
-                    results = self.search_core.search_enhanced(query, k=10)
+                    results = self.search.search_enhanced(query, k=10)
                     title = "🚀 Enhanced Search Results"
                 else:
-                    results = self.search_core.search_similarity(
-                        query, k=10, threshold=0.3
-                    )
+                    results = self.search.search_similarity(query, k=10, threshold=0.3)
                     title = "🔍 Similarity Search Results"
 
                 html.append(f'<h3 class="text-lg font-semibold mb-3">{title}</h3>')
@@ -1489,9 +1346,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                             result_item,
                         )
                         # Both result types have metadata attribute
-                        match_type = getattr(search_result, "metadata", {}).get(
-                            "match_type", "unknown"
-                        )
+                        match_type = getattr(search_result, "metadata", {}).get("match_type", "unknown")
                         if match_type == "direct_keyword":
                             badge_color = "bg-green-500"
                             badge_text = "Keyword Match"
@@ -1550,18 +1405,14 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                         """
                         )
                 else:
-                    html.append(
-                        '<div class="text-gray-500 text-center py-8">No results found</div>'
-                    )
+                    html.append('<div class="text-gray-500 text-center py-8">No results found</div>')
 
                 html.append("</div>")
 
             return "".join(html)
 
         @router.get("/api/links", response_class=HTMLResponse)
-        async def get_links(
-            page: int = Query(1, ge=1), per_page: int = Query(15, ge=1, le=50)
-        ) -> str:
+        async def get_links(page: int = Query(1, ge=1), per_page: int = Query(15, ge=1, le=50)) -> str:
             """Get paginated links list as HTML partial for HTMX."""
             if not self.linked_knowledge:
                 return "<div>No data loaded</div>"
@@ -1630,9 +1481,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 # Page numbers
                 for p in range(max(1, page - 2), min(total_pages + 1, page + 3)):
                     if p == page:
-                        html.append(
-                            f'<span class="px-3 py-1 text-sm bg-yellow-400 rounded font-semibold">{p}</span>'
-                        )
+                        html.append(f'<span class="px-3 py-1 text-sm bg-yellow-400 rounded font-semibold">{p}</span>')
                     else:
                         html.append(
                             f"""
@@ -1660,11 +1509,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
 
                 html.append("</div>")
 
-            return (
-                "".join(html)
-                if html
-                else "<div class='text-gray-500 text-center py-8'>No links found</div>"
-            )
+            return "".join(html) if html else "<div class='text-gray-500 text-center py-8'>No links found</div>"
 
         @router.get("/api/links/graph-data")
         async def get_links_graph_data() -> dict[str, Any]:
@@ -1682,16 +1527,12 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 # Add acronym node if not exists
                 if link.acronym not in node_map:
                     node_map[link.acronym] = len(nodes)
-                    nodes.append(
-                        {"id": link.acronym, "type": "acronym", "label": link.acronym}
-                    )
+                    nodes.append({"id": link.acronym, "type": "acronym", "label": link.acronym})
 
                 # Add keyword node if not exists
                 if link.keyword not in node_map:
                     node_map[link.keyword] = len(nodes)
-                    nodes.append(
-                        {"id": link.keyword, "type": "keyword", "label": link.keyword}
-                    )
+                    nodes.append({"id": link.keyword, "type": "keyword", "label": link.keyword})
 
                 # Add edge
                 edges.append(
@@ -1782,17 +1623,13 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                 """
         return ""
 
-    def _render_terms_in_result(
-        self, result: Union[KnowledgeSearchResult, SimilaritySearchResult]
-    ) -> str:
+    def _render_terms_in_result(self, result: Union[KnowledgeSearchResult, SimilaritySearchResult]) -> str:
         """Render terms found in a search result."""
         html = []
 
         if result.primary_terms:
             html.append('<div class="mt-3 pt-3 border-t border-gray-200">')
-            html.append(
-                '<div class="text-xs font-semibold text-gray-600 mb-1">Terms Found:</div>'
-            )
+            html.append('<div class="text-xs font-semibold text-gray-600 mb-1">Terms Found:</div>')
             html.append('<div class="flex flex-wrap gap-1">')
 
             for term in result.primary_terms[:5]:
@@ -1806,9 +1643,7 @@ class KnowledgeVisualizationASGIModule(ASGICoreModule):
                     )
 
             if len(result.primary_terms) > 5:
-                html.append(
-                    f'<span class="text-xs text-gray-500">+{len(result.primary_terms) - 5} more</span>'
-                )
+                html.append(f'<span class="text-xs text-gray-500">+{len(result.primary_terms) - 5} more</span>')
 
             html.append("</div>")
             html.append("</div>")

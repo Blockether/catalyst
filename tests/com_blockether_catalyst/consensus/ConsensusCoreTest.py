@@ -139,7 +139,7 @@ class TestConsensusCore:
         assert isinstance(consensus, Consensus)
         assert len(consensus._models) == 3
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_full_consensus_workflow(self, core: Any, mock_executor: Any, mock_judge: Any) -> None:
         """Test complete consensus workflow using ConsensusCore."""
         # Create model configurations
