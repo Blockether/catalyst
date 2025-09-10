@@ -10,10 +10,19 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 from pydantic import BaseModel, Field
 
 from com_blockether_catalyst.consensus.Consensus import Consensus
-from com_blockether_catalyst.consensus.ConsensusTypes import ConsensusResult, TypedCallBaseForConsensus
+from com_blockether_catalyst.consensus.ConsensusTypes import (
+    ConsensusResult,
+    TypedCallBaseForConsensus,
+)
 
-from .KnowledgeExtractionTypes import ChunkingDecision, KnowledgeMetadata, KnowledgePageData, KnowledgePageDataWithRawText, TermCooccurrence, TermMeaningExtractionResponse
-
+from .KnowledgeExtractionTypes import (
+    ChunkingDecision,
+    KnowledgeMetadata,
+    KnowledgePageData,
+    KnowledgePageDataWithRawText,
+    TermCooccurrence,
+    TermMeaningExtractionResponse,
+)
 
 # Type variables for the response types
 TResponse = TypeVar("TResponse", bound=TypedCallBaseForConsensus)
@@ -147,7 +156,7 @@ class BaseDocumentChunkingCall(BaseConsensusCall[ChunkingDecision]):
         self,
         page: KnowledgePageDataWithRawText,
         document_name: str,
-        metadata: KnowledgeMetadata
+        metadata: KnowledgeMetadata,
     ) -> str:
         """
         Fill the prompt for document chunking.

@@ -14,7 +14,7 @@ import anyio
 import pytest
 
 from com_blockether_catalyst.consensus.ConsensusCore import ConsensusCore
-from com_blockether_catalyst.consensusConsensusTypes import (
+from com_blockether_catalyst.consensus.ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
     TypedCallBaseForConsensus,

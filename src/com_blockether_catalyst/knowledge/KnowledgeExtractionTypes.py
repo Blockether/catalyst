@@ -16,8 +16,11 @@ from typing import (
 from pydantic import BaseModel, Field, RootModel, computed_field
 
 from com_blockether_catalyst.consensus.ConsensusTypes import TypedCallBaseForConsensus
-from com_blockether_catalyst.consensus.VotingComparison import BaseModelWithReasoning, ComparisonStrategy, VotingField
-
+from com_blockether_catalyst.consensus.VotingComparison import (
+    BaseModelWithReasoning,
+    ComparisonStrategy,
+    VotingField,
+)
 
 from .PDKnowledgeExtractorTypes import PDFKnowledgeProcessorSettings
 
@@ -35,34 +38,36 @@ class TermMeaningExtractionResponse(TypedCallBaseForConsensus):
     term: str = VotingField(
         comparison=ComparisonStrategy.EXACT,
         description="The term text (acronym or keyword)",
-        threshold=1.0
+        threshold=1.0,
     )
 
     full_form: Optional[str] = VotingField(
         comparison=ComparisonStrategy.EXACT,
         description="The expanded full form (same as term for keywords)",
-        threshold=1.0
+        threshold=1.0,
     )
 
     meaning: Optional[str] = VotingField(
         comparison=ComparisonStrategy.SEMANTIC,
         description="The extracted meaning of the term",
-        threshold=0.6
+        threshold=0.7,
     )
 
     type: Literal["acronym", "keyword", "unknown"] = VotingField(
         comparison=ComparisonStrategy.EXACT,
         description="Type of term: 'acronym' or 'keyword'",
-        threshold=1.0
+        threshold=1.0,
     )
 
 
 class ChunkOutput(RootModel):
     """Output model for a single chunk created from a page."""
+
     root: str = VotingField(
         comparison=ComparisonStrategy.SEMANTIC,
         threshold=0.75,
-        description="Text content of the chunk")
+        description="Text content of the chunk",
+    )
 
 
 class ChunkingDecision(TypedCallBaseForConsensus):
@@ -71,7 +76,7 @@ class ChunkingDecision(TypedCallBaseForConsensus):
     chunks: List[ChunkOutput] = VotingField(
         comparison=ComparisonStrategy.DERIVED,
         description="Sequence of chunks to create from the provided text, each with proper boundaries",
-        threshold=0.7
+        threshold=0.7,
     )
 
     @property
@@ -84,16 +89,11 @@ class ChunkingDecision(TypedCallBaseForConsensus):
 class KnowledgeMetadata(BaseModel):
     """Document metadata extracted from PDF."""
 
-    title: Optional[str] = Field(default=None,
-                                 description="Document title")
-    author: Optional[str] = Field(default=None,
-                                  description="Document author")
-    subject: Optional[str] = Field(default=None,
-                                   description="Document subject")
-    creation_date: str = Field(default="",
-                               description="Document creation date")
-    modification_date: str = Field(default="",
-                                   description="Document last modification date")
+    title: Optional[str] = Field(default=None, description="Document title")
+    author: Optional[str] = Field(default=None, description="Document author")
+    subject: Optional[str] = Field(default=None, description="Document subject")
+    creation_date: str = Field(default="", description="Document creation date")
+    modification_date: str = Field(default="", description="Document last modification date")
 
 
 class KnowledgePageData(BaseModel):
@@ -188,8 +188,6 @@ class KnowledgeExtractionResultWithChunks(KnowledgeExtractionResult):
 
     Attributes:
         chunks: Sequence of text chunks with keyword indexing
-        chunk_size: Size of each chunk in characters
-        chunk_overlap: Not used for agentic chunking (always 0)
     """
 
     chunks: Sequence[KnowledgeChunk] = Field(
@@ -465,7 +463,8 @@ class TermLink(BaseModel):
 class TermWithLinks(Term):
     links: List[TermLink] = Field(
         default_factory=list,
-        description="Links from this acronym to its corresponding keywords")
+        description="Links from this acronym to its corresponding keywords",
+    )
 
 
 class KnowledgeChunkWithTerms(KnowledgeChunk):

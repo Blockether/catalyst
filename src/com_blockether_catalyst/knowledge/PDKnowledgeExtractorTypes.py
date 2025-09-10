@@ -29,7 +29,9 @@ class PDFProcessorTextExtractionSettings(BaseModel):
 
 class PDFImageProcessingSettings(BaseModel):
     """Settings for image processing with CLIP and OCR."""
+
     pass
+
 
 class PDFPageCropOffset(BaseModel):
     """Page cropping offsets in pixels."""

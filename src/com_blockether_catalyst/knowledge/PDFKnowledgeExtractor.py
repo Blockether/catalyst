@@ -18,7 +18,6 @@ from pdfplumber.display import PageImage
 from PIL import Image
 
 from .ImageRecognition import ImageRecognition, ImageRecognitionSettings
-
 from .KnowledgeExtractionTypes import (
     ImageMetadata,
     KnowledgeExtractionResult,
@@ -46,19 +45,14 @@ class PDFTableData(KnowledgeTableData):
 class PDFKnowledgeExtractor:
     """Advanced PDF processor using pdfplumber for sophisticated extraction."""
 
-    def __init__(
-        self,
-        knowledge_settings: KnowledgeProcessorSettings
-    ) -> None:
+    def __init__(self, knowledge_settings: KnowledgeProcessorSettings) -> None:
         """
         Initialize PDF processor with optional configuration.
 
         Args:
             settings: Unified PDF processor settings
         """
-        self._image_recognition = ImageRecognition(ImageRecognitionSettings(
-            max_new_tokens=512
-        ))
+        self._image_recognition = ImageRecognition(ImageRecognitionSettings(max_tokens=256))
         self._logger = logging.getLogger(__name__)
         self._knowledge_settings = knowledge_settings
         self._settings = knowledge_settings.pdf_settings
@@ -145,7 +139,7 @@ class PDFKnowledgeExtractor:
         base_text = page_without_tables.extract_text(**self._text_extraction_settings.model_dump()) or ""
 
         # Extract image
-        images = self._extract_images_from_page(page, context=f"Document: {self._current_document}, Page: {page.page_number}, Context: {base_text}")
+        images = self._extract_images_from_page(page, context=base_text)
 
         # Fix hyphenated line breaks immediately after extraction
         base_text = self._fix_hyphenated_line_breaks(base_text)
@@ -261,7 +255,9 @@ class PDFKnowledgeExtractor:
                     tables.append(pdf_table)
 
             except Exception as e:
-                self._logger.warning(f"[{self._current_document}] Error extracting table on page {page.page_number}: {e}")
+                self._logger.warning(
+                    f"[{self._current_document}] Error extracting table on page {page.page_number}: {e}"
+                )
 
         return tables
 
@@ -312,11 +308,14 @@ class PDFKnowledgeExtractor:
                     image_path = output_dir / image_filename
                     image = page_image.original
 
+                    if not self._current_document:
+                        raise ValueError("Current document name is not set for image naming.")
+
                     metadata = ImageMetadata(
-                        document_name=self._current_document or "",
+                        document_name=self._current_document,
                         page=page.page_number,
                         href=str(image_path),
-                        caption=self._image_recognition.caption_for_image(image, context=context)
+                        caption=self._image_recognition.caption_for_image(image, context=context),
                     )
 
                     # Save the image

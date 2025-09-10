@@ -9,18 +9,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import anyio
 import pytest
 
-from com_blockether_catalyst.knowledgeKnowledgeExtractionCallBase import (
+from com_blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
     BaseDocumentChunkingCall,
     BaseTermExtractionCall,
     ExtractionCallsSettings,
 )
-from com_blockether_catalyst.knowledgeKnowledgeExtractionTypes import (
+from com_blockether_catalyst.knowledge.KnowledgeExtractionCore import (
+    KnowledgeExtractionCore,
+)
+from com_blockether_catalyst.knowledge.KnowledgeExtractionTypes import (
     KnowledgeChunk,
     KnowledgeExtractionResultWithChunks,
     KnowledgeProcessorSettings,
-)
-from com_blockether_catalyst.knowledge.KnowledgeExtractionCore import (
-    KnowledgeExtractionCore,
 )
 
 

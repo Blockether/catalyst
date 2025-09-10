@@ -28,7 +28,7 @@ from com_blockether_catalyst.integrations.agno import (
     WorkflowApiASGIModule,
     WorkflowConfig,
 )
-from com_blockether_catalyst.knowledge import KnowledgeSearchCore
+from com_blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore
 from com_blockether_catalyst.knowledge.KnowledgeVisualizationASGIModule import KnowledgeVisualizationASGIModule
 from com_blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
@@ -37,7 +37,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-knowledge_search_core = KnowledgeSearchCore.from_pickle("public/knowledge_search.pkl")
+knowledge_search_core = KnowledgeSearchCore.from_pickle("public/knowledge_extraction/knowledge_search.pkl")
 
 # ============================================================================
 # Knowledge Q&A Response Models
@@ -301,13 +301,11 @@ def create_app() -> ASGICoreApplication:
 
     # Create and mount the visualization module
     visualization_module = KnowledgeVisualizationASGIModule(
-        output_dir=Path("output/"),
         prefix="/viz"
     )
     # Load the knowledge data without creating a new search core
     visualization_module.load_from_pickle(
-        Path("output/linked_knowledge.pkl"),
-        create_search_core=False  # We'll use the existing one
+        Path("public/knowledge_extraction/linked_knowledge.pkl")
     )
     # Use the existing search core
     visualization_module.search_core = knowledge_search_core
@@ -380,7 +378,7 @@ def main():
     print("Press Ctrl+C to stop")
     print("=" * 70 + "\n")
 
-    uvicorn.run(app.app, host="0.0.0.0", port=8003, reload=False)
+    uvicorn.run(app.app, host="0.0.0.0", port=8002, reload=False)
 
 
 if __name__ == "__main__":

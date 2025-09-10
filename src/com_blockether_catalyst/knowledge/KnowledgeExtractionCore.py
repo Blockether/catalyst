@@ -3,7 +3,6 @@ Simplified Document Terms Processing System
 Self-contained implementation with standard logging
 """
 
-import json
 import logging
 import math
 import os
@@ -11,9 +10,7 @@ import pickle
 import re
 import shutil
 import time
-from collections import Counter, defaultdict
-from datetime import datetime
-from enum import Enum
+from collections import defaultdict
 from functools import wraps
 from pathlib import Path
 from typing import (
@@ -31,23 +28,37 @@ from typing import (
     cast,
 )
 
-import anyio
 import numpy as np
 from pydantic import BaseModel, RootModel
 from rapidfuzz import fuzz
 from sklearn.feature_extraction.text import CountVectorizer
 
 from com_blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore
+
+from ..utils import ConcurrentProcessor
+from .KnowledgeExtractionCallBase import ExtractionCallsSettings
 from .KnowledgeExtractionTypes import (
     DocumentMetadata,
     KnowledgeChunk,
-    KnowledgeChunkWithTerms, KnowledgeExtractionItem, KnowledgeExtractionOutput, KnowledgeExtractionResult, KnowledgeExtractionResultWithChunks, KnowledgeMetadata, KnowledgePageData, KnowledgeProcessorSettings, LinkedKnowledge, Term, TermCandidate, TermCooccurrence, TermCandidateGrouped, TermLink, TermOccurrence, TermWithLinks)
+    KnowledgeChunkWithTerms,
+    KnowledgeExtractionItem,
+    KnowledgeExtractionOutput,
+    KnowledgeExtractionResult,
+    KnowledgeExtractionResultWithChunks,
+    KnowledgeMetadata,
+    KnowledgePageData,
+    KnowledgeProcessorSettings,
+    LinkedKnowledge,
+    Term,
+    TermCandidate,
+    TermCandidateGrouped,
+    TermCooccurrence,
+    TermLink,
+    TermOccurrence,
+    TermWithLinks,
+)
 from .PDFKnowledgeExtractor import PDFKnowledgeExtractor
-from .KnowledgeExtractionCallBase import ExtractionCallsSettings
-from ..consensus.Consensus import Consensus
-from ..utils import ArityOneTypedCall, ConcurrentProcessor
 
-# from .KnowledgeSearchCore import KnowledgeSearchCore
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +296,7 @@ class KnowledgeExtractionCore:
             if file_path.is_file():
                 extension = file_path.suffix.lower()
                 if extension:
-                  files_by_extension[extension].append(file_path)
+                    files_by_extension[extension].append(file_path)
         return files_by_extension
 
     @timed_operation("Step 1/12: Raw file extraction")
@@ -993,7 +1004,9 @@ class KnowledgeExtractionCore:
             metadata: Document metadata
         """
 
-        result = await self.calls.document_chunking_call.execute(page=page, document_name=document_name, metadata=metadata)
+        result = await self.calls.document_chunking_call.execute(
+            page=page, document_name=document_name, metadata=metadata
+        )
 
         chunks = []
         for chunk_decision in result.final_response.chunks:
@@ -1196,7 +1209,7 @@ class KnowledgeExtractionCore:
 
             # For each pair of terms in the same chunk
             for i, term1 in enumerate(terms_list):
-                for term2 in terms_list[i + 1:]:
+                for term2 in terms_list[i + 1 :]:
                     if term1 != term2:
                         # Calculate weighted score based on minimum distance
                         weight = self._calculate_cooccurrence_weight(terms_positions[term1], terms_positions[term2])
@@ -1318,7 +1331,7 @@ class KnowledgeExtractionCore:
         for i, (term1_key, term1_data) in enumerate(terms_list):
             term1_text = term1_data.full_form
 
-            for term2_key, term2_data in terms_list[i + 1:]:  # Avoid duplicate comparisons
+            for term2_key, term2_data in terms_list[i + 1 :]:  # Avoid duplicate comparisons
                 # Skip linking a term to itself
                 if term1_key == term2_key:
                     continue

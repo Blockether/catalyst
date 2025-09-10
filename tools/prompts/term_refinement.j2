@@ -1,4 +1,4 @@
-Analyze if '{{ term }}' is a valid keyword and extract its meaning.
+Analyze if '{{ term }}' is a valid {{ type }} and extract its meaning.
 
 Contexts where the term appears:
 {% for ctx in occurrences_contexts[:15] %}
@@ -13,7 +13,9 @@ Co-occurring terms:
 {% endfor %}
 {% endif %}
 
-Determine:
-1. Is this a valid keyword?
-2. What is its meaning in this context?
-3. Provide reasoning for your decision.
+Guidelines:
+- Always extract the term exactly as it appears.
+- For acronyms, look for parentheses or definitions nearby.
+- For keywords, use the word itself as the full form.
+- The meaning should be concise and context-aware.
+- Use "unknown" only if you cannot confidently classify the term.

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from com_blockether_catalyst.knowledgeKnowledgeExtractionTypes import (
+from com_blockether_catalyst.knowledge.KnowledgeExtractionTypes import (
     KnowledgeChunkWithTerms,
     LinkedKnowledge,
     Term,

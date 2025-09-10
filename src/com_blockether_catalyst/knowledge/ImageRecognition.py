@@ -10,6 +10,7 @@ import io
 import logging
 from textwrap import dedent
 from typing import Optional
+
 from openai import OpenAI
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -33,7 +34,7 @@ class ImageRecognitionSettings(BaseModel):
         description="API key for authentication (if required)",
     )
     max_tokens: int = Field(
-        default=1024,
+        default=256,
         description="Maximum tokens for the model response",
     )
     temperature: float = Field(
@@ -41,10 +42,13 @@ class ImageRecognitionSettings(BaseModel):
         description="Sampling temperature for response generation",
     )
     system_prompt: str = Field(
-        default=dedent("""
-            You are an assistant who perfectly describes images according to the provided image and context.
-            Provide concise, accurate, and relevant descriptions without adding extraneous information. The description should be concise enough to serve as a caption for the image.
-        """),
+        default=dedent(
+            """
+            You are an expert captioning assistant.
+            Describe the image in one short, clear sentence suitable as a caption.
+            Do not include unnecessary details or context. Be specific and concise.
+        """
+        ),
         description="System prompt to guide the model's behavior",
     )
 
@@ -57,10 +61,7 @@ class ImageRecognition:
             settings: Configuration settings for image recognition
         """
         self._settings = settings or ImageRecognitionSettings()
-        self._llm: Optional[OpenAI] = OpenAI(
-            api_key=self._settings.api_key,
-            base_url=f"{self._settings.base_url}/v1"
-        )
+        self._llm: Optional[OpenAI] = OpenAI(api_key=self._settings.api_key, base_url=f"{self._settings.base_url}/v1")
 
     @property
     def settings(self) -> ImageRecognitionSettings:
@@ -92,7 +93,7 @@ class ImageRecognition:
         buffer.seek(0)
 
         # Encode to base64
-        base64_data = base64.b64encode(buffer.read()).decode('utf-8')
+        base64_data = base64.b64encode(buffer.read()).decode("utf-8")
 
         # Return as data URI
         return f"data:{mime_type};base64,{base64_data}"
@@ -118,17 +119,14 @@ class ImageRecognition:
             image_data_uri = self._image_to_base64_data_uri(image)
 
             messages = [
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
+                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": image_data_uri}},
-                        {"type": "text", "text": prompt}
-                    ]
-                }
+                        {"type": "text", "text": prompt},
+                    ],
+                },
             ]
 
             # Generate response using the model
@@ -141,7 +139,6 @@ class ImageRecognition:
 
             text_response = response.choices[0].message.content
 
-            print(text_response)
             if not text_response:
                 raise ValueError("No content in response")
 
@@ -151,12 +148,7 @@ class ImageRecognition:
             logger.exception("Failed to generate response from MiniCPM-V")
             raise RuntimeError(f"Failed to generate response: {e}")
 
-    def answer_question(
-        self,
-        image: Image.Image,
-        question: str,
-        system_prompt: Optional[str] = None
-    ) -> str:
+    def answer_question(self, image: Image.Image, question: str, system_prompt: Optional[str] = None) -> str:
         """Answer a question about an image.
 
         Args:
@@ -169,12 +161,25 @@ class ImageRecognition:
         response = self._generate_response(image, question, system_prompt)
         return response
 
-    def caption_for_image(
-        self,
-        image: Image.Image,
-        context: str,
-        system_prompt: Optional[str] = None
-    ) -> str:
+    def _normalize_caption(self, caption: str) -> str:
+        # Remove leading/trailing quotes
+        caption = caption.strip(" \"'")
+
+        # Remove leading 'Caption', 'Caption:', or 'caption:'
+        for prefix in ["Caption:", "caption:", "Caption"]:
+            if caption.startswith(prefix):
+                caption = caption[len(prefix) :].lstrip()
+
+        # Strip whitespace
+        caption = caption.strip()
+
+        # Ensure it ends with a period
+        if caption and not caption.endswith("."):
+            caption += "."
+
+        return caption
+
+    def caption_for_image(self, image: Image.Image, context: str, system_prompt: Optional[str] = None) -> str:
         """Generate a concise caption for an image.
 
         Args:
@@ -183,8 +188,10 @@ class ImageRecognition:
         Returns:
             Image caption
         """
-        return self.answer_question(
-            image=image,
-            question=f"Generate the caption for the image taking into account the following context: {context}",
-            system_prompt=system_prompt
+        return self._normalize_caption(
+            self.answer_question(
+                image=image,
+                question=f"Generate the caption for the image taking into account the following context: {context}",
+                system_prompt=system_prompt,
+            )
         )

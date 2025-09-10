@@ -9,17 +9,18 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
-
+import pickle
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import InMemoryVectorStore
 
 from ..encoder.EncoderCore import EncoderCore
-
 from .KnowledgeExtractionTypes import (
+    ImageMetadata,
     KnowledgeTableData,
     LinkedKnowledge,
     Term,
+    TermWithLinks,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ class SimilaritySearchResult:
         self.related_terms: List[Term] = []
 
         # Page content (corrected types)
-        self.images: List[str] = []  # Base64 strings
+        self.images: List[ImageMetadata] = []  # Base64 strings
         self.tables: List[KnowledgeTableData] = []
 
 
@@ -150,8 +151,8 @@ class KnowledgeSearchResult:
         self.metadata = metadata or {}
 
         # Term analysis
-        self.primary_terms: List[Term] = []
-        self.related_terms: List[Term] = []  # Includes co-occurrences and linked terms
+        self.primary_terms: List[TermWithLinks] = []
+        self.related_terms: List[TermWithLinks] = []  # Includes co-occurrences and linked terms
         self.all_terms: Set[str] = set()  # All unique terms (primary + related)
 
         # Term frequency statistics
@@ -159,7 +160,7 @@ class KnowledgeSearchResult:
         self.term_relevance_score: float = 0.0  # Combined relevance based on term frequencies
 
         # Page content (corrected types)
-        self.images: List[str] = []  # Base64 strings
+        self.images: List[ImageMetadata] = []
         self.tables: List[KnowledgeTableData] = []
 
 
@@ -230,7 +231,7 @@ class KnowledgeSearchCore:
         # Try to load from pickle if auto_load is enabled
         if auto_load and self.pickle_path and self.pickle_path.exists():
             logger.info(f"Loading KnowledgeSearchCore from pickle: {self.pickle_path}")
-            self.load(self.pickle_path)
+            self._load(self.pickle_path)
             init_time = time.time() - start_time
             logger.info(f"KnowledgeSearchCore initialization from pickle took {init_time:.3f}s")
             return
@@ -255,42 +256,14 @@ class KnowledgeSearchCore:
         self._document_to_terms_index = linked_knowledge.document_to_terms_index
 
         # Build acronym mappings from terms
-        for term_key, term in linked_knowledge.terms.items():
+        for _, term in linked_knowledge.terms.items():
             if term.type == "acronym" and term.full_form:
                 self._acronym_to_full_form[term.term] = term.full_form
                 self._full_form_to_acronym[term.full_form] = term.term
 
-        # Initialize search index with chunks and terms
-        self._initialize_search_index()
 
         init_time = time.time() - start_time
         logger.info(f"KnowledgeSearchCore initialization took {init_time:.3f}s")
-
-    def _initialize_search_index(self) -> None:
-        """Initialize the search index with chunks."""
-        documents = []
-
-        # Index all chunks
-        for (
-            doc_id,
-            chunk_ids,
-        ) in self.linked_knowledge.document_to_chunk_ids_index.items():
-            # Get chunks from the flattened chunks dict
-            for chunk_id in chunk_ids:
-                chunk = self.linked_knowledge.chunks[chunk_id]
-                metadata = {
-                    "document_id": doc_id,
-                    "document_name": chunk.document_name,
-                    "page": chunk.page,
-                    "chunk_index": chunk.index,
-                    "chunk_id": chunk_id,
-                }
-                doc = Document(page_content=chunk.text, metadata=metadata)
-                documents.append(doc)
-
-        # Add all documents to vector store at once
-        if documents:
-            self._vector_store.add_documents(documents)
 
     def _search(
         self,
@@ -355,37 +328,31 @@ class KnowledgeSearchCore:
         start_time = time.time()
         logger.info(f"Performing similarity search for query: '{query}'")
 
-        try:
-            # Perform vector search
-            search_results = self._search(query, k=k, threshold=threshold)
+        # Perform vector search
+        search_results = self._search(query, k=k, threshold=threshold)
 
-            # Convert to similarity search results
-            similarity_results = []
-            for result in search_results:
-                sim_result = SimilaritySearchResult(
-                    text=result.text,
-                    score=result.score,
-                    document_id=result.metadata.get("document_id", ""),
-                    document_name=result.metadata.get("document_name", ""),
-                    page=result.metadata.get("page"),
-                    chunk_index=result.metadata.get("chunk_index"),
-                    metadata=result.metadata,
-                )
+        # Convert to similarity search results
+        similarity_results = []
+        for result in search_results:
+            sim_result = SimilaritySearchResult(
+                text=result.text,
+                score=result.score,
+                document_id=result.metadata.get("document_id", ""),
+                document_name=result.metadata.get("document_name", ""),
+                page=result.metadata.get("page"),
+                chunk_index=result.metadata.get("chunk_index"),
+                metadata=result.metadata,
+            )
 
-                # Add images and tables from the page if available
-                if sim_result.page and sim_result.document_id:
-                    self._add_page_content(sim_result, sim_result.document_id, sim_result.page)
+            # Add images and tables from the page if available
+            if sim_result.page and sim_result.document_id:
+                self._add_page_content(sim_result, sim_result.document_id, sim_result.page)
 
-                similarity_results.append(sim_result)
+            similarity_results.append(sim_result)
 
-            search_time = time.time() - start_time
-            logger.info(f"Similarity search took {search_time:.3f}s, returned {len(similarity_results)} results")
-            return similarity_results
-
-        except Exception:
-            search_time = time.time() - start_time
-            logger.exception(f"Similarity search failed after {search_time:.3f}s")
-            raise
+        search_time = time.time() - start_time
+        logger.info(f"Similarity search took {search_time:.3f}s, returned {len(similarity_results)} results")
+        return similarity_results
 
     def search_enhanced(
         self,
@@ -418,98 +385,89 @@ class KnowledgeSearchCore:
         start_time = time.time()
         logger.info(f"Performing enhanced search for query: '{query}'")
 
-        try:
-            # Perform vector search
-            search_results = self._search(query, k=k, threshold=threshold)
+        # Perform vector search
+        search_results = self._search(query, k=k, threshold=threshold)
 
-            # Convert to enhanced search results with term analysis
-            enhanced_results = []
-            query_lower = query.lower()
+        # Convert to enhanced search results with term analysis
+        enhanced_results: List[KnowledgeSearchResult] = []
+        query_lower = query.lower()
 
-            for result in search_results:
-                enh_result = KnowledgeSearchResult(
-                    text=result.text,
-                    score=result.score,
-                    document_id=result.metadata.get("document_id", ""),
-                    document_name=result.metadata.get("document_name", ""),
-                    page=result.metadata.get("page"),
-                    chunk_index=result.metadata.get("chunk_index"),
-                    metadata=result.metadata,
-                )
-
-                # Extract primary terms from the result text
-                result_text_lower = enh_result.text.lower()
-                for term_key, term in self.linked_knowledge.terms.items():
-                    if term_key.lower() in result_text_lower:
-                        enh_result.primary_terms.append(term)
-                        enh_result.all_terms.add(term.term)
-
-                # Resolve co-occurrences and links for all primary terms
-                for term in enh_result.primary_terms:
-                    # Add linked terms (acronym-keyword relationships)
-                    for link in term.links:
-                        linked_term_key = None
-                        if term.type == "acronym" and link.acronym == term.term:
-                            linked_term_key = link.keyword
-                        elif term.type == "keyword" and link.keyword == term.term:
-                            linked_term_key = link.acronym
-
-                        if linked_term_key and linked_term_key in self.linked_knowledge.terms:
-                            linked_term = self.linked_knowledge.terms[linked_term_key]
-                            if linked_term not in enh_result.related_terms:
-                                enh_result.related_terms.append(linked_term)
-                                enh_result.all_terms.add(linked_term.term)
-
-                    # Add co-occurring terms
-                    if term.cooccurrences and max_cooccurrences > 0:
-                        for cooccurrence in term.cooccurrences[:max_cooccurrences]:
-                            if cooccurrence.term in self.linked_knowledge.terms:
-                                cooccurring_term = self.linked_knowledge.terms[cooccurrence.term]
-                                if cooccurring_term not in enh_result.related_terms:
-                                    enh_result.related_terms.append(cooccurring_term)
-                                    enh_result.all_terms.add(cooccurring_term.term)
-
-                # Calculate term frequencies in the query
-                for term_str in enh_result.all_terms:
-                    term_lower = term_str.lower()
-                    # Count occurrences of this term in the query
-                    count = query_lower.count(term_lower)
-                    if count > 0:
-                        enh_result.term_frequencies[term_str] = count
-
-                # Calculate term relevance score
-                # Higher score for results with more query terms and higher frequencies
-                if enh_result.term_frequencies:
-                    # Sum of frequencies weighted by term importance
-                    total_freq = sum(enh_result.term_frequencies.values())
-                    unique_terms = len(enh_result.term_frequencies)
-                    # Combine frequency and diversity
-                    enh_result.term_relevance_score = (
-                        total_freq * self.TERM_FREQUENCY_WEIGHT + unique_terms * self.TERM_DIVERSITY_WEIGHT
-                    )
-
-                # Add images and tables from the page if available
-                if enh_result.page and enh_result.document_id:
-                    self._add_page_content(enh_result, enh_result.document_id, enh_result.page)
-
-                enhanced_results.append(enh_result)
-
-            # Sort results by combined score (similarity + term relevance)
-            enhanced_results.sort(
-                key=lambda r: (
-                    r.score * self.SIMILARITY_WEIGHT + min(r.term_relevance_score / 10, self.TERM_RELEVANCE_WEIGHT)
-                ),
-                reverse=True,
+        for result in search_results:
+            enh_result = KnowledgeSearchResult(
+                text=result.text,
+                score=result.score,
+                document_id=result.metadata.get("document_id", ""),
+                document_name=result.metadata.get("document_name", ""),
+                page=result.metadata.get("page"),
+                chunk_index=result.metadata.get("chunk_index"),
+                metadata=result.metadata,
             )
 
-            search_time = time.time() - start_time
-            logger.info(f"Enhanced search took {search_time:.3f}s, returned {len(enhanced_results)} results")
-            return enhanced_results
+            # Extract primary terms from the result text
+            result_text_lower = enh_result.text.lower()
+            for term_key, term in self.linked_knowledge.terms.items():
+                if term_key.lower() in result_text_lower:
+                    enh_result.primary_terms.append(term)
+                    enh_result.all_terms.add(term.term)
 
-        except Exception:
-            search_time = time.time() - start_time
-            logger.exception(f"Enhanced search failed after {search_time:.3f}s")
-            raise
+            # Resolve co-occurrences and links for all primary terms
+            for term in enh_result.primary_terms:
+                # Add linked terms
+                for link in term.links:
+                    linked_term_key = link.link_to
+
+                    if linked_term_key and linked_term_key in self.linked_knowledge.terms:
+                        linked_term = self.linked_knowledge.terms[linked_term_key]
+                        if linked_term not in enh_result.related_terms:
+                            enh_result.related_terms.append(linked_term)
+                            enh_result.all_terms.add(linked_term.term)
+
+                # Add co-occurring terms
+                if term.cooccurrences and max_cooccurrences > 0:
+                    for cooccurrence in term.cooccurrences[:max_cooccurrences]:
+                        if cooccurrence.term in self.linked_knowledge.terms:
+                            cooccurring_term = self.linked_knowledge.terms[cooccurrence.term]
+                            if cooccurring_term not in enh_result.related_terms:
+                                enh_result.related_terms.append(cooccurring_term)
+                                enh_result.all_terms.add(cooccurring_term.term)
+
+            # Calculate term frequencies in the query
+            for term_str in enh_result.all_terms:
+                term_lower = term_str.lower()
+                # Count occurrences of this term in the query
+                count = query_lower.count(term_lower)
+                if count > 0:
+                    enh_result.term_frequencies[term_str] = count
+
+            # Calculate term relevance score
+            # Higher score for results with more query terms and higher frequencies
+            if enh_result.term_frequencies:
+                # Sum of frequencies weighted by term importance
+                total_freq = sum(enh_result.term_frequencies.values())
+                unique_terms = len(enh_result.term_frequencies)
+                # Combine frequency and diversity
+                enh_result.term_relevance_score = (
+                    total_freq * self.TERM_FREQUENCY_WEIGHT + unique_terms * self.TERM_DIVERSITY_WEIGHT
+                )
+
+            # Add images and tables from the page if available
+            if enh_result.page and enh_result.document_id:
+                self._add_page_content(enh_result, enh_result.document_id, enh_result.page)
+
+            enhanced_results.append(enh_result)
+
+        # Sort results by combined score (similarity + term relevance)
+        enhanced_results.sort(
+            key=lambda r: (
+                r.score * self.SIMILARITY_WEIGHT + r.term_relevance_score * self.TERM_RELEVANCE_WEIGHT
+            ),
+            reverse=True,
+        )
+
+        search_time = time.time() - start_time
+        logger.info(f"Enhanced search took {search_time:.3f}s, returned {len(enhanced_results)} results")
+
+        return enhanced_results
 
     def _create_simple_result(self, search_result: SearchResult) -> Optional[KnowledgeSearchResult]:
         """
@@ -541,156 +499,6 @@ class KnowledgeSearchCore:
 
         return result
 
-    def _create_knowledge_result_from_search(
-        self,
-        search_result: SearchResult,
-        original_query: str,
-        max_depth: int,
-        max_cooccurrences: int,
-    ) -> Optional[KnowledgeSearchResult]:
-        """
-        Convert a SearchResult into a knowledge-enhanced result.
-
-        Args:
-            search_result: SearchResult from vector search
-            original_query: Original search query
-            max_depth: Maximum relationship depth to explore
-            max_cooccurrences: Maximum co-occurrences to include
-
-        Returns:
-            Enhanced knowledge search result or None if invalid
-        """
-        # Convert SearchResult to dict format for backward compatibility
-        raw_result = {
-            "text": search_result.text,
-            "score": search_result.score,
-            "doc_id": search_result.doc_id,
-            "metadata": search_result.metadata,
-        }
-        return self._create_chunk_result(raw_result, max_depth, max_cooccurrences)
-
-    def _create_chunk_result(
-        self,
-        raw_result: Dict[str, Any],
-        max_depth: int,
-        max_cooccurrences: int,
-    ) -> KnowledgeSearchResult:
-        """Create a knowledge result from a document chunk."""
-        metadata = raw_result["metadata"]
-
-        result = KnowledgeSearchResult(
-            text=raw_result["text"],
-            score=raw_result["score"],
-            document_id=metadata["document_id"],
-            document_name=metadata["document_name"],
-            page=metadata.get("page"),
-            chunk_index=metadata.get("chunk_index"),
-            metadata=metadata,
-        )
-
-        # Find terms that appear in this chunk
-        self._enhance_result_with_terms(result, max_depth, max_cooccurrences)
-
-        return result
-
-    def _enhance_result_with_terms(
-        self,
-        result: KnowledgeSearchResult,
-        max_depth: int,
-        max_cooccurrences: int,
-    ) -> None:
-        """
-        Enhance a chunk result with relevant terms found in the text.
-
-        Args:
-            result: The result to enhance
-            max_depth: Maximum relationship depth
-            max_cooccurrences: Maximum co-occurrences to include
-        """
-        result_text = result.text.lower()
-
-        # Find terms that appear in the result text
-        for term_key, term in self.linked_knowledge.terms.items():
-            if term_key.lower() in result_text:
-                result.primary_terms.append(term)
-
-                # Add co-occurring terms to related_terms
-                if max_cooccurrences > 0 and term.cooccurrences:
-                    for cooccurrence in term.cooccurrences[:max_cooccurrences]:
-                        if cooccurrence.term in self.linked_knowledge.terms:
-                            cooccurring_term = self.linked_knowledge.terms[cooccurrence.term]
-                            if cooccurring_term not in result.related_terms:
-                                result.related_terms.append(cooccurring_term)
-
-        # Find related terms through links if max_depth > 1
-        if max_depth > 1:
-            self._add_related_terms(result, max_depth - 1)
-
-        # Add images and tables from the page if available
-        if result.page and result.document_id:
-            self._add_page_content(result, result.document_id, result.page)
-
-    def _enhance_result_with_relationships(
-        self,
-        result: KnowledgeSearchResult,
-        term_key: str,
-        max_cooccurrences: int,
-    ) -> None:
-        """
-        Enhance a term result with its relationships and co-occurrences.
-
-        Args:
-            result: The result to enhance
-            term_key: The primary term key
-            max_cooccurrences: Maximum co-occurrences to include
-        """
-        term = self.linked_knowledge.terms.get(term_key)
-        if not term:
-            return
-
-        # Add linked terms (acronym-keyword relationships)
-        for link in self.linked_knowledge.links:
-            if link.acronym == term_key or link.keyword == term_key:
-                linked_term_key = link.keyword if link.acronym == term_key else link.acronym
-                if linked_term_key in self.linked_knowledge.terms:
-                    result.related_terms.append(self.linked_knowledge.terms[linked_term_key])
-
-        # Add co-occurring terms to the end of related_terms
-        if term.cooccurrences and max_cooccurrences > 0:
-            # Convert TermCooccurrence to Term objects and add to related_terms
-            for cooccurrence in term.cooccurrences[:max_cooccurrences]:
-                if cooccurrence.term in self.linked_knowledge.terms:
-                    cooccurring_term = self.linked_knowledge.terms[cooccurrence.term]
-                    if cooccurring_term not in result.related_terms:
-                        result.related_terms.append(cooccurring_term)
-
-    def _add_related_terms(self, result: KnowledgeSearchResult, remaining_depth: int) -> None:
-        """
-        Recursively add related terms up to the specified depth.
-
-        Args:
-            result: The result to enhance
-            remaining_depth: Remaining depth for recursion
-        """
-        if remaining_depth <= 0:
-            return
-
-        current_terms = [term for term in result.primary_terms]
-
-        for term in current_terms:
-            # Find linked terms
-            for link in self.linked_knowledge.links:
-                linked_term_key = None
-                if term.type == "acronym" and link.acronym == term.term:
-                    linked_term_key = link.keyword
-                elif term.type == "keyword" and link.keyword == term.term:
-                    linked_term_key = link.acronym
-
-                if linked_term_key and linked_term_key in self.linked_knowledge.terms:
-                    linked_term = self.linked_knowledge.terms[linked_term_key]
-                    if linked_term not in result.related_terms:
-                        result.related_terms.append(linked_term)
-
     def _add_page_content(
         self,
         result: Union[KnowledgeSearchResult, SimilaritySearchResult, KnowledgeSearchResult],
@@ -709,7 +517,6 @@ class KnowledgeSearchCore:
         if page_key in self.linked_knowledge.pages:
             page_data = self.linked_knowledge.pages[page_key]
 
-            # Images are already base64 strings in page_data
             result.images.extend(page_data.images)
 
             # Tables are already KnowledgeTableData objects
@@ -730,7 +537,6 @@ class KnowledgeSearchCore:
         Raises:
             ValueError: If no path is provided and self.pickle_path is not set
         """
-        import pickle
 
         save_path = Path(path) if path else self.pickle_path
         if not save_path:
@@ -762,7 +568,7 @@ class KnowledgeSearchCore:
         # Update internal pickle_path
         self.pickle_path = save_path
 
-    def load(self, path: Union[str, Path]) -> None:
+    def _load(self, path: Union[str, Path]) -> None:
         """
         Load a KnowledgeSearchCore instance from a pickle file.
 
@@ -778,7 +584,6 @@ class KnowledgeSearchCore:
             FileNotFoundError: If the pickle file doesn't exist
             ValueError: If the pickle file is corrupted or incompatible
         """
-        import pickle
 
         load_path = Path(path)
         if not load_path.exists():
@@ -796,16 +601,9 @@ class KnowledgeSearchCore:
             # Initialize embeddings
             self._embeddings = EncoderEmbeddings()
 
-            # Check for vector store in state
-            if "vector_store" in state:
-                # Load the vector store directly from state
-                self._vector_store = InMemoryVectorStore(embedding=self._embeddings)
-                self._vector_store.store = state["vector_store"]
-            else:
-                # Fallback: reinitialize vector store (for backward compatibility)
-                logger.warning("Old pickle format detected, reinitializing vector store")
-                self._vector_store = InMemoryVectorStore(embedding=self._embeddings)
-                self._initialize_search_index()
+            # Load the vector store directly from state
+            self._vector_store = InMemoryVectorStore(embedding=self._embeddings)
+            self._vector_store.store = state["vector_store"]
 
             self._term_to_embedding_id = state["term_to_embedding_id"]
             self._embedding_id_to_term = state["embedding_id_to_term"]
