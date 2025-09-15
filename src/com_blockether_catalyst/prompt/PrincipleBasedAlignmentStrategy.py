@@ -50,23 +50,25 @@ class PrincipleBasedAlignmentStrategy:
         principles = []
 
         # Extract from explicit principles (highest quality)
-        for principle in feedback.principles_to_apply.root:
+        for principle in feedback.principles_to_apply.principles:
             if self.MIN_PRINCIPLE_LENGTH <= len(principle.principle) <= self.MAX_PRINCIPLE_LENGTH:
                 principles.append(principle)
 
         # Extract from improvement suggestions (actionable guidelines)
-        for suggestion in feedback.improvement_suggestions.root[: self.MAX_PRINCIPLES_PER_FEEDBACK]:
-            if self._is_actionable_principle(suggestion):
+        for suggestion in feedback.improvement_suggestions[: self.MAX_PRINCIPLES_PER_FEEDBACK]:
+            suggestion_text = suggestion.root
+            if self._is_actionable_principle(suggestion_text):
                 principles.append(
                     AlignmentPrinciple(
-                        principle=suggestion,
+                        principle=suggestion_text,
                         importance=0.8,
                     )
                 )
 
         # Convert specific issues to positive principles
-        for issue in feedback.specific_issues.root[: self.MAX_PRINCIPLES_PER_FEEDBACK]:
-            positive_principle = self._convert_issue_to_principle(issue)
+        for issue in feedback.specific_issues[: self.MAX_PRINCIPLES_PER_FEEDBACK]:
+            issue_text = issue.root
+            positive_principle = self._convert_issue_to_principle(issue_text)
             if positive_principle:
                 principles.append(
                     AlignmentPrinciple(

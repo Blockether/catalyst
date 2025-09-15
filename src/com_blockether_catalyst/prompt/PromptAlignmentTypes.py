@@ -10,8 +10,16 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, RootModel
 
-from ..consensus.ConsensusTypes import TypedCallBaseForConsensus
-from ..consensus.VotingComparison import ComparisonStrategy, VotingField
+from ..consensus.VotingComparison import BaseModelWithReasoning
+
+
+class SemanticString(RootModel[str]):
+    """A string wrapper that uses semantic comparison."""
+
+    root: str = Field(
+        threshold=0.75,
+        description="String with semantic comparison",
+    )
 
 
 class AlignmentPrinciple(BaseModel):
@@ -26,86 +34,65 @@ class AlignmentPrinciple(BaseModel):
     )
 
 
-class SemanticStringList(RootModel[List[str]]):
-    """A list of strings that should be compared semantically."""
-
-    root: List[str] = VotingField(
-        comparison=ComparisonStrategy.SEMANTIC,
-        default_factory=list,
-        threshold=0.8,  # Use semantic comparison for individual strings
-    )
-
-
-class EvaluationResult(TypedCallBaseForConsensus):
+class EvaluationResult(BaseModelWithReasoning):
     """Result of evaluating a prompt against target behavior."""
 
-    alignment_score: float = VotingField(
-        comparison=ComparisonStrategy.EXACT,
+    alignment_score: float = Field(
         ge=0.0,
         le=1.0,
         description="How well the prompt aligns with target behavior (0-1)",
     )
-    feedback: str = VotingField(
-        comparison=ComparisonStrategy.SEMANTIC,
+    feedback: str = Field(
         min_length=10,
         description="Detailed feedback on the prompt's alignment",
     )
-    strengths: SemanticStringList = VotingField(
-        comparison=ComparisonStrategy.DERIVED,
-        default_factory=SemanticStringList,
+    strengths: List[SemanticString] = Field(
+        default_factory=list,
         description="Identified strengths of the prompt",
     )
-    weaknesses: SemanticStringList = VotingField(
-        comparison=ComparisonStrategy.DERIVED,
-        default_factory=SemanticStringList,
+    weaknesses: List[SemanticString] = Field(
+        default_factory=list,
         description="Identified weaknesses of the prompt",
     )
-    suggested_improvements: SemanticStringList = VotingField(
-        comparison=ComparisonStrategy.DERIVED,
-        default_factory=SemanticStringList,
+    suggested_improvements: List[SemanticString] = Field(
+        default_factory=list,
         description="Specific improvements suggested",
     )
 
 
-class AlignmentPrincipleList(RootModel[List[AlignmentPrinciple]]):
+class AlignmentPrincipleList(BaseModel):
     """A list of alignment principles with DERIVED comparison."""
 
-    root: List[AlignmentPrinciple] = VotingField(
-        comparison=ComparisonStrategy.DERIVED,
+    principles: List[AlignmentPrinciple] = Field(
         default_factory=list,
+        description="List of alignment principles",
     )
 
 
-class AlignmentFeedback(TypedCallBaseForConsensus):
+class AlignmentFeedback(BaseModelWithReasoning):
     """Feedback from alignment model for prompt improvement."""
 
-    overall_assessment: str = VotingField(
-        comparison=ComparisonStrategy.SEMANTIC,
+    overall_assessment: str = Field(
         min_length=20,
         description="Overall assessment of the prompt",
     )
-    specific_issues: SemanticStringList = VotingField(
-        comparison=ComparisonStrategy.DERIVED,
-        default_factory=SemanticStringList,
+    specific_issues: List[SemanticString] = Field(
+        default_factory=list,
         description="Specific issues identified in the prompt",
     )
-    improvement_suggestions: SemanticStringList = VotingField(
-        comparison=ComparisonStrategy.DERIVED,
-        default_factory=SemanticStringList,
+    improvement_suggestions: List[SemanticString] = Field(
+        default_factory=list,
         description="Concrete suggestions for improvement",
     )
-    principles_to_apply: AlignmentPrincipleList = VotingField(
-        comparison=ComparisonStrategy.DERIVED,
+    principles_to_apply: AlignmentPrincipleList = Field(
         default_factory=AlignmentPrincipleList,
         description="Principles that should be applied",
     )
-    revised_prompt_suggestion: Optional[str] = VotingField(
-        comparison=ComparisonStrategy.SEMANTIC,
+    revised_prompt_suggestion: Optional[str] = Field(
         default=None,
         description="Direct suggestion for revised prompt",
     )
-    confidence_score: float = VotingField(
-        comparison=ComparisonStrategy.EXACT,
+    confidence_score: float = Field(
         default=0.8,
         ge=0.0,
         le=1.0,

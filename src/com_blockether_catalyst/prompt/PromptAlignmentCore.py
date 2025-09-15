@@ -107,7 +107,7 @@ class PromptAlignmentCore:
                 prompt=current_prompt,
                 score=evaluation.alignment_score,
                 feedback=evaluation.feedback,
-                improvements_made=evaluation.suggested_improvements.root,
+                improvements_made=[s.root for s in evaluation.suggested_improvements],
             )
             evolution_history.append(evolution)
 

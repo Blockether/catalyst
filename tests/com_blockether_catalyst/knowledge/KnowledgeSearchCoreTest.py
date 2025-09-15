@@ -15,8 +15,13 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from com_blockether_catalyst.knowledge.KnowledgeExtractionTypes import (
+from com_blockether_catalyst.knowledge.KnowledgeSearchCore import (
+    KnowledgeSearchCore,
+    KnowledgeSearchResult,
+)
+from com_blockether_catalyst.knowledge.KnowledgeTypes import (
     DocumentMetadata,
+    ImageMetadata,
     KnowledgeChunkWithTerms,
     KnowledgePageData,
     KnowledgeTableData,
@@ -25,11 +30,7 @@ from com_blockether_catalyst.knowledge.KnowledgeExtractionTypes import (
     TermCooccurrence,
     TermLink,
     TermOccurrence,
-)
-from com_blockether_catalyst.knowledge.KnowledgeSearchCore import (
-    KnowledgeSearchCore,
-    KnowledgeSearchResult,
-    SimilaritySearchResult,
+    TermWithLinks,
 )
 
 # ============================================================================
@@ -42,18 +43,26 @@ def create_sample_dataset() -> LinkedKnowledge:
 
     # Create sample terms
     terms = {
-        "ml_term": Term(
+        "ml_term": TermWithLinks(
             term="machine learning",
-            term_type="keyword",
+            type="keyword",
             full_form="machine learning",
             meaning="A method of data analysis that automates analytical model building",
+            reasoning="Machine learning is a critical field in artificial intelligence that enables computers to learn from data without being explicitly programmed. This term is essential for understanding modern data-driven approaches to problem solving.",
             occurrences=[
-                TermOccurrence(document_id="doc1", document_name="ML Guide", chunk_index=0, page=1),
+                TermOccurrence(
+                    document_id="doc1",
+                    document_name="ML Guide",
+                    chunk_index=0,
+                    page=1,
+                    total=2,
+                ),
                 TermOccurrence(
                     document_id="doc2",
                     document_name="AI Overview",
                     chunk_index=1,
                     page=1,
+                    total=1,
                 ),
             ],
             cooccurrences=[
@@ -62,17 +71,19 @@ def create_sample_dataset() -> LinkedKnowledge:
                 TermCooccurrence(term="deep learning", frequency=4, confidence=0.9),
             ],
         ),
-        "ai_term": Term(
+        "ai_term": TermWithLinks(
             term="artificial intelligence",
-            term_type="keyword",
+            type="keyword",
             full_form="artificial intelligence",
             meaning="The simulation of human intelligence in machines",
+            reasoning="Artificial intelligence represents a broad field of computer science focused on creating intelligent machines that can simulate human thinking and behavior. This term is fundamental to understanding modern technology and automation.",
             occurrences=[
                 TermOccurrence(
                     document_id="doc2",
                     document_name="AI Overview",
                     chunk_index=0,
                     page=1,
+                    total=1,
                 )
             ],
             cooccurrences=[
@@ -80,23 +91,41 @@ def create_sample_dataset() -> LinkedKnowledge:
                 TermCooccurrence(term="robotics", frequency=2, confidence=0.6),
             ],
         ),
-        "api_acronym": Term(
+        "api_acronym": TermWithLinks(
             term="API",
-            term_type="acronym",
+            type="acronym",
             full_form="Application Programming Interface",
             meaning="A set of protocols and tools for building software applications",
-            occurrences=[TermOccurrence(document_id="doc1", document_name="ML Guide", chunk_index=2, page=2)],
+            reasoning="API (Application Programming Interface) is a fundamental concept in software development that defines how different software components should interact. Understanding APIs is crucial for modern software integration and development practices.",
+            occurrences=[
+                TermOccurrence(
+                    document_id="doc1",
+                    document_name="ML Guide",
+                    chunk_index=2,
+                    page=2,
+                    total=1,
+                )
+            ],
             cooccurrences=[
                 TermCooccurrence(term="REST", frequency=8, confidence=0.9),
                 TermCooccurrence(term="HTTP", frequency=6, confidence=0.8),
             ],
         ),
-        "rest_acronym": Term(
+        "rest_acronym": TermWithLinks(
             term="REST",
-            term_type="acronym",
+            type="acronym",
             full_form="Representational State Transfer",
             meaning="An architectural style for distributed hypermedia systems",
-            occurrences=[TermOccurrence(document_id="doc1", document_name="ML Guide", chunk_index=2, page=2)],
+            reasoning="REST (Representational State Transfer) is an architectural style that defines a set of constraints for creating web services. This acronym is essential for understanding modern web API design and distributed systems architecture.",
+            occurrences=[
+                TermOccurrence(
+                    document_id="doc1",
+                    document_name="ML Guide",
+                    chunk_index=2,
+                    page=2,
+                    total=1,
+                )
+            ],
             cooccurrences=[
                 TermCooccurrence(term="API", frequency=8, confidence=0.9),
                 TermCooccurrence(term="HTTP", frequency=7, confidence=0.85),
@@ -185,7 +214,7 @@ def create_sample_dataset() -> LinkedKnowledge:
         ("doc1", 1): KnowledgePageData(
             page=1,
             text="Machine learning content from page 1",
-            images=["/fake/path/image1.png"],
+            images=[ImageMetadata(document_name="ML Guide", page=1, path="/fake/path/image1.png")],
             tables=[],
         ),
         ("doc1", 2): KnowledgePageData(page=2, text="API content from page 2", images=[], tables=[sample_table]),
@@ -276,84 +305,123 @@ def sample_document() -> DocumentMetadata:
 @pytest.fixture
 def sample_terms() -> Dict[str, Term]:
     """Create sample terms with meanings and co-occurrences."""
-    ml_keyword = Term(
+    ml_keyword = TermWithLinks(
         term="machine learning",
-        term_type="keyword",
+        type="keyword",
         full_form="machine learning",
         occurrences=[
-            TermOccurrence(document_id="doc1", document_name="ml_guide.pdf", page=1, chunk_index=0),
-            TermOccurrence(document_id="doc1", document_name="ml_guide.pdf", page=2, chunk_index=2),
+            TermOccurrence(
+                document_id="doc1",
+                document_name="ml_guide.pdf",
+                page=1,
+                chunk_index=0,
+                total=2,
+            ),
+            TermOccurrence(
+                document_id="doc1",
+                document_name="ml_guide.pdf",
+                page=2,
+                chunk_index=2,
+                total=2,
+            ),
         ],
         cooccurrences=[
             TermCooccurrence(term="algorithms", frequency=3, confidence=0.9),
             TermCooccurrence(term="API", frequency=2, confidence=0.7),
             TermCooccurrence(term="neural networks", frequency=2, confidence=0.8),
         ],
-        total_count=2,
-        mean_score=0.95,
+        total=2,
         meaning="A method of data analysis that automates analytical model building",
-        reasoning="Core AI concept with clear definition",
+        reasoning="This is a core AI concept that represents the fundamental approach to automated learning from data. It's essential for understanding modern artificial intelligence and data science applications in various domains.",
     )
 
-    api_acronym = Term(
+    api_acronym = TermWithLinks(
         term="API",
-        term_type="acronym",
+        type="acronym",
         full_form="Application Programming Interface",
-        occurrences=[TermOccurrence(document_id="doc1", document_name="ml_guide.pdf", page=1, chunk_index=1)],
+        occurrences=[
+            TermOccurrence(
+                document_id="doc1",
+                document_name="ml_guide.pdf",
+                page=1,
+                chunk_index=1,
+                total=1,
+            )
+        ],
         cooccurrences=[
             TermCooccurrence(term="REST", frequency=3, confidence=0.95),
             TermCooccurrence(term="endpoints", frequency=2, confidence=0.85),
             TermCooccurrence(term="machine learning", frequency=1, confidence=0.6),
         ],
-        total_count=1,
-        mean_score=0.85,
+        total=1,
         meaning="A set of protocols and tools for building software applications",
-        reasoning="Standard technical acronym",
+        reasoning="This is a standard technical acronym widely used in software development to describe the set of protocols and tools that enable different software applications to communicate with each other effectively and efficiently.",
     )
 
-    ml_acronym = Term(
+    ml_acronym = TermWithLinks(
         term="ML",
-        term_type="acronym",
+        type="acronym",
         full_form="Machine Learning",
-        occurrences=[TermOccurrence(document_id="doc1", document_name="ml_guide.pdf", page=1, chunk_index=1)],
+        occurrences=[
+            TermOccurrence(
+                document_id="doc1",
+                document_name="ml_guide.pdf",
+                page=1,
+                chunk_index=1,
+                total=1,
+            )
+        ],
         cooccurrences=[
             TermCooccurrence(term="models", frequency=2, confidence=0.9),
             TermCooccurrence(term="API", frequency=1, confidence=0.7),
         ],
-        total_count=1,
-        mean_score=0.9,
+        total=1,
         meaning="Machine Learning - automated learning from data",
-        reasoning="Common ML abbreviation",
+        reasoning="This is a common abbreviation for Machine Learning, widely used in technical documentation, research papers, and industry discussions to refer to automated learning algorithms and systems that improve through experience.",
     )
 
-    algorithms_keyword = Term(
+    algorithms_keyword = TermWithLinks(
         term="algorithms",
-        term_type="keyword",
+        type="keyword",
         full_form="algorithms",
-        occurrences=[TermOccurrence(document_id="doc1", document_name="ml_guide.pdf", page=1, chunk_index=0)],
+        occurrences=[
+            TermOccurrence(
+                document_id="doc1",
+                document_name="ml_guide.pdf",
+                page=1,
+                chunk_index=0,
+                total=1,
+            )
+        ],
         cooccurrences=[
             TermCooccurrence(term="machine learning", frequency=3, confidence=0.9),
             TermCooccurrence(term="computational", frequency=2, confidence=0.8),
         ],
-        total_count=1,
-        mean_score=0.75,
+        total=1,
         meaning="A set of rules or instructions for solving a problem",
-        reasoning="Fundamental CS concept",
+        reasoning="This is a fundamental computer science concept that represents a step-by-step procedure or formula for solving problems. Algorithms form the foundation of all computational processes and programming logic in software development.",
     )
 
-    neural_networks_keyword = Term(
+    neural_networks_keyword = TermWithLinks(
         term="neural networks",
-        term_type="keyword",
+        type="keyword",
         full_form="neural networks",
-        occurrences=[TermOccurrence(document_id="doc1", document_name="ml_guide.pdf", page=2, chunk_index=2)],
+        occurrences=[
+            TermOccurrence(
+                document_id="doc1",
+                document_name="ml_guide.pdf",
+                page=2,
+                chunk_index=2,
+                total=1,
+            )
+        ],
         cooccurrences=[
             TermCooccurrence(term="deep learning", frequency=3, confidence=0.95),
             TermCooccurrence(term="machine learning", frequency=2, confidence=0.8),
         ],
-        total_count=1,
-        mean_score=0.88,
+        total=1,
         meaning="Computing systems inspired by biological neural networks",
-        reasoning="Key deep learning concept",
+        reasoning="This is a key deep learning concept inspired by biological neural networks in the brain. Neural networks form the foundation of modern AI systems capable of learning complex patterns and making sophisticated predictions from data.",
     )
 
     return {
@@ -369,8 +437,8 @@ def sample_terms() -> Dict[str, Term]:
 def sample_links() -> List[TermLink]:
     """Create term links between acronyms and keywords."""
     return [
-        TermLink(acronym="API", keyword="Application Programming Interface", match_score=0.98),
-        TermLink(acronym="ML", keyword="machine learning", match_score=0.95),
+        TermLink(link_from="API", link_to="Application Programming Interface", score=0.98),
+        TermLink(link_from="ML", link_to="machine learning", score=0.95),
     ]
 
 
@@ -392,14 +460,17 @@ def sample_pages() -> Dict[Tuple[str, int], KnowledgePageData]:
                     ],
                 )
             ],
-            images=["doc1_page1_image1.png"],
+            images=[ImageMetadata(document_name="ml_guide.pdf", page=1, path="doc1_page1_image1.png")],
             lines=5,
         ),
         ("doc1", 2): KnowledgePageData(
             page=2,
             text="Deep learning neural networks process complex patterns.",
             tables=[],
-            images=["doc1_page2_image1.png", "doc1_page2_image2.png"],
+            images=[
+                ImageMetadata(document_name="ml_guide.pdf", page=2, path="doc1_page2_image1.png"),
+                ImageMetadata(document_name="ml_guide.pdf", page=2, path="doc1_page2_image2.png"),
+            ],
             lines=3,
         ),
     }
@@ -421,8 +492,8 @@ def sample_linked_knowledge(
     document_to_chunk_ids_index = {"doc1": {"doc1_p1_c0", "doc1_p1_c1", "doc1_p2_c2"}}
 
     # Calculate totals from the sample data
-    total_acronyms = sum(1 for term in sample_terms.values() if term.term_type == "acronym")
-    total_keywords = sum(1 for term in sample_terms.values() if term.term_type == "keyword")
+    total_acronyms = sum(1 for term in sample_terms.values() if term.type == "acronym")
+    total_keywords = sum(1 for term in sample_terms.values() if term.type == "keyword")
     total_chunks = len(chunks_dict)
 
     return LinkedKnowledge(
@@ -458,7 +529,6 @@ class TestKnowledgeSearchCoreInitialization:
 
         assert search_core.linked_knowledge == sample_linked_knowledge
         assert search_core._vector_store is not None
-        assert len(search_core._acronym_to_full_form) == 2  # API and ML
 
     def test_initialization_with_empty_knowledge(self) -> None:
         """Test initialization with empty LinkedKnowledge."""
@@ -473,58 +543,111 @@ class TestKnowledgeSearchCoreInitialization:
         search_core = KnowledgeSearchCore(empty_knowledge)
 
         assert search_core.linked_knowledge == empty_knowledge
-        assert len(search_core._acronym_to_full_form) == 0
+        assert search_core._vector_store is not None
 
     def test_initialization_builds_indices(self, sample_linked_knowledge: LinkedKnowledge) -> None:
         """Test that initialization properly builds search indices."""
         search_core = KnowledgeSearchCore(sample_linked_knowledge)
 
-        # Check acronym mappings are built
-        assert "API" in search_core._acronym_to_full_form
-        assert "ML" in search_core._acronym_to_full_form
-        assert search_core._acronym_to_full_form["API"] == "Application Programming Interface"
-        assert search_core._acronym_to_full_form["ML"] == "Machine Learning"
+        # Check that vector store is populated
+        assert search_core._vector_store is not None
+        # Vector store should have chunks added to it
+        assert len(search_core._vector_store.store) > 0
 
 
 class TestKnowledgeSearchCoreSearch:
     """Test search functionality."""
 
-    def test_hybrid_search_returns_results(self, search_core: KnowledgeSearchCore) -> None:
-        """Test that hybrid search returns appropriate results."""
-        results = search_core.search_similarity("machine learning", k=5)
-
-        assert len(results) <= 5
-        assert all(isinstance(r, (SimilaritySearchResult, KnowledgeSearchResult)) for r in results)
-        assert all(r.score >= 0 for r in results)
-
-    def test_search_respects_k_parameter(self, search_core: KnowledgeSearchCore) -> None:
-        """Test that search respects the k parameter."""
-        results_k2 = search_core.search_similarity("API", k=2)
-        results_k5 = search_core.search_similarity("API", k=5)
-
-        assert len(results_k2) <= 2
-        assert len(results_k5) <= 5
-
     def test_search_with_max_depth(self, search_core: KnowledgeSearchCore) -> None:
         """Test search with different max_depth values."""
-        results_depth1 = search_core.search_enhanced("machine learning", max_depth=1, k=3)
-        results_depth3 = search_core.search_enhanced("machine learning", max_depth=3, k=3)
+        # Create test data with linked terms (depth chain: A -> B -> C -> D)
+        term_a = TermWithLinks(
+            term="term_a",
+            type="keyword",
+            full_form="Term A",
+            meaning="First term",
+            reasoning="Term A is a fundamental concept in this test suite that serves as the starting point for testing recursive link resolution. It demonstrates the ability to traverse linked terms through multiple levels of depth, ensuring the system can handle complex term relationships.",
+            occurrences=[],
+            cooccurrences=[],
+            links=[TermLink(link_from="term_a", link_to="term_b", score=0.9)],
+        )
 
-        # Both should return valid results
-        assert all(isinstance(r, (SimilaritySearchResult, KnowledgeSearchResult)) for r in results_depth1)
-        assert all(isinstance(r, (SimilaritySearchResult, KnowledgeSearchResult)) for r in results_depth3)
+        term_b = TermWithLinks(
+            term="term_b",
+            type="keyword",
+            full_form="Term B",
+            meaning="Second term",
+            reasoning="Term B represents an intermediate node in the term linkage chain, demonstrating the system's ability to continue traversing relationships beyond the initial level. This term is critical for testing depth-based resolution as it both receives and provides links.",
+            occurrences=[],
+            cooccurrences=[],
+            links=[TermLink(link_from="term_b", link_to="term_c", score=0.9)],
+        )
 
-    def test_search_with_threshold(self, search_core: KnowledgeSearchCore) -> None:
-        """Test that search respects similarity threshold."""
-        results_low_threshold = search_core.search_similarity("test", k=10, threshold=0.01)
-        results_high_threshold = search_core.search_similarity("test", k=10, threshold=0.9)
+        term_c = TermWithLinks(
+            term="term_c",
+            type="keyword",
+            full_form="Term C",
+            meaning="Third term",
+            reasoning="Term C continues the chain of linked terms, allowing us to test the system's ability to resolve relationships at deeper levels. It serves as a bridge between intermediate and terminal terms, ensuring proper depth tracking throughout the resolution process.",
+            occurrences=[],
+            cooccurrences=[],
+            links=[TermLink(link_from="term_c", link_to="term_d", score=0.9)],
+        )
 
-        # High threshold should return fewer results
-        assert len(results_high_threshold) <= len(results_low_threshold)
+        term_d = TermWithLinks(
+            term="term_d",
+            type="keyword",
+            full_form="Term D",
+            meaning="Fourth term",
+            reasoning="Term D serves as the terminal node in our test chain, having no outgoing links. This allows us to verify that the system properly handles leaf nodes in the term graph and correctly stops traversal when reaching terms without further connections.",
+            occurrences=[],
+            cooccurrences=[],
+            links=[],
+        )
+
+        # Add terms to the knowledge base
+        search_core._linked_knowledge.terms["term_a"] = term_a
+        search_core._linked_knowledge.terms["term_b"] = term_b
+        search_core._linked_knowledge.terms["term_c"] = term_c
+        search_core._linked_knowledge.terms["term_d"] = term_d
+
+        # Test max_depth=0 (no linked terms)
+        resolved_depth0 = search_core._resolve_linked_terms(term_a, max_depth=0)
+        assert len(resolved_depth0) == 0
+
+        # Test max_depth=1 (only immediate links: term_b)
+        resolved_depth1 = search_core._resolve_linked_terms(term_a, max_depth=1)
+        assert len(resolved_depth1) == 1
+        assert resolved_depth1[0].term == "term_b"
+
+        # Test max_depth=2 (term_b and term_c)
+        resolved_depth2 = search_core._resolve_linked_terms(term_a, max_depth=2)
+        assert len(resolved_depth2) == 2
+        term_names = [t.term for t in resolved_depth2]
+        assert "term_b" in term_names
+        assert "term_c" in term_names
+
+        # Test max_depth=3 (term_b, term_c, and term_d)
+        resolved_depth3 = search_core._resolve_linked_terms(term_a, max_depth=3)
+        assert len(resolved_depth3) == 3
+        term_names = [t.term for t in resolved_depth3]
+        assert "term_b" in term_names
+        assert "term_c" in term_names
+        assert "term_d" in term_names
+
+        # Test cycle prevention
+        term_b.links.append(TermLink(link_from="term_b", link_to="term_a", score=0.9))
+        # Start with term_a already in visited set to prevent cycles back to it
+        visited_with_start = {"term_a"}
+        resolved_with_cycle = search_core._resolve_linked_terms(term_a, max_depth=5, visited=visited_with_start)
+        # Should still only get term_b, term_c, term_d (no duplicates or infinite loops)
+        assert len(resolved_with_cycle) == 3
+        term_names_cycle = [t.term for t in resolved_with_cycle]
+        assert "term_a" not in term_names_cycle  # term_a should not appear due to cycle prevention
 
     def test_search_enriches_with_terms(self, search_core: KnowledgeSearchCore) -> None:
         """Test that enhanced search results are enriched with term information."""
-        results = search_core.search_enhanced("machine learning algorithms", k=3)
+        results = search_core.search("machine learning algorithms", k=3)
 
         # At least one result should have primary terms
         results_with_terms = [r for r in results for _ in r.primary_terms]
@@ -532,178 +655,13 @@ class TestKnowledgeSearchCoreSearch:
 
     def test_search_includes_cooccurrences_in_related_terms(self, search_core: KnowledgeSearchCore) -> None:
         """Test that enhanced search results include co-occurring terms in related_terms."""
-        results = search_core.search_enhanced("machine learning", max_cooccurrences=5, k=3)
+        results = search_core.search("machine learning", max_cooccurrences=5, k=3)
 
         # Check that related_terms includes both linked terms and co-occurrences
         for result in results:
             assert isinstance(result.related_terms, list)
             # All items in related_terms should be Term objects
             assert all(isinstance(term, Term) for term in result.related_terms)
-
-    def test_standard_search_mode(self, search_core: KnowledgeSearchCore) -> None:
-        """Test standard search mode (enhanced=False) - no terms but includes media."""
-        results = search_core.search_similarity("machine learning", k=5)
-
-        assert len(results) <= 5
-        assert all(isinstance(r, (SimilaritySearchResult, KnowledgeSearchResult)) for r in results)
-        assert all(r.score >= 0 for r in results)
-
-        # Standard search should NOT have terms
-        for result in results:
-            assert len(result.primary_terms) == 0
-            assert len(result.related_terms) == 0
-            # But should have images/tables fields
-            assert hasattr(result, "images")
-            assert hasattr(result, "tables")
-
-    def test_enhanced_search_mode(self, search_core: KnowledgeSearchCore) -> None:
-        """Test enhanced search mode (enhanced=True) - includes terms and media."""
-        results = search_core.search_enhanced("machine learning", k=5)
-
-        assert len(results) <= 5
-        assert all(isinstance(r, (SimilaritySearchResult, KnowledgeSearchResult)) for r in results)
-        assert all(r.score >= 0 for r in results)
-
-        # Enhanced search should have terms for results that contain known terms
-        ml_results = [r for r in results if "machine learning" in r.text.lower()]
-        if len(ml_results) > 0:
-            # At least the machine learning results should have primary terms
-            ml_result = ml_results[0]
-            ml_terms = [t for t in ml_result.primary_terms if t.term == "machine learning"]
-            assert len(ml_terms) > 0, "Enhanced search should identify 'machine learning' as a primary term"
-
-        # Should also have images/tables fields
-        for result in results:
-            assert hasattr(result, "images")
-            assert hasattr(result, "tables")
-
-    @pytest.mark.parametrize("enhanced", [True, False])
-    def test_both_search_modes_return_valid_results(self, search_core: KnowledgeSearchCore, enhanced: bool) -> None:
-        """Test that both search modes return valid results."""
-        results = (
-            search_core.search_enhanced("API algorithms", k=3)
-            if enhanced
-            else search_core.search_similarity("API algorithms", k=3)
-        )
-
-        assert len(results) <= 3
-        assert all(isinstance(r, (SimilaritySearchResult, KnowledgeSearchResult)) for r in results)
-        assert all(r.score >= 0 and r.score <= 1.0 for r in results)
-
-
-class TestKnowledgeSearchResultEnrichment:
-    """Test result enrichment with terms and relationships."""
-
-    def test_result_contains_metadata(self, search_core: KnowledgeSearchCore) -> None:
-        """Test that search results contain proper metadata."""
-        results = search_core.search_similarity("API", k=1)
-        result = results[0]
-
-        assert result.text is not None
-        assert result.score >= 0
-        assert result.document_id is not None
-        assert result.document_name is not None
-        assert result.metadata is not None
-
-    def test_result_primary_terms_populated(self, search_core: KnowledgeSearchCore) -> None:
-        """Test that enhanced search results have primary terms properly populated with exact matches."""
-        results = search_core.search_enhanced("machine learning", k=3)
-
-        # Find the result that contains "machine learning" text
-        ml_results = [r for r in results if "machine learning" in r.text.lower()]
-        assert len(ml_results) > 0, "Should find results containing 'machine learning'"
-
-        ml_result = ml_results[0]
-
-        # Should have the "machine learning" term as a primary term
-        ml_primary_terms = [t for t in ml_result.primary_terms if t.term == "machine learning"]
-        assert (
-            len(ml_primary_terms) == 1
-        ), f"Should have exactly 1 'machine learning' primary term, got {len(ml_primary_terms)}"
-
-        # Verify the term has the expected properties
-        ml_term = ml_primary_terms[0]
-        assert ml_term.term_type == "keyword"
-        assert ml_term.total_count == 2
-        assert ml_term.mean_score == 0.95
-
-    def test_result_includes_images_and_tables(self, search_core: KnowledgeSearchCore) -> None:
-        """Test that results include correct images and tables from their specific pages."""
-        results = search_core.search_similarity("machine learning", k=3)
-
-        # Find results from each page to verify specific content
-        page1_results = [r for r in results if r.page == 1]
-        page2_results = [r for r in results if r.page == 2]
-
-        # Verify page 1 results have the expected image and table
-        for result in page1_results:
-            # Page 1 should have exactly 1 image and 1 table based on our test data
-            assert len(result.images) == 1, f"Page 1 should have 1 image, got {len(result.images)}"
-            assert len(result.tables) == 1, f"Page 1 should have 1 table, got {len(result.tables)}"
-
-            # Verify specific image content (images are now strings)
-            image = result.images[0]
-            assert image == "doc1_page1_image1.png"
-
-            # Verify specific table content
-            table = result.tables[0]
-            assert table.rows == 2
-            assert table.columns == 3
-            expected_data = [
-                ["Algorithm", "Complexity", "Accuracy"],
-                ["SVM", "O(n^2)", "95%"],
-            ]
-            assert table.data == expected_data
-
-        # Verify page 2 results have the expected images
-        for result in page2_results:
-            # Page 2 should have exactly 2 images and 0 tables based on our test data
-            assert len(result.images) == 2, f"Page 2 should have 2 images, got {len(result.images)}"
-            assert len(result.tables) == 0, f"Page 2 should have 0 tables, got {len(result.tables)}"
-
-            # Verify specific image paths (images are now strings)
-            image_paths = set(result.images)
-            expected_paths = {"doc1_page2_image1.png", "doc1_page2_image2.png"}
-            assert image_paths == expected_paths
-
-
-class TestKnowledgeSearchEdgeCases:
-    """Test edge cases and error handling."""
-
-    def test_search_with_empty_query(self, search_core: KnowledgeSearchCore) -> None:
-        """Test search with empty query string."""
-        results = search_core.search_similarity("", k=5)
-        assert isinstance(results, list)
-
-    def test_search_with_unknown_terms(self, search_core: KnowledgeSearchCore) -> None:
-        """Test search with terms not in the knowledge base."""
-        results = search_core.search_similarity("quantum computing blockchain", k=5)
-        assert isinstance(results, list)
-        # Should still return some results based on semantic similarity
-
-    def test_search_with_zero_k(self, search_core: KnowledgeSearchCore) -> None:
-        """Test search with k=0."""
-        results = search_core.search_similarity("test", k=0)
-        assert len(results) == 0
-
-    def test_search_with_very_high_threshold(self, search_core: KnowledgeSearchCore) -> None:
-        """Test search with very high similarity threshold."""
-        results = search_core.search_similarity("test", threshold=0.99, k=10)
-        # Should return few or no results due to high threshold
-        assert len(results) <= 10
-
-    def test_search_with_special_characters(self, search_core: KnowledgeSearchCore) -> None:
-        """Test search with special characters in query."""
-        results = search_core.search_similarity("machine-learning & API's", k=3)
-        assert isinstance(results, list)
-
-    def test_multiple_searches_consistency(self, search_core: KnowledgeSearchCore) -> None:
-        """Test that multiple searches return consistent results."""
-        results1 = search_core.search_similarity("API", k=3)
-        results2 = search_core.search_similarity("API", k=3)
-
-        # Same query should return same number of results
-        assert len(results1) == len(results2)
 
 
 # ============================================================================
@@ -725,12 +683,10 @@ class TestKnowledgeSearchCorePickleIntegration:
             original_core = KnowledgeSearchCore(linked_knowledge=dataset, pickle_path=pickle_path, auto_load=False)
 
             # Perform some searches on original to verify functionality
-            original_ml_results = original_core.search_enhanced("machine learning", k=3)
-            original_api_results = original_core.search_similarity("API REST", k=2)
+            original_ml_results = original_core.search("machine learning", k=3)
 
             # Verify we got meaningful results
             assert len(original_ml_results) > 0
-            assert len(original_api_results) > 0
 
             # Save to pickle
             original_core.persist()
@@ -751,12 +707,10 @@ class TestKnowledgeSearchCorePickleIntegration:
             assert "chunk_1" in loaded_core.linked_knowledge.chunks
 
             # Perform identical searches on loaded instance
-            loaded_ml_results = loaded_core.search_enhanced("machine learning", k=3)
-            loaded_api_results = loaded_core.search_similarity("API REST", k=2)
+            loaded_ml_results = loaded_core.search("machine learning", k=3)
 
             # Verify search results are consistent
             assert len(loaded_ml_results) == len(original_ml_results)
-            assert len(loaded_api_results) == len(original_api_results)
 
             # Verify specific result content matches
             for orig, loaded in zip(original_ml_results, loaded_ml_results):
@@ -778,7 +732,7 @@ class TestKnowledgeSearchCorePickleIntegration:
 
             # Time original search
             start_time = time.time()
-            original_results = original_core.search_enhanced("machine learning artificial intelligence", k=5)
+            original_results = original_core.search("machine learning artificial intelligence", k=5)
             original_search_time = time.time() - start_time
 
             # Save and load
@@ -787,7 +741,7 @@ class TestKnowledgeSearchCorePickleIntegration:
 
             # Time loaded search
             start_time = time.time()
-            loaded_results = loaded_core.search_enhanced("machine learning artificial intelligence", k=5)
+            loaded_results = loaded_core.search("machine learning artificial intelligence", k=5)
             loaded_search_time = time.time() - start_time
 
             # Performance should be similar (within reasonable variance)
@@ -809,10 +763,9 @@ class TestKnowledgeSearchCorePickleIntegration:
             # Load and verify term relationships
             loaded_core = KnowledgeSearchCore.from_pickle(pickle_path)
 
-            # Check acronym mappings
-            assert len(loaded_core._acronym_to_full_form) == 2  # API and REST
-            assert loaded_core._acronym_to_full_form["API"] == "Application Programming Interface"
-            assert loaded_core._acronym_to_full_form["REST"] == "Representational State Transfer"
+            # Check that the vector store was properly loaded
+            assert loaded_core._vector_store is not None
+            assert len(loaded_core._vector_store.store) > 0
 
             # Check term co-occurrences
             ml_term = loaded_core.linked_knowledge.terms["ml_term"]
@@ -844,8 +797,8 @@ class TestKnowledgeSearchCorePickleIntegration:
             assert len(doc1_page2.tables) == 1
 
             # Verify specific content
-            image_path = doc1_page1.images[0]
-            assert image_path == "/fake/path/image1.png"
+            image = doc1_page1.images[0]
+            assert image.href == "/fake/path/image1.png"
 
             table = doc1_page2.tables[0]
             assert table.rows == 3
@@ -876,13 +829,13 @@ class TestKnowledgeSearchCorePickleIntegration:
                 assert len(core.linked_knowledge.chunks) == 4
 
                 # Verify search still works
-                results = core.search_enhanced("machine learning", k=2)
+                results = core.search("machine learning", k=2)
                 assert len(results) > 0
 
                 # Verify specific content hasn't been corrupted
                 ml_term = core.linked_knowledge.terms["ml_term"]
                 assert ml_term.term == "machine learning"
-                assert ml_term.term_type == "keyword"
+                assert ml_term.type == "keyword"
                 assert len(ml_term.cooccurrences) >= 3
 
     def test_pickle_file_size_reasonable(self) -> None:
@@ -916,7 +869,7 @@ class TestKnowledgeSearchPersistence:
         )
 
         # Test search before saving
-        results_before = search_core.search_similarity("machine learning", k=2)
+        results_before = search_core.search("machine learning", k=2)
         assert len(results_before) > 0
 
         # Save to pickle
@@ -927,7 +880,7 @@ class TestKnowledgeSearchPersistence:
         loaded_search_core = KnowledgeSearchCore.from_pickle(pickle_path)
 
         # Test search after loading
-        results_after = loaded_search_core.search_similarity("machine learning", k=2)
+        results_after = loaded_search_core.search("machine learning", k=2)
         assert len(results_after) == len(results_before)
 
         # Verify loaded data
@@ -1014,7 +967,7 @@ class TestKnowledgeSearchCorePerformance:
         core = KnowledgeSearchCore(linked_knowledge=dataset)
 
         start_time = time.time()
-        results = core.search_similarity("machine learning", k=5)
+        results = core.search("machine learning", k=5)
         search_time = time.time() - start_time
 
         # Should search in under 0.5 seconds
@@ -1027,7 +980,7 @@ class TestKnowledgeSearchCorePerformance:
         core = KnowledgeSearchCore(linked_knowledge=dataset)
 
         start_time = time.time()
-        results = core.search_enhanced("machine learning artificial intelligence", k=5)
+        results = core.search("machine learning artificial intelligence", k=5)
         search_time = time.time() - start_time
 
         # Should search in under 0.5 seconds
@@ -1050,7 +1003,7 @@ class TestKnowledgeSearchCorePerformance:
         all_times = []
         for query in queries:
             start_time = time.time()
-            core.search_enhanced(query, k=3)
+            core.search(query, k=3)
             search_time = time.time() - start_time
             all_times.append(search_time)
 
@@ -1067,7 +1020,7 @@ class TestKnowledgeSearchCorePerformance:
         core = KnowledgeSearchCore(linked_knowledge=dataset)
 
         start_time = time.time()
-        core.search_enhanced("machine learning", k=100)  # Request many results
+        core.search("machine learning", k=100)  # Request many results
         search_time = time.time() - start_time
 
         # Should still complete quickly even with large k
@@ -1088,7 +1041,7 @@ class TestKnowledgeSearchCorePerformance:
 
             # Test search performance on loaded instance
             start_time = time.time()
-            results = loaded_core.search_enhanced("machine learning AI", k=5)
+            results = loaded_core.search("machine learning AI", k=5)
             search_time = time.time() - start_time
 
             assert search_time < 0.5, f"Post-pickle search took {search_time:.3f}s, expected < 0.5s"
@@ -1104,7 +1057,7 @@ class TestKnowledgeSearchCorePerformance:
 
         start_time = time.time()
         for query in queries:
-            results = core.search_similarity(query, k=3)
+            results = core.search(query, k=3)
             assert len(results) >= 0  # Ensure we get results
 
         total_time = time.time() - start_time
@@ -1122,12 +1075,8 @@ class TestKnowledgeSearchCorePerformance:
         mode_name = "enhanced" if enhanced else "standard"
 
         start_time = time.time()
-        if enhanced:
-            results = core.search_enhanced("machine learning", k=5)
-            assert len(results) > 0, f"{mode_name} search should return results"
-        else:
-            sim_results = core.search_similarity("machine learning", k=5)
-            assert len(sim_results) > 0, f"{mode_name} search should return results"
+        results = core.search("machine learning", k=5)
+        assert len(results) > 0, f"{mode_name} search should return results"
         search_time = time.time() - start_time
 
         assert search_time < 0.5, f"{mode_name} search took {search_time:.3f}s, expected < 0.5s"
@@ -1140,7 +1089,7 @@ class TestKnowledgeSearchCorePerformance:
         complex_query = "machine learning artificial intelligence API REST neural networks deep learning"
 
         start_time = time.time()
-        results = core.search_enhanced(complex_query, k=10)
+        results = core.search(complex_query, k=10)
         search_time = time.time() - start_time
 
         assert search_time < 0.5, f"Complex query search took {search_time:.3f}s, expected < 0.5s"

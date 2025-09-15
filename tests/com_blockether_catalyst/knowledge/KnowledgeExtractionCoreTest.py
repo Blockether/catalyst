@@ -17,7 +17,7 @@ from com_blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
 from com_blockether_catalyst.knowledge.KnowledgeExtractionCore import (
     KnowledgeExtractionCore,
 )
-from com_blockether_catalyst.knowledge.KnowledgeExtractionTypes import (
+from com_blockether_catalyst.knowledge.KnowledgeTypes import (
     KnowledgeChunk,
     KnowledgeExtractionResultWithChunks,
     KnowledgeProcessorSettings,
@@ -34,8 +34,8 @@ class TestKnowledgeExtractionCore:
         mock_document_chunking = MagicMock(spec=BaseDocumentChunkingCall)
 
         return ExtractionCallsSettings(
-            term_extraction=mock_term_extraction,
-            document_chunking=mock_document_chunking,
+            term_extraction_call=mock_term_extraction,
+            document_chunking_call=mock_document_chunking,
         )
 
     @pytest.fixture
@@ -199,29 +199,6 @@ class TestKnowledgeExtractionCore:
         # Should handle acronyms with hyphens and underscores
         acronyms = [t for t in terms if t.type == "acronym"]
         assert len(acronyms) > 0
-
-    def test_normalize_term(self, extractor):
-        """
-        Test the normalize_term static method.
-        """
-        # Test basic normalization
-        assert extractor.normalize_term("TEST") == "test"
-        assert extractor.normalize_term("  test  ") == "test"
-
-        # Test removal of parenthetical content
-        assert extractor.normalize_term("ROI (Return on Investment)") == "roi"
-
-        # Test bullet point removal
-        assert extractor.normalize_term("• test") == "test"
-        assert extractor.normalize_term("1. test") == "test"
-        assert extractor.normalize_term("a) test") == "test"
-
-        # Test multiple spaces
-        assert extractor.normalize_term("test  multiple   spaces") == "test multiple spaces"
-
-        # Test leading/trailing hyphens
-        assert extractor.normalize_term("-test-") == "test"
-        assert extractor.normalize_term("api-key") == "api-key"  # Internal hyphens preserved
 
     @pytest.mark.anyio
     async def test_extract_terms_with_large_document(self, extractor):

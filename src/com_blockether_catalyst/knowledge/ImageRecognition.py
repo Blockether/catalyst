@@ -1,5 +1,5 @@
 """
-Image recognition module using MiniCPM-V for visual understanding.
+Image recognition module using OpenAI compatible models for visual understanding.
 
 This module provides image recognition capabilities for knowledge extraction,
 including OCR, visual question answering, and image content understanding.
@@ -22,7 +22,7 @@ class ImageRecognitionSettings(BaseModel):
     """Settings for image recognition."""
 
     base_url: str = Field(
-        default="http://192.168.68.108:1234",
+        default="http://localhost:1234/v1",
         description="Base URL for the OpenAI-compatible server",
     )
     model_id: str = Field(
@@ -61,7 +61,7 @@ class ImageRecognition:
             settings: Configuration settings for image recognition
         """
         self._settings = settings or ImageRecognitionSettings()
-        self._llm: Optional[OpenAI] = OpenAI(api_key=self._settings.api_key, base_url=f"{self._settings.base_url}/v1")
+        self._llm: Optional[OpenAI] = OpenAI(api_key=self._settings.api_key, base_url=self._settings.base_url)
 
     @property
     def settings(self) -> ImageRecognitionSettings:
@@ -145,7 +145,6 @@ class ImageRecognition:
             return text_response
 
         except Exception as e:
-            logger.exception("Failed to generate response from MiniCPM-V")
             raise RuntimeError(f"Failed to generate response: {e}")
 
     def answer_question(self, image: Image.Image, question: str, system_prompt: Optional[str] = None) -> str:

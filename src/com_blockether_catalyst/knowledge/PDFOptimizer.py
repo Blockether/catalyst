@@ -11,11 +11,7 @@ class PDFOptimizer:
 
     DEFAULT_WORKER_COUNT = 4
 
-    def __init__(
-        self,
-        directory: Path,
-        max_workers: Optional[int] = os.cpu_count()
-    ):
+    def __init__(self, directory: Path, max_workers: Optional[int] = os.cpu_count()):
         """
         Initialize the PDFOptimizer.
 
@@ -40,7 +36,7 @@ class PDFOptimizer:
             file_path: Path to the PDF file to optimize
         """
         try:
-            reader =  PdfReader(str(file_path))
+            reader = PdfReader(str(file_path))
             writer = PdfWriter(reader)
 
             for page in writer.pages:

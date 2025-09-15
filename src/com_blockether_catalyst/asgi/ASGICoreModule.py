@@ -4,40 +4,161 @@ ASGI Core Module - Base class for modular ASGI components
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
 
-from .ASGITypes import (
-    HTMXConfig,
-    HTMXRequest,
-    HTMXResponse,
-    StaticMount,
-    TailwindConfig,
-)
+
+class HTMXRequest(BaseModel):
+    """HTMX request information extracted from headers."""
+
+    is_htmx: bool = Field(default=False)
+    target: Optional[str] = None  # HX-Target header
+    trigger: Optional[str] = None  # HX-Trigger header
+    trigger_name: Optional[str] = None  # HX-Trigger-Name header
+    current_url: Optional[str] = None  # HX-Current-URL header
+    prompt: Optional[str] = None  # HX-Prompt header
+    boosted: bool = Field(default=False)  # HX-Boosted header
+
+    @classmethod
+    def from_headers(cls, headers: Dict[str, str]) -> "HTMXRequest":
+        """Create HTMXRequest from request headers."""
+        return cls(
+            is_htmx=headers.get("hx-request", "").lower() == "true",
+            target=headers.get("hx-target"),
+            trigger=headers.get("hx-trigger"),
+            trigger_name=headers.get("hx-trigger-name"),
+            current_url=headers.get("hx-current-url"),
+            prompt=headers.get("hx-prompt"),
+            boosted=headers.get("hx-boosted", "").lower() == "true",
+        )
 
 
-class ASGICoreModule(BaseModel, ABC):
+class HTMXResponse(BaseModel):
+    """HTMX response configuration."""
+
+    push_url: Optional[str] = None  # HX-Push-Url header
+    redirect: Optional[str] = None  # HX-Redirect header
+    refresh: bool = Field(default=False)  # HX-Refresh header
+    replace_url: Optional[str] = None  # HX-Replace-Url header
+    retarget: Optional[str] = None  # HX-Retarget header
+    reswap: Optional[str] = None  # HX-Reswap header
+    trigger: Optional[str] = None  # HX-Trigger header (client-side events)
+    trigger_after_settle: Optional[str] = None  # HX-Trigger-After-Settle
+    trigger_after_swap: Optional[str] = None  # HX-Trigger-After-Swap
+
+    def to_headers(self) -> Dict[str, str]:
+        """Convert to HTTP headers."""
+        headers = {}
+        if self.push_url is not None:
+            headers["HX-Push-Url"] = self.push_url
+        if self.redirect:
+            headers["HX-Redirect"] = self.redirect
+        if self.refresh:
+            headers["HX-Refresh"] = "true"
+        if self.replace_url is not None:
+            headers["HX-Replace-Url"] = self.replace_url
+        if self.retarget:
+            headers["HX-Retarget"] = self.retarget
+        if self.reswap:
+            headers["HX-Reswap"] = self.reswap
+        if self.trigger:
+            headers["HX-Trigger"] = self.trigger
+        if self.trigger_after_settle:
+            headers["HX-Trigger-After-Settle"] = self.trigger_after_settle
+        if self.trigger_after_swap:
+            headers["HX-Trigger-After-Swap"] = self.trigger_after_swap
+        return headers
+
+
+class StaticMount(BaseModel):
+    """Configuration for static file serving."""
+
+    url: str  # URL path like "/static" or "/assets"
+    directory: Path  # Directory containing static files
+    name: Optional[str] = None  # Optional mount name
+    html: bool = False  # Whether to serve HTML files
+
+
+class HTMXConfig(BaseModel):
+    """HTMX-specific configuration for our custom integration."""
+
+    # CDN configuration
+    cdn_enabled: bool = Field(default=True, description="Whether to load HTMX from CDN")
+    cdn_url: str = Field(default="https://cdn.jsdelivr.net/npm/htmx.org@2.0.7/dist/htmx.min.js")
+
+    # Default behaviors
+    default_swap: Literal[
+        "innerHTML",
+        "outerHTML",
+        "beforebegin",
+        "afterbegin",
+        "beforeend",
+        "afterend",
+        "delete",
+        "none",
+    ] = Field(default="innerHTML")
+    default_trigger: str = Field(default="click")
+
+    # Response headers we'll set
+    push_url: bool = Field(default=True)  # Whether to push URL to browser history
+    retarget: bool = Field(default=False)  # Whether to retarget responses
+    reswap: bool = Field(default=False)  # Whether to change swap behavior
+
+    # Common trigger patterns (for reference/documentation)
+    trigger_patterns: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "search": "keyup changed delay:500ms",
+            "filter": "change",
+            "lazy": "revealed",
+            "poll": "every 2s",
+        }
+    )
+
+    # Extension URLs (if needed)
+    extensions: List[str] = Field(default_factory=list)
+
+
+class TailwindConfig(BaseModel):
+    """Tailwind CSS configuration."""
+
+    cdn_enabled: bool = Field(default=True, description="Whether to load Tailwind CSS from CDN")
+    cdn_url: str = Field(default="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4")
+    custom_css: List[str] = Field(default_factory=list)
+
+
+class ASGIModuleExtensionsConfig(BaseModel):
+    """Configuration for ASGI module extensions."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    tailwind: Optional[TailwindConfig] = Field(default=None, description="Tailwind CSS configuration")
+    htmx: Optional[HTMXConfig] = Field(default=None, description="HTMX configuration")
+
+
+class ASGIModuleConfig(BaseModel):
     """Base class for ASGI modules that can be mounted to ASGICoreApplication."""
 
     # Pydantic fields with proper typing and defaults
     prefix: str = Field(default="", description="URL prefix for this module (e.g., '/knowledge')")
-    title: Optional[str] = Field(default=None, description="Module title")
-    description: Optional[str] = Field(default=None, description="Module description")
-    template_dirs: List[Path] = Field(default_factory=list, description="Template directories for this module")
-    static_mounts: List[StaticMount] = Field(default_factory=list, description="Static file mounts for this module")
-    htmx_enabled: bool = Field(default=False, description="Whether HTMX is enabled for this module")
-    htmx_config: HTMXConfig = Field(default_factory=HTMXConfig, description="HTMX configuration")
-    tailwind_config: TailwindConfig = Field(default_factory=TailwindConfig, description="Tailwind CSS configuration")
+    title: str = Field(description="Module title")
+    description: str = Field(description="Module description")
 
-    # Non-serialized fields (excluded from Pydantic serialization)
-    templates: Optional[Jinja2Templates] = Field(default=None, exclude=True)
-
+    statics: List[StaticMount] = Field(default_factory=list, description="Static file mounts for this module")
+    templates: Optional[Jinja2Templates] = Field(description="Jinja2 templates for this module")
+    extensions: Optional[ASGIModuleExtensionsConfig] = Field(
+        default=None,
+        description="Optional extensions configuration",
+    )
     # Pydantic configuration
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class ASGICoreModule(ASGIModuleConfig, ABC):
+    """Base class for ASGI modules that can be mounted to ASGICoreApplication."""
 
     def model_post_init(self, __context: Any) -> None:
         """Post-initialization to set up computed fields and templates."""
@@ -49,33 +170,15 @@ class ASGICoreModule(BaseModel, ABC):
         if self.description is None:
             self.description = f"{self.title} Module"
 
-        # Setup templates if configured
-        self._setup_templates()
-
-    def _setup_templates(self) -> None:
-        """Set up template engine if configured."""
-        if self.template_dirs:
-            # Use the first template directory as the main one
-            self.templates = Jinja2Templates(directory=str(self.template_dirs[0]))
-
     @abstractmethod
-    def setup_routes(self, router: APIRouter) -> None:
-        """Set up module-specific routes.
+    def mount(self, app: FastAPI, router: APIRouter) -> None:
+        """Mount the ASGI application to the main FastAPI app.
 
-        This method must be implemented by subclasses to define their routes.
-        The router provided will already have the module prefix applied.
+        This method is called to integrate the module's routes and functionality
+        into the main application.
 
-        Args:
-            router: The APIRouter instance to add routes to
-
-        Example:
-            @router.get("/")
-            async def index():
-                return {"message": "Hello from module"}
         """
         pass
-
-    # HTMX Helper Methods
 
     def get_htmx_request(self, request: Request) -> HTMXRequest:
         """Extract HTMX information from request headers.
@@ -163,25 +266,27 @@ class ASGICoreModule(BaseModel, ABC):
         if not self.templates:
             raise RuntimeError("Templates not configured for this module")
 
-        # Add request to context if provided
+        if self.extensions:
+            if self.extensions.htmx:
+                context["htmx_config"] = self.extensions.htmx
+
+            if self.extensions.tailwind:
+                context["tailwind_config"] = self.extensions.tailwind
+
+        # Add request to context (required for TemplateResponse)
         if request:
             context["request"] = request
-
-        # Add HTMX config to context if enabled
-        if self.htmx_enabled:
-            context["htmx_config"] = self.htmx_config
-            context["htmx_cdn_url"] = self.htmx_config.cdn_url
-
-        # Add Tailwind config to context
-        if self.tailwind_config.cdn_enabled:
-            context["tailwind_cdn_url"] = self.tailwind_config.cdn_url
 
         # Add module info to context
         context["module_prefix"] = self.prefix
         context["module_title"] = self.title
 
-        # Render template
-        html = self.templates.TemplateResponse(name, context)
+        # Render template with new API (request as first parameter)
+        if request:
+            html = self.templates.TemplateResponse(request, name, context)
+        else:
+            # Fallback to old API if no request provided (will show deprecation warning)
+            html = self.templates.TemplateResponse(name, context)
 
         # Add HTMX headers if provided
         if htmx_headers:

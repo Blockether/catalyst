@@ -11,6 +11,7 @@ import re
 import shutil
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
 from typing import (
@@ -28,35 +29,39 @@ from typing import (
     cast,
 )
 
+import anyio
 import numpy as np
+import trio
 from pydantic import BaseModel, RootModel
 from rapidfuzz import fuzz
-from sklearn.feature_extraction.text import CountVectorizer
+
+from com_blockether_catalyst.consensus.ConsensusTypes import ConsensusResult
 
 from ..utils import ConcurrentProcessor
 from .ImageOptimizer import ImageOptimizer
 from .KnowledgeExtractionCallBase import ExtractionCallsSettings
-from .KnowledgeExtractionTypes import (
+from .KnowledgeSearchCore import KnowledgeSearchCore
+from .KnowledgeTypes import (
     DocumentMetadata,
     KnowledgeChunk,
-    KnowledgeChunkWithTerms,
     KnowledgeExtractionItem,
     KnowledgeExtractionOutput,
     KnowledgeExtractionResult,
     KnowledgeExtractionResultWithChunks,
-    KnowledgeMetadata,
     KnowledgePageData,
     KnowledgeProcessorSettings,
     LinkedKnowledge,
+    RawExtractionData,
     Term,
     TermCandidate,
     TermCandidateGrouped,
     TermCooccurrence,
     TermLink,
+    TermMeaningExtractionResponse,
     TermOccurrence,
     TermWithLinks,
 )
-from .KnowledgeSearchCore import KnowledgeSearchCore
+from .KnowledgeVectorizers import KnowledgeVectorizers
 from .PDFKnowledgeExtractor import PDFKnowledgeExtractor
 
 logger = logging.getLogger(__name__)
@@ -124,7 +129,15 @@ def async_timed_operation(
 
 
 class KnowledgeExtractionCore:
-    """Core knowledge extraction system"""
+    """Core knowledge extraction system for processing documents and extracting structured knowledge.
+
+    This class orchestrates the entire knowledge extraction pipeline including:
+    - Document parsing and chunking
+    - Term and acronym extraction
+    - Co-occurrence analysis
+    - Term linking and relationship building
+    - Search index creation
+    """
 
     def __init__(self, calls: ExtractionCallsSettings, settings: KnowledgeProcessorSettings):
         self.calls = calls
@@ -150,10 +163,6 @@ class KnowledgeExtractionCore:
         # Define extractors for each supported extension
         self.extractors = {".pdf": PDFKnowledgeExtractor(image_output_dir, self._settings)}
 
-        # Future: Add more extractors here
-        # ".docx": self.docx_extractor
-        # ".txt": self.txt_extractor
-
     EMOJI_PATTERN = re.compile(
         "["
         "\U0001f600-\U0001f64f"  # emoticons
@@ -169,48 +178,15 @@ class KnowledgeExtractionCore:
         flags=re.UNICODE,
     )
 
-    @staticmethod
-    def normalize_term(term: str) -> str:
-        """
-        Normalize a term by lowercasing and removing unwanted characters.
+    def _resolve_glob_patterns(self, globs: list[str]) -> list[Path]:
+        """Resolve glob patterns to actual file paths.
 
         Args:
-            term: The term to normalize
+            globs: List of glob patterns (e.g., '*.pdf', 'docs/**/*.txt')
 
         Returns:
-            Normalized term text
+            List of resolved file paths matching the patterns
         """
-        # Convert to lowercase
-        normalized = term.lower()
-
-        # Remove emojis using pre-compiled pattern
-        normalized = KnowledgeExtractionCore.EMOJI_PATTERN.sub("", normalized)
-
-        # Remove parenthetical content (e.g., "ROI (Return on Investment)" -> "ROI")
-        normalized = re.sub(r"\s*\([^)]*\)", "", normalized)
-
-        # Remove bullets and list markers - keep applying until no more markers found
-        # This handles cases like "1. • text" where multiple markers are present
-        previous = ""
-        while previous != normalized:
-            previous = normalized
-            normalized = re.sub(r"^[\s]*[-•·*▪▸◦‣⁃]\s*", "", normalized)  # Unordered list markers
-            normalized = re.sub(r"^[\s]*\d+[.)]\s*", "", normalized)  # Ordered list markers (1. or 1))
-            normalized = re.sub(r"^[\s]*[a-z][.)]\s*", "", normalized)  # Lettered lists (a. or a))
-            normalized = re.sub(r"^[\s]*[ivxlcdm]+[.)]\s*", "", normalized)  # Roman numerals
-
-        # Remove multiple spaces and newlines
-        normalized = re.sub(r"\s+", " ", normalized)
-
-        # Remove trailing and leading hyphens (but keep internal hyphens like in "API-KEY")
-        normalized = normalized.strip("-")
-
-        # Strip leading/trailing whitespace
-        normalized = normalized.strip()
-
-        return normalized
-
-    def _resolve_glob_patterns(self, globs: list[str]) -> list[Path]:
         all_files: Set[Path] = set()
 
         for pattern in globs:
@@ -221,14 +197,13 @@ class KnowledgeExtractionCore:
         return list(all_files)
 
     def _group_files_by_extension(self, files: list[Path]) -> dict[str, list[Path]]:
-        """
-        Group files by their extension.
+        """Group files by their extension for batch processing.
 
         Args:
             files: Sequence of file paths
 
         Returns:
-            Dictionary mapping extension to list of file paths
+            Dictionary mapping extension (e.g., '.pdf') to list of file paths
         """
         files_by_extension = defaultdict(list)
         for file_path in files:
@@ -240,14 +215,13 @@ class KnowledgeExtractionCore:
 
     @timed_operation("Step 1/12: Raw file extraction")
     def _process_files_by_extension(self, files_by_extension: dict[str, list[Path]]) -> KnowledgeExtractionOutput:
-        """
-        Process files grouped by extension and return extraction output.
+        """Process files in parallel, grouped by extension for optimal performance.
 
         Args:
             files_by_extension: Dictionary mapping file extensions to lists of file paths
 
         Returns:
-            KnowledgeExtractionOutput with extraction results
+            KnowledgeExtractionOutput containing raw extraction results from all files
         """
         # Initialize extraction output
         extraction_output = KnowledgeExtractionOutput()
@@ -263,27 +237,37 @@ class KnowledgeExtractionCore:
             extractor = self.extractors[extension]
             extraction_results: list[KnowledgeExtractionItem] = []
 
-            for file_path in file_list:
+            max_workers = min(os.cpu_count() or 4, len(file_list)) if len(file_list) > 0 else 1
+
+            def process_single_file(file_path: Path) -> KnowledgeExtractionItem:
+                """Process a single file and return extraction item."""
                 logger.info(f"Processing: {file_path}")
                 single_result = extractor.extract(file_path)
-                extraction_item = KnowledgeExtractionItem(result=single_result)
-                extraction_results.append(extraction_item)
+                return KnowledgeExtractionItem(result=single_result)
 
-            # Store results based on extension
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks
+                future_to_file = {executor.submit(process_single_file, file_path): file_path for file_path in file_list}
+
+                # Collect results as they complete
+                for future in as_completed(future_to_file):
+                    file_path = future_to_file[future]
+                    try:
+                        extraction_item = future.result()
+                        extraction_results.append(extraction_item)
+                    except Exception as exc:
+                        logger.error(f"File {file_path} generated an exception: {exc}")
+
             if extension == ".pdf":
                 extraction_output.pdf = extraction_results
-            # Future: Add more result storage here
-            # elif extension == ".docx":
-            #     extraction_output.docx = extraction_results
 
         return extraction_output
 
     def _count_total_chunks(self, results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks]) -> int:
-        """
-        Count the total number of chunks in the extraction output.
+        """Count total chunks across all documents for progress tracking.
 
         Args:
-            extraction_output_with_chunks: The chunked extraction output
+            results_with_chunks: Chunked extraction results
 
         Returns:
             Total number of chunks across all documents
@@ -296,14 +280,13 @@ class KnowledgeExtractionCore:
     def _build_document_chunk_index(
         self, results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks]
     ) -> Dict[str, Sequence[KnowledgeChunk]]:
-        """
-        Build index for efficient chunk lookup: document_id -> chunks.
+        """Build document-to-chunks index for O(1) chunk lookups.
 
         Args:
-            extraction_output_with_chunks: The chunked extraction output
+            results_with_chunks: Chunked extraction results
 
         Returns:
-            Dictionary mapping document IDs to their chunks
+            Dictionary mapping document IDs to their chunks for efficient access
         """
         chunks_index: Dict[str, Sequence[KnowledgeChunk]] = {}
 
@@ -317,21 +300,19 @@ class KnowledgeExtractionCore:
         grouped_terms: Dict[str, TermCandidateGrouped],
         chunks_index: Dict[str, Sequence[KnowledgeChunk]],
     ) -> Dict[Tuple[str, int], Dict[str, Sequence[int]]]:
-        """
-        Build an index of which keywords appear in which chunks with their positions.
+        """Build inverted index of term positions within chunks for co-occurrence analysis.
 
         Args:
-            grouped_keywords: Dictionary of grouped keywords
+            grouped_terms: Dictionary of grouped term candidates
             chunks_index: Pre-built index mapping document IDs to chunks
 
         Returns:
-            Dictionary mapping (document_id, chunk_index) to dict of keywords with their positions
+            Dictionary mapping (document_id, chunk_index) to term positions
         """
         chunk_terms_index: Dict[Tuple[str, int], Dict[str, Sequence[int]]] = defaultdict(lambda: defaultdict(list))
 
         for term, group in grouped_terms.items():
             for occurrence in group.occurrences:
-                # Use the pre-built chunks_index for efficient lookup
                 if occurrence.document_id in chunks_index:
                     for chunk in chunks_index[occurrence.document_id]:
                         positions = self._find_term_positions_in_text(term, chunk.text)
@@ -341,18 +322,16 @@ class KnowledgeExtractionCore:
         return chunk_terms_index
 
     def _find_term_positions_in_text(self, term: str, text: str) -> Sequence[int]:
-        """
-        Find all positions where a term appears as a whole word in the text.
+        """Find all word-boundary positions of a term in text.
 
         Args:
-            term: The term to search for
+            term: The term to search for (case-insensitive)
             text: The text to search in
 
         Returns:
-            Sequence of character positions where the term starts
+            List of character positions where the term starts as a whole word
         """
         positions = []
-        # Use word boundary regex to match exact terms only
         pattern = r"\b" + re.escape(term.lower()) + r"\b"
         text_lower = text.lower()
 
@@ -362,32 +341,25 @@ class KnowledgeExtractionCore:
         return positions
 
     def _calculate_cooccurrence_weight(self, positions1: Sequence[int], positions2: Sequence[int]) -> float:
-        """
-        Calculate the weighted cooccurrence score based on minimum distance between term positions.
+        """Calculate proximity-based weight for term co-occurrence using exponential decay.
 
         Args:
-            positions1: Sequence of positions for first term
-            positions2: Sequence of positions for second term
+            positions1: Character positions of first term
+            positions2: Character positions of second term
 
         Returns:
-            Weighted cooccurrence score (higher = closer terms)
+            Weight between 0.1 and 1.0 (higher = closer proximity)
         """
         if not positions1 or not positions2:
             return 0.0
 
-        # Find the minimum distance between any pair of positions
         min_distance = float("inf")
         for pos1 in positions1:
             for pos2 in positions2:
                 distance = abs(pos1 - pos2)
                 min_distance = min(min_distance, distance)
 
-        # Convert distance to weight using exponential decay
-        # Weight = e^(-distance/100) where distance is in characters
-        # This gives high weight to close terms, low weight to distant terms
         weight = math.exp(-min_distance / 100.0)
-
-        # Ensure minimum weight for same-chunk cooccurrence
         return max(weight, 0.1)
 
     @async_timed_operation("Knowledge Extraction Pipeline")
@@ -403,22 +375,17 @@ class KnowledgeExtractionCore:
         """
         logger.info(f"Starting with {len(globs)} glob patterns")
 
-        # Resolve all glob patterns to actual file paths
         all_files = self._resolve_glob_patterns(globs)
         logger.info(f"Found {len(all_files)} files from glob patterns")
 
-        # Group files by extension
         files_by_extension = self._group_files_by_extension(all_files)
         logger.info(f"Grouped files by extension: {dict((k, len(v)) for k, v in files_by_extension.items())}")
 
-        # Step 1: Process files and get extraction output
         raw_extraction = self._process_files_by_extension(files_by_extension)
         logger.info(f"Raw extraction completed: {raw_extraction.model_dump().keys()} documents")
 
-        # Persist raw extraction results
         self._save_pickle("1_raw_extraction", raw_extraction)
 
-        # Step 2: Chunk the documents and persist the results
         results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks] = await self._chunk_extraction(
             raw_extraction
         )
@@ -427,7 +394,6 @@ class KnowledgeExtractionCore:
 
         self._save_pickle("2_chunked_documents", results_with_chunks)
 
-        # Build chunks index for efficient lookup across all steps
         document_to_chunks_index: Dict[str, Sequence[KnowledgeChunk]] = self._build_document_chunk_index(
             results_with_chunks
         )
@@ -446,45 +412,39 @@ class KnowledgeExtractionCore:
         logger.info(f"Added co-occurrences to {len(terms_with_cooccurrences)} terms")
         self._save_pickle("5_terms_with_cooccurrences", terms_with_cooccurrences)
 
-        # Now validate and extract full forms for terms
         consolidated_terms = await self._enrich_with_terms_meanings(terms_with_cooccurrences, document_to_chunks_index)
         self._save_pickle("6_terms_with_meanings", consolidated_terms)
 
         consolidated_terms_with_links = self._link_terms(consolidated_terms)
         self._save_pickle("7_terms_with_links", consolidated_terms_with_links)
 
-        # Build final LinkedKnowledge object
-        linked_knowledge = self._build_linked_knowledge(
+        logger.info("Step 8/12: Building LinkedKnowledge from extraction data")
+        raw_data = RawExtractionData(
             results_with_chunks=results_with_chunks,
             terms=consolidated_terms_with_links,
             document_to_chunks_index=document_to_chunks_index,
         )
+        linked_knowledge = LinkedKnowledge.from_extraction_data(raw_data)
 
-        # Serialize to pickle file
         self._save_pickle("linked_knowledge", linked_knowledge)
 
-        # Step 10: Optimize extracted images
-        logger.info("Step 10/12: Optimizing extracted images")
+        logger.info("Step 9/12: Optimizing extracted images")
         self._image_optimizer.optimize()
 
-        # Copy source documents to output directory
         self._copy_source_documents(all_files)
 
-        # Step 11: Create and persist KnowledgeSearchCore
-        logger.info("Step 12/12: Creating KnowledgeSearchCore with vector indices")
+        logger.info("Step 10/12: Creating KnowledgeSearchCore with vector indices")
         search_core = KnowledgeSearchCore(
             linked_knowledge=linked_knowledge,
             pickle_path=self._output_dir / "knowledge_search.pkl",
         )
 
-        # Step 11: Persist the search core
         logger.info("Step 11/12: Persisting KnowledgeSearchCore to pickle")
         search_core.persist()
 
         pickle_size_mb = (self._output_dir / "knowledge_search.pkl").stat().st_size / (1024 * 1024)
         logger.info(f"KnowledgeSearchCore saved ({pickle_size_mb:.2f} MB)")
 
-        # Step 12: Final summary
         logger.info("Step 12/12: Knowledge extraction pipeline completed successfully")
         logger.info(
             f"Processed {len(linked_knowledge.documents)} documents with {linked_knowledge.total_chunks} chunks"
@@ -535,102 +495,6 @@ class KnowledgeExtractionCore:
         # Log summary
         logger.info(f"Document copying completed: {copied_count} files copied to {docs_dir}")
 
-    @timed_operation("Step 8/12: Build LinkedKnowledge")
-    def _build_linked_knowledge(
-        self,
-        results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks],
-        terms: Dict[str, TermWithLinks],
-        document_to_chunks_index: Dict[str, Sequence[KnowledgeChunk]],
-    ) -> LinkedKnowledge:
-        documents: Dict[str, DocumentMetadata] = {}
-        pages_index: Dict[Tuple[str, int], KnowledgePageData] = {}
-
-        # Build search indices
-        (
-            term_to_documents_index,
-            document_to_terms_index,
-            chunks,
-            document_to_chunk_ids_index,
-            document_page_to_chunks_index,
-        ) = self._build_search_indices(terms, document_to_chunks_index)
-
-        for result in results_with_chunks:
-            # Build pages index
-            for page in result.pages:
-                # Create page key: (document_id, page_number) tuple
-                page_key = (result.id, page.page)
-
-                # Store page without raw_text in the pages index
-                page_data = KnowledgePageData(
-                    page=page.page,
-                    text=page.text,
-                    tables=page.tables,
-                    images=page.images,
-                )
-                pages_index[page_key] = page_data
-
-            # Calculate total tables from pages
-            total_tables = sum(len(page.tables) for page in result.pages)
-
-            # We'll calculate term counts later after building indices
-            documents[result.id] = DocumentMetadata(
-                document_id=result.id,
-                filename=result.filename,
-                total_pages=len(result.pages),
-                total_chunks=result.total_chunks,
-                total_terms=0,  # Will be updated below
-                total_acronyms=0,  # Will be updated below
-                total_keywords=0,  # Will be updated below
-                total_tables=total_tables,
-            )
-
-        # Build inverted indices for term-to-chunk lookups
-        term_to_chunks_index, term_to_document_with_page_index = self._build_inverted_indices(terms)
-
-        # Update document metadata with actual term counts
-        for doc_id in documents:
-            # Get all terms for this document
-            doc_terms = document_to_terms_index.get(doc_id, set())
-
-            # Count acronyms and keywords for this document
-            acronyms_count = 0
-            keywords_count = 0
-
-            for term_key in doc_terms:
-                if term_key in terms:
-                    term = terms[term_key]
-                    if term.type == "acronym":
-                        acronyms_count += 1
-                    elif term.type == "keyword":
-                        keywords_count += 1
-
-            # Update the document metadata
-            documents[doc_id].total_terms = len(doc_terms)
-            documents[doc_id].total_acronyms = acronyms_count
-            documents[doc_id].total_keywords = keywords_count
-
-        # Calculate total statistics across all documents
-        total_acronyms_count = sum(1 for term in terms.values() if term.type == "acronym")
-        total_keywords_count = sum(1 for term in terms.values() if term.type == "keyword")
-        total_chunks_count = sum(len(chunk_ids) for chunk_ids in document_to_chunk_ids_index.values())
-
-        # Create and return LinkedKnowledge object with all indices
-        return LinkedKnowledge(
-            documents=documents,
-            pages=pages_index,
-            terms=terms,
-            chunks=chunks,
-            document_to_chunk_ids_index=document_to_chunk_ids_index,
-            document_page_to_chunks_index=document_page_to_chunks_index,
-            term_to_chunks_index=term_to_chunks_index,
-            term_to_document_with_page_index=term_to_document_with_page_index,
-            term_to_documents_index=term_to_documents_index,
-            document_to_terms_index=document_to_terms_index,
-            total_acronyms=total_acronyms_count,
-            total_keywords=total_keywords_count,
-            total_chunks=total_chunks_count,
-        )
-
     async def _extract_terms_from_document(
         self, document_result: KnowledgeExtractionResultWithChunks
     ) -> Sequence[TermCandidate]:
@@ -651,44 +515,25 @@ class KnowledgeExtractionCore:
         keywords_min_df = min(self._settings.keywords_min_df, len(chunk_texts))
         acronyms_min_df = min(self._settings.acronyms_min_df, len(chunk_texts))
 
-        # Create vectorizer for this document
-        tfidf_counter_keywords = CountVectorizer(
-            stop_words="english",
-            strip_accents="ascii",
-            ngram_range=(2, 3),
-            min_df=keywords_min_df,
-            analyzer="word",
-            dtype=np.int64,
-        )
-
-        # Create vectorizer for this document - using simple pattern for acronyms (2+ consecutive capitals)
-        tfidf_counter_acronyms = CountVectorizer(
-            stop_words=None,
-            strip_accents="ascii",
-            ngram_range=(1, 1),
-            min_df=acronyms_min_df,
-            token_pattern=r"\b[A-Z]{2,}[_/-]?[A-Z]*\b",
-            lowercase=False,
-            dtype=np.int64,
-        )
+        vectorizers = KnowledgeVectorizers(keywords_min_df=keywords_min_df, acronyms_min_df=acronyms_min_df)
 
         # Check if chunk_texts are empty or only contain stop words
         if not chunk_texts or all(not text.strip() for text in chunk_texts):
-            logger.warning(f"Document {document_result.filename} has no valid chunk texts")
+            logger.warning(f"Document {document_result.document_filename} has no valid chunk texts")
             return []
 
         # Extract keywords and acronyms from chunks
-        tfidf_keywords_matrix = tfidf_counter_keywords.fit_transform(chunk_texts)
-        keywords = tfidf_counter_keywords.get_feature_names_out()
+        tfidf_keywords_matrix = vectorizers.keywords_vectorizer.fit_transform(chunk_texts)
+        keywords = vectorizers.keywords_vectorizer.get_feature_names_out()
         keywords_scores_matrix = tfidf_keywords_matrix.toarray()  # type: ignore
 
-        tfidf_acronyms_matrix = tfidf_counter_acronyms.fit_transform(chunk_texts)
-        acronyms = tfidf_counter_acronyms.get_feature_names_out()
+        tfidf_acronyms_matrix = vectorizers.acronyms_vectorizer.fit_transform(chunk_texts)
+        acronyms = vectorizers.acronyms_vectorizer.get_feature_names_out()
         acronyms_scores_matrix = tfidf_acronyms_matrix.toarray()  # type: ignore
 
         # Check if no features were extracted at all
         if keywords_scores_matrix.shape[1] == 0 and acronyms_scores_matrix.shape[1] == 0:
-            logger.warning(f"No keywords or acronyms found in document {document_result.filename}")
+            logger.warning(f"No keywords or acronyms found in document {document_result.document_filename}")
             return []
 
         # Extract keywords for each chunk
@@ -703,8 +548,8 @@ class KnowledgeExtractionCore:
                     if score > 0:  # Only add non-zero scores
                         keyword_candidates.append(
                             TermCandidate(
-                                term=self.normalize_term(keywords[keyword_idx]),
-                                document_name=document_result.filename,
+                                term=LinkedKnowledge._normalize_term(keywords[keyword_idx]),
+                                document_filename=document_result.document_filename,
                                 document_id=document_result.id,
                                 total=score,
                                 page=chunk.page,
@@ -718,11 +563,11 @@ class KnowledgeExtractionCore:
                 chunk_scores_acronyms = acronyms_scores_matrix[chunk_idx]
                 # Create acronym candidates for this chunk
                 for acronym_idx, score in enumerate(chunk_scores_acronyms):
-                    if score > 0:  # Only add non-zero scores
+                    if score > 0:
                         acronyms_candidates.append(
                             TermCandidate(
-                                term=self.normalize_term(acronyms[acronym_idx]),
-                                document_name=document_result.filename,
+                                term=LinkedKnowledge._normalize_term(acronyms[acronym_idx]).upper(),
+                                document_filename=document_result.document_filename,
                                 document_id=document_result.id,
                                 total=score,
                                 page=chunk.page,
@@ -755,7 +600,7 @@ class KnowledgeExtractionCore:
 
         # Create ConcurrentProcessor for concurrent document processing
         processor = ConcurrentProcessor[KnowledgeExtractionResultWithChunks, TermCandidate](
-            concurrency=5,
+            concurrency=10,
             max_retries=3,
         )
 
@@ -763,7 +608,7 @@ class KnowledgeExtractionCore:
         async def extract_terms_from_document(
             document_result: KnowledgeExtractionResultWithChunks,
         ) -> list[TermCandidate]:
-            logger.info(f"Extracting terms from document: {document_result.filename}")
+            logger.info(f"Extracting terms from document: {document_result.document_filename}")
             doc_terms = await self._extract_terms_from_document(document_result)
             return list(doc_terms)
 
@@ -801,7 +646,7 @@ class KnowledgeExtractionCore:
 
             occurrence = TermOccurrence(
                 document_id=candidate.document_id,
-                document_name=candidate.document_name,
+                document_name=candidate.document_filename,
                 page=candidate.page,
                 chunk_index=candidate.chunk,
                 total=candidate.total,
@@ -820,7 +665,7 @@ class KnowledgeExtractionCore:
     ) -> Dict[str, Term]:
         # Create BatchProcessor for concurrent term validation
         processor = ConcurrentProcessor[TermCandidateGrouped, Term](
-            concurrency=5,
+            concurrency=10,
             max_retries=3,
         )
 
@@ -848,7 +693,7 @@ class KnowledgeExtractionCore:
                     ]
                     cooccurring_terms[cooccurrence.term].extend(contexts)
 
-            response = await self.calls.term_extraction_call.execute(
+            response: ConsensusResult[TermMeaningExtractionResponse] = await self.calls.term_extraction_call.execute(
                 term=item.term,
                 type=item.type,
                 occurrences_contexts=occurrences_contexts,
@@ -856,7 +701,8 @@ class KnowledgeExtractionCore:
             )
 
             unwrapped_result = response.final_response
-            if not unwrapped_result or unwrapped_result.type == "unimportant":
+
+            if not unwrapped_result or unwrapped_result.meaning_status == "unknown":
                 logger.warning(f"Term extraction failed or invalid for term: {item.term}")
                 return None
 
@@ -890,7 +736,7 @@ class KnowledgeExtractionCore:
         pages: Sequence[KnowledgePageData],
         document_name: str,
         document_id: str,
-        metadata: KnowledgeMetadata,
+        metadata: DocumentMetadata,
     ) -> Sequence[KnowledgeChunk]:
         """
         Process pages asynchronously in batches to extract chunks.
@@ -907,7 +753,7 @@ class KnowledgeExtractionCore:
         """
         # Create ConcurrentProcessor with retry logic
         processor = ConcurrentProcessor[KnowledgePageData, KnowledgeChunk](
-            concurrency=5,  # Process 5 pages concurrently
+            concurrency=10,
             max_retries=3,
         )
 
@@ -936,7 +782,7 @@ class KnowledgeExtractionCore:
         page: KnowledgePageData,
         document_name: str,
         document_id: str,
-        metadata: KnowledgeMetadata,
+        metadata: DocumentMetadata,
     ) -> Sequence[KnowledgeChunk]:
         """
         Wrapper to process a single page and append results to shared list.
@@ -958,7 +804,7 @@ class KnowledgeExtractionCore:
                 document_name=document_name,
                 doc_id="",
                 index=0,
-                text=chunk_decision.root.strip(),
+                text=chunk_decision.text.strip(),
                 page=page.page,
             )
             chunks.append(chunk)
@@ -971,11 +817,12 @@ class KnowledgeExtractionCore:
     ) -> Sequence[KnowledgeExtractionResultWithChunks]:
         """
         Efficient chunking using the DocumentChunkingStrategy that processes 2 pages at once with AI.
+        Now processes multiple documents in parallel using anyio for better performance.
         """
         chunked_results: list[KnowledgeExtractionResultWithChunks] = []
 
         # Iterate over all document types in the extraction output
-        for attr_name, field_info in raw_extraction.model_fields.items():
+        for attr_name, _ in type(raw_extraction).model_fields.items():
             try:
                 extraction_items = getattr(raw_extraction, attr_name)
             except AttributeError:
@@ -984,155 +831,57 @@ class KnowledgeExtractionCore:
             if extraction_items is None or not isinstance(extraction_items, list):
                 continue
 
+            # Collect all valid items for parallel processing
+            valid_items = []
             for item in extraction_items:
-                if item.result is None:
-                    continue
+                if item.result is not None:
+                    valid_items.append(item)
 
-                result = cast(KnowledgeExtractionResult, item.result)
+            if not valid_items:
+                continue
 
-                # Use the _chunk_extraction_pages method to chunk all pages
-                chunks = await self._chunk_extraction_pages(
-                    pages=result.pages,
-                    document_name=result.filename,
-                    document_id=result.id,
-                    metadata=result.metadata,
-                )
+            # Process all documents concurrently using anyio task group
+            logger.info(f"Processing {len(valid_items)} documents in parallel")
 
-                # Create chunked result for this document
-                chunked_result = KnowledgeExtractionResultWithChunks(
-                    filename=result.filename,
-                    id=result.id,
-                    source_type=result.source_type,
-                    metadata=result.metadata,
-                    pages=result.pages,
-                    total_pages=result.total_pages,
-                    raw=result.raw,
-                    chunks=chunks,
-                    total_chunks=len(chunks),
-                )
+            document_chunks_list = await self._extract_chunks_from_document(valid_items)
 
-                chunked_results.append(chunked_result)
-
-                logger.info(
-                    f"[{result.filename}] Created {len(chunks)} efficient semantic chunks using 2-page batching"
-                )
+            chunked_results.extend(document_chunks_list)
 
         return chunked_results
 
-    def _build_inverted_indices(
-        self, terms: Dict[str, TermWithLinks]
-    ) -> Tuple[Dict[str, Set[Tuple[str, int]]], Dict[str, Set[Tuple[str, int]]]]:
-        """
-        Build inverted indices for O(1) term lookups.
+    async def _extract_chunks_from_document(
+        self, items: List[KnowledgeExtractionItem]
+    ) -> List[KnowledgeExtractionResultWithChunks]:
+        document_chunks_list: list[KnowledgeExtractionResultWithChunks] = []
 
-        Args:
-            terms: Dictionary of all terms (keywords and acronyms)
+        for item in items:
+            result = await self._chunk_document_data(item)
+            document_chunks_list.append(result)
 
-        Returns:
-            Tuple of (term_to_chunks_index, term_to_document_with_page_index)
-        """
-        from collections import defaultdict
+        return document_chunks_list
 
-        term_to_chunks: Dict[str, Set[Tuple[str, int]]] = defaultdict(set)
-        term_to_document_with_page: Dict[str, Set[Tuple[str, int]]] = defaultdict(set)
+    async def _chunk_document_data(self, item):
+        result = cast(KnowledgeExtractionResult, item.result)
 
-        # Build inverted indices from term occurrences
-        for term_name, term_data in terms.items():
-            # Normalize the term name for consistent lookups
-            normalized_term = self.normalize_term(term_name)
+        # Use the _chunk_extraction_pages method to chunk all pages
+        chunks = await self._chunk_extraction_pages(
+            pages=result.pages,
+            document_name=result.document_filename,
+            document_id=result.id,
+            metadata=result.document_metadata,
+        )
 
-            # Add all occurrences for this term
-            for occurrence in term_data.occurrences:
-                # Add to chunks index
-                term_to_chunks[normalized_term].add((occurrence.document_id, occurrence.chunk_index))
-                # Add to document-page index
-                term_to_document_with_page[normalized_term].add((occurrence.document_id, occurrence.page))
-
-        # Convert defaultdicts to regular dicts for serialization
-        return dict(term_to_chunks), dict(term_to_document_with_page)
-
-    def _build_search_indices(
-        self,
-        terms: Dict[str, TermWithLinks],
-        document_chunks: Dict[str, Sequence[KnowledgeChunk]],
-    ) -> Tuple[
-        Dict[str, Set[str]],
-        Dict[str, Set[str]],
-        Dict[str, KnowledgeChunkWithTerms],
-        Dict[str, Set[str]],
-        Dict[Tuple[str, int], Set[str]],
-    ]:
-        """
-        Build search indices for fast lookup operations.
-
-        Args:
-            terms: Dictionary of all terms (keywords and acronyms)
-            document_chunks: Dictionary mapping document IDs to chunks
-
-        Returns:
-            Tuple of (term_to_documents_index, document_to_terms_index,
-                     chunks, document_to_chunk_ids_index, document_page_to_chunks_index)
-        """
-        from collections import defaultdict
-
-        term_to_documents_index: Dict[str, Set[str]] = defaultdict(set)
-        document_to_terms_index: Dict[str, Set[str]] = defaultdict(set)
-
-        # Build flattened chunks structure with metadata
-        chunks_dict: Dict[str, KnowledgeChunkWithTerms] = {}
-        document_to_chunk_ids: Dict[str, Set[str]] = defaultdict(set)
-        document_page_to_chunks: Dict[Tuple[str, int], Set[str]] = defaultdict(set)
-
-        for doc_id, chunk_list in document_chunks.items():
-            for chunk in chunk_list:
-                # Find terms that appear in this chunk
-                chunk_terms = []
-                for term_name, term_data in terms.items():
-                    # Check if this term appears in this specific chunk
-                    for occurrence in term_data.occurrences:
-                        if (
-                            occurrence.document_id == doc_id
-                            and occurrence.page == chunk.page
-                            and occurrence.chunk_index == chunk.index
-                        ):
-                            chunk_terms.append(term_name)
-                            break
-
-                # Create KnowledgeChunkWithTerms with all fields from base chunk
-                chunk_with_meta = KnowledgeChunkWithTerms(
-                    document_id=chunk.document_id,
-                    document_name=chunk.document_name,
-                    doc_id=chunk.doc_id,
-                    index=chunk.index,
-                    text=chunk.text,
-                    page=chunk.page,
-                    terms=chunk_terms,
-                )
-
-                # Add to flattened chunks dict
-                chunks_dict[chunk.doc_id] = chunk_with_meta
-
-                # Add to lookup indices
-                document_to_chunk_ids[chunk.document_id].add(chunk.doc_id)
-                document_page_to_chunks[(chunk.document_id, chunk.page)].add(chunk.doc_id)
-
-        # Build indices from term occurrences
-        for term_name, term_data in terms.items():
-            # Track which documents contain this term
-            doc_ids = {occ.document_id for occ in term_data.occurrences}
-            term_to_documents_index[term_name] = doc_ids
-
-            # Add this term to each document's term list
-            for doc_id in doc_ids:
-                document_to_terms_index[doc_id].add(term_name)
-
-        # Convert defaultdicts to regular dicts for serialization
-        return (
-            dict(term_to_documents_index),
-            dict(document_to_terms_index),
-            chunks_dict,
-            dict(document_to_chunk_ids),
-            dict(document_page_to_chunks),
+        # Create chunked result for this document
+        return KnowledgeExtractionResultWithChunks(
+            document_filename=result.document_filename,
+            id=result.id,
+            source_type=result.source_type,
+            document_metadata=result.document_metadata,
+            pages=result.pages,
+            total_pages=result.total_pages,
+            raw=result.raw,
+            chunks=chunks,
+            total_chunks=len(chunks),
         )
 
     @timed_operation("Step 5/12: Co-occurrence extraction")
@@ -1274,7 +1023,7 @@ class KnowledgeExtractionCore:
         for i, (term1_key, term1_data) in enumerate(terms_list):
             term1_text = term1_data.full_form
 
-            for term2_key, term2_data in terms_list[i + 1 :]:  # Avoid duplicate comparisons
+            for term2_key, term2_data in terms_list[i + 1 :]:
                 # Skip linking a term to itself
                 if term1_key == term2_key:
                     continue
@@ -1310,8 +1059,8 @@ class KnowledgeExtractionCore:
         pickle_path = self._output_dir / f"{filename}.pkl"
 
         os.makedirs(self._output_dir, exist_ok=True)
-
         with open(pickle_path, "wb") as f:
-            pickle.dump(model, f)
+            pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
+
         file_size_mb = pickle_path.stat().st_size / (1024 * 1024)
         logger.info(f"Saved to {pickle_path} ({file_size_mb:.2f} MB)")

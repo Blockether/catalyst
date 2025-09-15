@@ -28,18 +28,16 @@ from typing import (
 )
 
 import anyio
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 
 from com_blockether_catalyst.encoder.EncoderCore import EncoderCore
 from com_blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
 from .ConsensusTypes import (
-    ConsensusCallRecord,
     ConsensusMetrics,
     ConsensusResult,
     ConsensusRound,
     ConsensusSettings,
-    ConsensusState,
     DisagreementAnalysis,
     FieldChangeValue,
     GossipHistory,
@@ -48,13 +46,17 @@ from .ConsensusTypes import (
     ModelResponse,
     ResponseEvolution,
     ResponseMetadata,
-    TypedCallBaseForConsensus,
+    RoundMetric,
     VerbosityLevel,
 )
-from .VotingComparison import ComparisonStrategy, FieldComparator
+from .VotingComparison import (
+    BaseModelWithReasoning,
+    ComparisonStrategy,
+    FieldComparator,
+)
 
 # Type variable for structured outputs
-T = TypeVar("T", bound=TypedCallBaseForConsensus)
+T = TypeVar("T", bound=BaseModelWithReasoning)
 
 logger = logging.getLogger(__name__)
 
@@ -106,17 +108,15 @@ class Consensus(
         # Use provided settings or create defaults
         self._settings = settings or ConsensusSettings()
 
-        # State management
-        self._metrics_collector: DefaultDict[str, List[Union[str, int, float]]] = defaultdict(list)
-        self._model_metrics: Dict[str, ModelMetrics] = {}
-        self._model_response_history: DefaultDict[str, List[ModelResponse[T]]] = defaultdict(list)
-        self._response_evolution_tracking: DefaultDict[str, List[ResponseEvolution[T]]] = defaultdict(list)
+    @property
+    def settings(self) -> ConsensusSettings:
+        """Get the consensus settings."""
+        return self._settings
 
-        # Initialize consensus state tracking
-        self._state = ConsensusState[T](
-            max_history_size=self._settings.max_history_size,
-            enabled=self._settings.state_tracking,
-        )
+    @property
+    def models(self) -> List[ModelConfiguration[T]]:
+        """Get the list of model configurations."""
+        return self._models
 
     async def call(self, x: str) -> ConsensusResult[T]:
         """
@@ -143,113 +143,83 @@ class Consensus(
         # Use stored parameters
         max_rounds = self._settings.max_rounds
         convergence_threshold = self._settings.threshold
+        first_round_threshold = self._settings.first_round_threshold
 
         # Initial round - get independent responses
-        logger.info("🚀 === INITIAL CONSENSUS ROUND 0 ===")
-        logger.debug(f"Starting consensus for query: {x[:100]}...")
         initial_round = await self._execute_initial_round(x)
         rounds.append(initial_round)
 
-        # Log initial round metrics
-        self._log_round_metrics(initial_round, 0)
-
-        # Log initial responses with detail based on verbosity
-        if initial_round.responses:
-            logger.info(f"📝 Initial responses ({len(initial_round.responses)} models):")
-            if self._settings.verbosity == VerbosityLevel.VERBOSE:
-                # Show detailed initial responses
-                for i, resp in enumerate(initial_round.responses, 1):
-                    logger.info(f"  {i}. Model: {resp.id}")
-                    # Show key fields if structured
-                    content_dict = resp.content.model_dump()
-                    for key, value in list(content_dict.items())[:5]:  # Show first 5 fields
-                        # Skip ignored fields in display
-                        field_info = resp.content.__class__.model_fields.get(key)
-                        if field_info:
-                            voting_meta = FieldComparator._extract_voting_metadata(field_info)
-                            if voting_meta.strategy == ComparisonStrategy.IGNORE:
-                                continue
-
-                        value_wrapped = self._wrap_text_for_logging(str(value), max_length=70, indent=8)
-                        lines = value_wrapped.split("\n")
-                        logger.info(f"      • {key}: {lines[0]}")
-                        for line in lines[1:]:
-                            logger.info(f"        {line}")
-                    if len(content_dict) > 5:
-                        logger.info(f"      ... and {len(content_dict) - 5} more fields")
-            else:
-                # Normal verbosity - just show summary
-                for i, resp in enumerate(initial_round.responses, 1):
-                    summary = self._wrap_text_for_logging(str(resp.content), max_length=120, indent=0)
-                    summary_line = summary.split("\n")[0][:120] + "..."
-                    logger.info(f"  {i}. {resp.id}: {summary_line}")
-
-        # Check for early consensus
-        if await self._check_consensus(initial_round, convergence_threshold):
+        # Check for early consensus with higher threshold for first round
+        if await self._check_consensus(initial_round, first_round_threshold):
             assert (
                 initial_round.consensus_response is not None
             ), "Consensus response must be set when consensus is achieved"
-            return self._create_result(
+            result = self._create_result(
                 rounds,
                 initial_round.consensus_response,
                 start_time,
             )
+            self._log_final_consensus_result(result, start_time)
+            return result
 
-        # Iterative refinement rounds
+        # Iterative refinement rounds (use normal threshold)
         for round_num in range(1, max_rounds):
-            logger.info(f"🔄 === CONSENSUS ROUND {round_num} ===")
-
-            # Log current responses from previous round with detail based on verbosity
-            if rounds and rounds[-1].responses and self._settings.verbosity == VerbosityLevel.VERBOSE:
-                logger.info(f"📝 Current responses ({len(rounds[-1].responses)} models):")
-                for i, resp in enumerate(rounds[-1].responses, 1):
-                    content_str = str(resp.content)[:200] + "..." if len(str(resp.content)) > 200 else str(resp.content)
-                    logger.info(f"  {i}. {resp.id}: {content_str}")
-
-            logger.debug(f"Executing consensus round {round_num}")
-
             # Execute gossip round
             consensus_round = await self._execute_gossip_round(x, rounds, round_num)
             rounds.append(consensus_round)
 
-            # Log inter-round metrics if verbose
-            self._log_round_metrics(consensus_round, round_num)
-
-            # Check for consensus
+            # Check for consensus with normal threshold for subsequent rounds
             if await self._check_consensus(consensus_round, convergence_threshold):
                 assert (
                     consensus_round.consensus_response is not None
                 ), "Consensus response must be set when consensus is achieved"
-                return self._create_result(
+                result = self._create_result(
                     rounds,
                     consensus_round.consensus_response,
                     start_time,
                 )
+                self._log_final_consensus_result(result, start_time)
+                return result
 
-        # Fallback to majority vote
-        logger.warning("Consensus not reached, falling back to majority vote")
-        # Get response type from the first response in the last round
-        response_type = type(rounds[-1].responses[0].content) if rounds[-1].responses else None
-        if not response_type:
-            raise ValueError("Cannot determine response type - no responses available")
-        final_response = await self._majority_vote(rounds[-1], response_type)
-
-        result = self._create_result(rounds, final_response, start_time)
-
-        # Track this call in state if enabled
-        if self._settings.state_tracking:
-            duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
-            convergence_path = [self._calculate_convergence_score(rounds[: i + 1]) for i in range(len(rounds))]
-
-            call_record = ConsensusCallRecord[T](
-                timestamp=start_time,
-                input_prompt=x,
-                result=result,
-                round_metrics=self._extract_round_metrics(rounds),
-                convergence_path=convergence_path,
-                duration_ms=duration_ms,
+        # Fallback: Use judge when no models succeeded or no consensus after max rounds
+        fallback_method = None
+        if not rounds[-1].responses:
+            # All models failed - use judge directly
+            judge_prompt = f"All models failed to respond. Please provide your best answer to: {x}"
+            final_response = await self._judge.call(judge_prompt)
+            fallback_method = "judge_all_failed"
+            # Mark that judge was used as fallback
+            rounds[-1].disagreement_analysis = DisagreementAnalysis(
+                disagreement_fields={"all_models": ["failed"]},
+                consensus_fields=[],
             )
-            self._state.add_call(call_record)
+        else:
+            # Use majority vote - it handles tie detection internally
+            response_type = type(rounds[-1].responses[0].content)
+            final_response = await self._majority_vote(rounds[-1], response_type)
+
+            # Determine if judge was used for tie-breaking by checking the stored vote groups
+            if rounds[-1].vote_groups:
+                vote_counts = rounds[-1].vote_groups
+            else:
+                # Fallback if vote_groups not set (shouldn't happen)
+                vote_counts = {}
+                for resp in rounds[-1].responses:
+                    group_key = self._get_voting_group(resp.content)
+                    if group_key not in vote_counts:
+                        vote_counts[group_key] = []
+                    vote_counts[group_key].append(resp)
+
+            sorted_groups = sorted(vote_counts.items(), key=lambda x: len(x[1]), reverse=True)
+
+            # Check if there was a tie
+            if len(sorted_groups) > 1 and len(sorted_groups[0][1]) == len(sorted_groups[1][1]):
+                fallback_method = "judge_tie"
+            else:
+                fallback_method = "majority_vote"
+
+        result = self._create_result(rounds, final_response, start_time, fallback_method)
+        self._log_final_consensus_result(result, start_time)
 
         return result
 
@@ -262,7 +232,7 @@ class Consensus(
         model_configs = self._models
 
         for model_config in model_configs:
-            prompt = f"{model_config.perspective}\n\n{query}"
+            prompt = f"Perspective/Rules of model to provide valid response: {model_config.perspective}\n\nUser query:\n\n{query}"
             coro = self._get_model_response(model_config, prompt)
             tasks.append(coro)
 
@@ -312,6 +282,7 @@ class Consensus(
     ) -> ConsensusRound:
         """Execute a gossip round where models see each other's responses."""
         responses = []
+        round_evolutions = []  # Initialize evolution tracking at the start
         previous_responses = previous_rounds[-1].responses
 
         # Create refinement tasks
@@ -382,16 +353,9 @@ class Consensus(
                     response,
                     peer_responses,
                 )
-                self._response_evolution_tracking[model_config.id].append(evolution)
+                round_evolutions.append(evolution)
             except Exception as e:
                 logger.error(f"Model {model_config.id} processing failed: {e}")
-
-        # Collect evolutions for this round
-        round_evolutions = []
-        for id, evolutions in self._response_evolution_tracking.items():
-            for evolution in evolutions:
-                if evolution.round_to == round_num:
-                    round_evolutions.append(evolution)
 
         # Analyze disagreements
         disagreement_analysis = self._analyze_disagreements(responses)
@@ -451,7 +415,6 @@ Peer Model Responses:
 
             if analysis.disagreement_fields:
                 # Only show non-ignored fields in disagreements
-                # Note: IGNORED fields should already be filtered out in _analyze_disagreements
                 # but we double-check here for safety
                 disagreement_field_names = [f for f in analysis.disagreement_fields.keys() if f != "reasoning"][:3]
                 if disagreement_field_names:
@@ -493,67 +456,54 @@ Your refined response (same JSON structure):"""
 
     async def _check_consensus(self, round_data: ConsensusRound[T], threshold: float) -> bool:
         """Check if consensus has been achieved using majority voting."""
-        logger.debug(f"Checking consensus for round {round_data.round_number}, responses: {len(round_data.responses)}")
         if len(round_data.responses) < 2:
-            logger.debug("Only one response - consensus achieved")
             if round_data.responses:
                 round_data.consensus_achieved = True
                 round_data.consensus_response = round_data.responses[0].content
-            return True
+                return True
+            # If no responses (all models failed), don't claim consensus yet
+            return False
 
         responses = round_data.responses
-        logger.info(f"\n🗳️ === VOTING ROUND {round_data.round_number} ===")
-        logger.info(f"   Counting votes from {len(responses)} models")
 
-        # Count votes by hashing responses
+        # Group responses for voting with fresh cache for this round
         vote_counts: Dict[str, List[ModelResponse[T]]] = {}
-        for response in responses:
-            # Create a hash of the response for voting
-            response_hash = self._hash_response(response.content)
-            if response_hash not in vote_counts:
-                vote_counts[response_hash] = []
-            vote_counts[response_hash].append(response)
+        voting_cache: Dict[int, str] = {}
+        voting_groups: List[T] = []
 
-        # Log vote distribution
-        for hash_key, voters in vote_counts.items():
-            model_ids = [v.id for v in voters]
-            logger.info(f"   📊 Vote group ({len(voters)} votes): {', '.join(model_ids)}")
+        for response in responses:
+            # Get or create voting group for this response
+            response_group = self._get_voting_group(response.content, voting_cache, voting_groups)
+            if response_group not in vote_counts:
+                vote_counts[response_group] = []
+            vote_counts[response_group].append(response)
+
+        # Store the vote groups in the round for later use
+        round_data.vote_groups = vote_counts
 
         # Check if we have a clear majority
         total_votes = len(responses)
-        majority_threshold = total_votes / 2.0
 
         # Sort vote groups by count
         sorted_votes = sorted(vote_counts.items(), key=lambda x: len(x[1]), reverse=True)
         top_vote_count = len(sorted_votes[0][1])
 
-        # Check for clear majority
-        if top_vote_count > majority_threshold:
-            # Clear majority winner
-            winner = sorted_votes[0][1][0]  # Take first response from winning group
-            logger.info(f"   ✅ MAJORITY CONSENSUS! {top_vote_count}/{total_votes} votes")
-            logger.info(f"   🎯 Winner: {winner.id}")
-            round_data.consensus_achieved = True
-            round_data.consensus_response = winner.content
-            return True
-
         # Check if we need the judge for a tie
         if len(sorted_votes) > 1 and len(sorted_votes[0][1]) == len(sorted_votes[1][1]):
-            logger.info(f"   ⚖️ TIE detected: {len(sorted_votes[0][1])} votes each")
             # We have a tie - consensus not achieved yet, will continue rounds
             return False
 
-        # Plurality winner (not majority but leading)
-        if top_vote_count >= threshold * total_votes:
-            # Accept plurality if it meets threshold
+        # Check if the top vote meets the threshold requirement
+        required_votes = threshold * total_votes
+
+        # Check for consensus based on threshold
+        if top_vote_count >= required_votes:
+            # Consensus achieved if threshold is met
             winner = sorted_votes[0][1][0]
-            logger.info(f"   ✓ PLURALITY CONSENSUS! {top_vote_count}/{total_votes} votes (>={threshold:.0%} threshold)")
-            logger.info(f"   🎯 Winner: {winner.id}")
             round_data.consensus_achieved = True
             round_data.consensus_response = winner.content
             return True
 
-        logger.info(f"   ❌ No consensus - top vote: {top_vote_count}/{total_votes} votes")
         return False
 
     def _calculate_information_flow(self, responses: List[ModelResponse]) -> Dict[str, List[str]]:
@@ -576,22 +526,40 @@ Your refined response (same JSON structure):"""
 
         responses = round_data.responses
 
-        # Count votes by hashing responses
-        vote_counts: Dict[str, List[ModelResponse[T]]] = {}
-        for response in responses:
-            response_hash = self._hash_response(response.content)
-            if response_hash not in vote_counts:
-                vote_counts[response_hash] = []
-            vote_counts[response_hash].append(response)
+        # Use stored vote groups if available, otherwise compute them
+        if round_data.vote_groups:
+            vote_counts = round_data.vote_groups
+        else:
+            # Group responses for voting with fresh cache
+            vote_counts: Dict[str, List[ModelResponse[T]]] = {}
+            voting_cache: Dict[int, str] = {}
+            voting_groups: List[T] = []
+
+            for response in responses:
+                response_group = self._get_voting_group(response.content, voting_cache, voting_groups)
+                if response_group not in vote_counts:
+                    vote_counts[response_group] = []
+                vote_counts[response_group].append(response)
+
+            # Store the computed groups
+            round_data.vote_groups = vote_counts
 
         # Sort by vote count
         sorted_votes = sorted(vote_counts.items(), key=lambda x: len(x[1]), reverse=True)
 
         # Check for tie at the top
         if len(sorted_votes) > 1 and len(sorted_votes[0][1]) == len(sorted_votes[1][1]):
-            # We have a tie - use judge to resolve it
-            logger.info("⚖️ Using judge to resolve tie...")
-            tied_responses = [sorted_votes[0][1][0], sorted_votes[1][1][0]]
+            # We have a tie - collect ALL tied responses
+            top_vote_count = len(sorted_votes[0][1])
+            tied_responses = []
+            for group_key, responses in sorted_votes:
+                if len(responses) == top_vote_count:
+                    # Add the first response from each tied group
+                    tied_responses.append(responses[0])
+                else:
+                    # No more ties, stop collecting
+                    break
+
             winner = await self._invoke_judge_for_tiebreak(tied_responses, round_data)
             return winner.content
 
@@ -606,25 +574,28 @@ Your refined response (same JSON structure):"""
         The judge analyzes the tied responses and the voting history (gossips)
         to synthesize the best response based on the quality of reasoning.
         """
-        # Prepare judge prompt with voting history and tied responses
-        judge_prompt = f"""As a neutral judge, you must break the tie between these responses and provide the best synthesis.
+        # Prepare judge prompt with voting history and ALL tied responses
+        judge_prompt = f"""As a neutral judge, you must break the tie between {len(tied_responses)} responses and provide the best synthesis.
 
-## Voting History (Gossips):
+## Voting History:
 Round {round_data.round_number} had {len(round_data.responses)} total votes.
+There is a {len(tied_responses)}-way tie at the top.
 
 ## Tied Responses:
 
-Response 1 (from {tied_responses[0].id}):
-{tied_responses[0].content.model_dump_json(indent=2)}
+"""
+        # Add all tied responses to the prompt
+        for i, response in enumerate(tied_responses, 1):
+            judge_prompt += f"""Response {i} (from {response.id}):
+{response.content.model_dump_json(indent=2)}
 
-Response 2 (from {tied_responses[1].id}):
-{tied_responses[1].content.model_dump_json(indent=2)}
+"""
 
-## Your Task:
-Analyze both responses and provide YOUR OWN response that either:
-1. Selects the better of the two responses
-2. Synthesizes the best elements from both
-3. Provides an improved answer based on their insights
+        judge_prompt += """## Your Task:
+Analyze all tied responses and provide YOUR OWN response that either:
+1. Selects the best response from those provided
+2. Synthesizes the best elements from multiple responses
+3. Provides an improved answer based on their collective insights
 
 Base your decision on:
 - Quality of reasoning
@@ -638,20 +609,12 @@ Provide a response in the same JSON format as the tied responses above.
         # Call the judge - it returns type T directly
         judge_response = await self._judge.call(judge_prompt)
 
-        # Create a new ModelResponse with the judge's decision
-        logger.info("   ⚖️ Judge provided synthesis/selection")
         return ModelResponse[T](
             id="judge",
             round_number=round_data.round_number,
-            content=judge_response,  # judge_response is already of type T
+            content=judge_response,
             metadata=ResponseMetadata(judge_decision=True, resolved_tie=True),
-            gossip_history=[
-                GossipHistory(
-                    round_number=round_data.round_number,
-                    refined_from_peers=True,
-                    peer_models_seen=[r.id for r in tied_responses],
-                )
-            ],
+            gossip_history=[],
         )
 
     def _create_result(
@@ -659,6 +622,7 @@ Provide a response in the same JSON format as the tied responses above.
         rounds: List[ConsensusRound[T]],
         final_response: T,
         start_time: datetime,
+        fallback_method: Optional[str] = None,
     ) -> ConsensusResult[T]:
         """Create the final consensus result."""
         end_time = datetime.now(timezone.utc)
@@ -697,6 +661,7 @@ Provide a response in the same JSON format as the tied responses above.
             len(rounds),
             len(dissenting_models),
             len(self._models),
+            rounds,
         )
 
         # Create strongly typed metrics
@@ -712,10 +677,13 @@ Provide a response in the same JSON format as the tied responses above.
             total_refinements=total_refinements,
             avg_refinements_per_round=total_refinements / len(rounds) if rounds else 0,
             information_flows=[round.information_flow for round in rounds],
+            fallback_method=fallback_method,
         )
 
         # Generate reasoning based on the consensus process
-        reasoning = self._generate_consensus_reasoning(rounds, final_round.consensus_achieved, dissenting_models)
+        reasoning = self._generate_consensus_reasoning(
+            rounds, final_round.consensus_achieved, dissenting_models, fallback_method
+        )
 
         return ConsensusResult(
             reasoning=reasoning,
@@ -726,6 +694,7 @@ Provide a response in the same JSON format as the tied responses above.
             convergence_score=self._calculate_convergence_score(rounds),
             participating_models=[m.id for m in self._models],
             dissenting_models=dissenting_models,
+            model_contributions=model_contributions,
             metrics=metrics,
         )
 
@@ -734,6 +703,7 @@ Provide a response in the same JSON format as the tied responses above.
         rounds: List[ConsensusRound[T]],
         consensus_achieved: bool,
         dissenting_models: List[str],
+        fallback_method: Optional[str] = None,
     ) -> str:
         """Generate reasoning explanation for the consensus result."""
         if consensus_achieved:
@@ -744,7 +714,17 @@ Provide a response in the same JSON format as the tied responses above.
                 if dissenting_models
                 else ""
             )
-            return f"Consensus was not achieved after {len(rounds)} round(s) of deliberation{dissent_info}. The system fell back to majority voting to determine the final response. Despite the lack of full agreement, this represents the best collective judgment available."
+            # Use the provided fallback method
+            if fallback_method == "judge_all_failed":
+                method_desc = "judge decision (all models failed)"
+            elif fallback_method == "judge_tie":
+                method_desc = "judge decision (tie detected)"
+            elif fallback_method == "majority_vote":
+                method_desc = "majority voting"
+            else:
+                method_desc = "fallback mechanism"
+
+            return f"Consensus was not achieved after {len(rounds)} round(s) of deliberation{dissent_info}. The system fell back to {method_desc} to determine the final response. Despite the lack of full agreement, this represents the best collective judgment available."
 
     def _calculate_convergence_score(self, rounds: List[ConsensusRound[T]]) -> float:
         """Calculate overall convergence score across all rounds using voting patterns."""
@@ -792,13 +772,13 @@ Provide a response in the same JSON format as the tied responses above.
             return 1.0
 
         # Count unique vote groups
-        vote_hashes = set()
+        vote_groups = set()
         for response in responses:
-            response_hash = self._hash_response(response.content)
-            vote_hashes.add(response_hash)
+            response_group = self._get_voting_group(response.content)
+            vote_groups.add(response_group)
 
         # Agreement ratio: 1.0 if all same, approaching 0 if all different
-        agreement_ratio = 1.0 - ((len(vote_hashes) - 1) / (len(responses) - 1))
+        agreement_ratio = 1.0 - ((len(vote_groups) - 1) / (len(responses) - 1))
         return agreement_ratio
 
     # Model contribution analysis methods
@@ -819,24 +799,12 @@ Provide a response in the same JSON format as the tied responses above.
         for round_data in rounds:
             for response in round_data.responses:
                 model_responses[response.id].append(response)
-                self._model_response_history[response.id].append(response)
 
         # Calculate contribution metrics for each model
         for model_id, responses in model_responses.items():
-            metrics = self._model_metrics.get(model_id, ModelMetrics(id=model_id))
-
-            # Update participation count
-            metrics.total_rounds += len(responses)
-
-            # Calculate consistency across rounds
-            metrics.consistency_score = self._calculate_consistency_score(responses)
-
-            # Calculate contribution score
+            # Calculate contribution score directly without storing metrics
             contribution_score = self._calculate_contribution_score(responses, rounds)
-            metrics.contribution_score = contribution_score
-
             model_contributions[model_id] = contribution_score
-            self._model_metrics[model_id] = metrics
 
         return model_contributions
 
@@ -878,12 +846,12 @@ Provide a response in the same JSON format as the tied responses above.
             return self._calculate_consistency_score(model_responses)
 
         # Check if model voted for the winning consensus
-        final_hash = self._hash_response(final_consensus)
+        final_group = self._get_voting_group(final_consensus)
         voted_correctly = 0
 
         for response in model_responses:
-            response_hash = self._hash_response(response.content)
-            if response_hash == final_hash:
+            response_group = self._get_voting_group(response.content)
+            if response_group == final_group:
                 voted_correctly += 1
 
         # Score based on how often model voted for consensus
@@ -891,10 +859,9 @@ Provide a response in the same JSON format as the tied responses above.
 
         # Bonus if model converged to consensus over time
         if len(model_responses) >= 2:
-            early_match = self._hash_response(model_responses[0].content) == final_hash
-            late_match = self._hash_response(model_responses[-1].content) == final_hash
+            early_match = self._get_voting_group(model_responses[0].content) == final_group
+            late_match = self._get_voting_group(model_responses[-1].content) == final_group
             if late_match and not early_match:
-                # Model learned and converged
                 return min(1.0, base_score + 0.3)
 
         return base_score
@@ -912,12 +879,12 @@ Provide a response in the same JSON format as the tied responses above.
         # Count vote groups
         vote_counts: Dict[str, int] = {}
         for r in all_responses:
-            response_hash = self._hash_response(r.content)
-            vote_counts[response_hash] = vote_counts.get(response_hash, 0) + 1
+            response_group = self._get_voting_group(r.content)
+            vote_counts[response_group] = vote_counts.get(response_group, 0) + 1
 
         # Get this response's vote group size
-        response_hash = self._hash_response(response.content)
-        response_vote_count = vote_counts.get(response_hash, 0)
+        response_group = self._get_voting_group(response.content)
+        response_vote_count = vote_counts.get(response_group, 0)
 
         # Response is outlier if it's alone while others agree
         max_vote_count = max(vote_counts.values())
@@ -932,17 +899,17 @@ Provide a response in the same JSON format as the tied responses above.
             return 1.0  # Single response is perfectly consistent
 
         # Check if model maintains consistent voting
-        vote_hashes = []
+        vote_groups = []
         for response in responses:
-            vote_hashes.append(self._hash_response(response.content))
+            vote_groups.append(self._get_voting_group(response.content))
 
         # Count how many times the vote stayed the same between rounds
         consistent_votes = 0
-        for i in range(len(vote_hashes) - 1):
-            if vote_hashes[i] == vote_hashes[i + 1]:
+        for i in range(len(vote_groups) - 1):
+            if vote_groups[i] == vote_groups[i + 1]:
                 consistent_votes += 1
 
-        return consistent_votes / (len(vote_hashes) - 1) if len(vote_hashes) > 1 else 1.0
+        return consistent_votes / (len(vote_groups) - 1) if len(vote_groups) > 1 else 1.0
 
     # Enhanced metrics methods
     def _calculate_consensus_confidence(
@@ -951,6 +918,7 @@ Provide a response in the same JSON format as the tied responses above.
         total_rounds: int,
         dissenting_count: int,
         total_models: int,
+        rounds: List[ConsensusRound[T]],
     ) -> float:
         """Calculate voting strength as confidence metric."""
         if not consensus_achieved:
@@ -961,63 +929,231 @@ Provide a response in the same JSON format as the tied responses above.
         # If bare majority: lower confidence
         voting_proportion = (total_models - dissenting_count) / max(total_models, 1)
 
-        # Adjust for speed - faster consensus = stronger agreement
-        speed_bonus = (
-            max(
-                0,
-                (self._settings.max_rounds - total_rounds) / self._settings.max_rounds,
-            )
-            * 0.2
-        )
+        # Field-level consistency: how many fields reached consensus
+        field_consistency = self._calculate_field_consistency(rounds)
 
-        return min(1.0, voting_proportion + speed_bonus)
+        # Vote stability: how stable were votes across rounds
+        vote_stability = self._calculate_vote_stability(rounds)
 
-    # Virtual Voting Methods
-    @staticmethod
-    def _semantic_hash(text: str, threshold: float = 0.8) -> str:
+        # Combine metrics (weighted average)
+        # 50% voting proportion, 30% field consistency, 20% vote stability
+        agreement_strength = voting_proportion * 0.5 + field_consistency * 0.3 + vote_stability * 0.2
+
+        return min(1.0, agreement_strength)
+
+    def _calculate_field_consistency(self, round_infos: List[ConsensusRound]) -> float:
+        """Calculate field-level consistency across voting groups.
+
+        Returns a score from 0 to 1 indicating what proportion of fields
+        reached consensus (not just the overall response).
         """
-        Create a hash that groups semantically similar texts.
+        if not round_infos:
+            return 0.0
 
-        This is used for voting - texts with high semantic similarity
-        get the same hash and thus vote together.
+        # Get the latest round for analysis
+        latest_round = round_infos[-1]
+
+        # Track field consensus across voting groups
+        field_consensus_count = 0
+        total_fields = 0
+
+        # Get all field differences from the round's disagreement analysis
+        if latest_round.disagreement_analysis is not None:
+            disagreement_fields = latest_round.disagreement_analysis.disagreement_fields
+            consensus_fields = latest_round.disagreement_analysis.consensus_fields
+
+            # Total fields is disagreement fields + consensus fields
+            total_fields = len(disagreement_fields) + len(consensus_fields)
+            field_consensus_count = len(consensus_fields)
+        else:
+            # If no field tracking, use overall consensus as proxy
+            return 1.0 if latest_round.consensus_achieved else 0.0
+
+        if total_fields == 0:
+            return 1.0  # No fields to compare = perfect consistency
+
+        return field_consensus_count / total_fields
+
+    def _calculate_vote_stability(self, round_infos: List[ConsensusRound]) -> float:
+        """Calculate vote stability across rounds.
+
+        Returns a score from 0 to 1 indicating how stable votes were.
+        Models that stick to their votes show stronger conviction.
+        """
+        if len(round_infos) <= 1:
+            return 1.0  # Single round = perfectly stable
+
+        # Track how models' responses group together across rounds
+        vote_changes = 0
+        total_comparisons = 0
+
+        # Compare responses between consecutive rounds
+        for i in range(1, len(round_infos)):
+            prev_round = round_infos[i - 1]
+            curr_round = round_infos[i]
+
+            # Build voting groups for each round
+            prev_groups = {}
+            for response in prev_round.responses:
+                group_key = self._get_voting_group(response.content)
+                if group_key not in prev_groups:
+                    prev_groups[group_key] = []
+                prev_groups[group_key].append(response.id)
+
+            curr_groups = {}
+            for response in curr_round.responses:
+                group_key = self._get_voting_group(response.content)
+                if group_key not in curr_groups:
+                    curr_groups[group_key] = []
+                curr_groups[group_key].append(response.id)
+
+            # Track which models changed their votes
+            for model_config in self._models:
+                model_id = model_config.id
+
+                # Find model's vote in previous round
+                prev_vote = None
+                for group_id, members in prev_groups.items():
+                    if model_id in members:
+                        prev_vote = group_id
+                        break
+
+                # Find model's vote in current round
+                curr_vote = None
+                for group_id, members in curr_groups.items():
+                    if model_id in members:
+                        curr_vote = group_id
+                        break
+
+                # Check if vote changed
+                if prev_vote is not None and curr_vote is not None:
+                    total_comparisons += 1
+                    if prev_vote != curr_vote:
+                        vote_changes += 1
+
+        if total_comparisons == 0:
+            return 1.0  # No comparisons = perfect stability
+
+        stability = 1.0 - (vote_changes / total_comparisons)
+        return max(0.0, stability)
+
+    # Voting Group Methods
+    def _get_voting_group(
+        self,
+        response: T,
+        voting_group_cache: Optional[Dict[int, str]] = None,
+        voting_groups: Optional[List[T]] = None,
+    ) -> str:
+        """Get or create a voting group ID for this response.
+
+        Groups similar responses together using field-specific comparison strategies.
+        Returns a group ID like 'group_1', 'group_2', etc.
 
         Args:
-            text: Text to hash
-            threshold: Similarity threshold for grouping
+            response: The response to group
+            voting_group_cache: Optional cache for this round's voting groups
+            voting_groups: Optional list of group representatives for this round
 
-        Returns:
-            Hash string that's identical for semantically similar texts
+        If cache/groups not provided, creates temporary ones for comparison only.
         """
-        try:
-            # Normalize text first - lowercase and strip for consistent hashing
-            normalized_text = text.lower().strip()
+        # Use provided cache or create temporary one
+        if voting_group_cache is None:
+            voting_group_cache = {}
+        if voting_groups is None:
+            voting_groups = []
 
-            # Get embedding for the normalized text
-            embedding = EncoderCore.encode_single(normalized_text)
+        # Check if we've seen this exact response object before
+        response_id = id(response)
+        if response_id in voting_group_cache:
+            return voting_group_cache[response_id]
 
-            # Quantize embedding to create discrete buckets
-            # This ensures similar texts map to the same bucket
-            import numpy as np
+        # Find which group this response belongs to by comparing with representatives
+        for i, group_representative in enumerate(voting_groups):
+            if self._responses_are_similar(response, group_representative):
+                # Found a matching group
+                group_key = f"group_{i + 1}"
+                voting_group_cache[response_id] = group_key
+                return group_key
 
-            # Scale and quantize based on threshold
-            # Higher threshold = finer quantization = fewer matches
-            quantization_level = int(10 / threshold)
-            quantized = np.round(embedding * quantization_level).astype(int)
+        # No matching group - create a new one with this response as representative
+        voting_groups.append(response)
+        group_key = f"group_{len(voting_groups)}"
+        voting_group_cache[response_id] = group_key
+        return group_key
 
-            # Create hash from quantized vector
-            return hashlib.md5(quantized.tobytes()).hexdigest()[:8]
-        except Exception as e:
-            logger.debug(f"Semantic hashing failed, falling back to simple hash: {e}")
-            # Fallback: case-insensitive hash with same normalization
-            normalized_text = text.lower().strip()
-            return hashlib.md5(normalized_text.encode()).hexdigest()[:8]
+    def _responses_are_similar(self, resp1: T, resp2: T) -> bool:
+        """Check if two responses are similar enough to vote together.
 
-    def _hash_response(self, response: T) -> str:
-        """Create a deterministic hash of a response for voting using field comparison strategies.
-
-        Now delegates to the response type's own get_voting_key method.
+        This compares each field according to its voting strategy.
         """
-        return response.get_voting_key()
+        # Get the model class and fields
+        model_class = resp1.__class__
+        model_fields = model_class.model_fields
+
+        # Compare each field according to its strategy
+        for field_name, field_info in model_fields.items():
+            # Get field values
+            value1 = getattr(resp1, field_name)
+            value2 = getattr(resp2, field_name)
+
+            # Get comparison strategy
+            from .VotingComparison import ComparisonStrategy, FieldComparator
+
+            voting_meta = FieldComparator._extract_voting_metadata(field_info)
+
+            # Skip ignored fields
+            if voting_meta.strategy == ComparisonStrategy.IGNORE:
+                continue
+
+            # Compare based on strategy
+            if voting_meta.strategy == ComparisonStrategy.SEMANTIC:
+                # For semantic comparison, check similarity
+                if isinstance(value1, str) and isinstance(value2, str):
+                    from ..encoder.EncoderCore import EncoderCore
+
+                    emb1 = EncoderCore.encode_single(value1)
+                    emb2 = EncoderCore.encode_single(value2)
+                    similarity = EncoderCore.cosine_similarity(emb1, emb2)
+
+                    if similarity < voting_meta.threshold:
+                        return False  # Not similar enough
+                else:
+                    # Non-string semantic comparison - just check equality
+                    if value1 != value2:
+                        return False
+
+            elif voting_meta.strategy == ComparisonStrategy.RANGE:
+                # For range comparison, check if within tolerance
+                if isinstance(value1, (int, float)) and isinstance(value2, (int, float)):
+                    if value1 == 0 and value2 == 0:
+                        continue  # Both zero, consider equal
+                    # Check relative difference
+                    max_val = max(abs(value1), abs(value2))
+                    if max_val > 0:
+                        rel_diff = abs(value1 - value2) / max_val
+                        if rel_diff > voting_meta.tolerance:
+                            return False
+                else:
+                    if value1 != value2:
+                        return False
+
+            elif voting_meta.strategy == ComparisonStrategy.DERIVED:
+                # For nested models, recursively compare
+                if isinstance(value1, (BaseModel, RootModel)) and isinstance(value2, (BaseModel, RootModel)):
+                    # Create temporary wrapper to use our comparison
+                    if not self._responses_are_similar(cast(T, value1), cast(T, value2)):
+                        return False
+                else:
+                    if value1 != value2:
+                        return False
+
+            else:
+                # EXACT comparison (default)
+                if value1 != value2:
+                    return False
+
+        # All non-ignored fields match according to their strategies
+        return True
 
     def _track_response_evolution(
         self,
@@ -1035,12 +1171,12 @@ Provide a response in the same JSON format as the tied responses above.
             if key in new_dict and prev_dict[key] != new_dict[key]:
                 field_changes[key] = FieldChangeValue(old_value=prev_dict[key], new_value=new_dict[key])
 
-        # Get hashes for vote comparison
-        prev_hash = self._hash_response(prev_response.content)
-        new_hash = self._hash_response(new_response.content)
+        # Get voting groups for comparison
+        prev_group = self._get_voting_group(prev_response.content)
+        new_group = self._get_voting_group(new_response.content)
 
         # Check if vote changed
-        vote_changed = prev_hash != new_hash
+        vote_changed = prev_group != new_group
 
         # Extract reasoning evolution
         reasoning_evolution = ""
@@ -1052,12 +1188,12 @@ Provide a response in the same JSON format as the tied responses above.
 
         # Determine which models influenced this evolution
         influenced_by = []
-        # Check if model changed vote to match any peer (using hashes calculated above)
+        # Check if model changed vote to match any peer (using groups calculated above)
 
-        if prev_hash != new_hash:  # Vote changed
+        if prev_group != new_group:  # Vote changed
             for peer in peer_responses:
-                peer_hash = self._hash_response(peer.content)
-                if new_hash == peer_hash:
+                peer_group = self._get_voting_group(peer.content)
+                if new_group == peer_group:
                     # Model adopted peer's position
                     influenced_by.append(peer.id)
 
@@ -1126,9 +1262,8 @@ Provide a response in the same JSON format as the tied responses above.
                 # Disagreement on this field (but only for fields that matter)
                 analysis.disagreement_fields[field] = values
 
-                # Log detailed comparison if verbose
-                if self._settings.verbosity == VerbosityLevel.VERBOSE:
-                    self._log_field_disagreement_details(field, field_values_with_models[field])
+                # Don't log during analysis - only show in final consolidated output
+                pass
 
         return analysis
 
@@ -1164,30 +1299,100 @@ Provide a response in the same JSON format as the tied responses above.
 
         return "\n".join(wrapped_lines)
 
-    def _log_field_disagreement_details(self, field: str, values_with_models: List[tuple[str, str]]) -> None:
-        """Log detailed disagreement information for a specific field with semantic similarity."""
-        unique_values: Dict[str, List[str]] = {}
-        for model_id, value in values_with_models:
-            if value not in unique_values:
-                unique_values[value] = []
-            unique_values[value].append(model_id)
+    def _log_field_analysis(self, field: str, unique_values: Dict[str, List[str]], field_info: Any = None) -> None:
+        """Log appropriate analysis for a field based on its type and comparison strategy."""
+        from ..consensus.VotingComparison import ComparisonStrategy, FieldComparator
 
-        # Only log if we have reasonable number of unique values
-        if len(unique_values) <= 5:
-            logger.debug(f"      Detailed disagreement for '{field}':")
+        # Get comparison strategy and field type
+        comparison_strategy = ComparisonStrategy.EXACT  # default
+        field_type = str  # default
 
-            # Show which models said what
+        if field_info:
+            voting_meta = FieldComparator._extract_voting_metadata(field_info)
+            comparison_strategy = voting_meta.strategy
+
+            # Get the field's annotation/type
+            field_annotation = getattr(field_info, "annotation", None)
+            if field_annotation:
+                # Handle Optional types and extract the actual type
+                origin = getattr(field_annotation, "__origin__", None)
+                if origin:
+                    args = getattr(field_annotation, "__args__", ())
+                    if args:
+                        field_type = args[0]  # First arg for Optional[T] is T
+                else:
+                    field_type = field_annotation
+
+        unique_value_list = list(unique_values.keys())
+
+        # Different analysis based on comparison strategy and field type
+        if comparison_strategy == ComparisonStrategy.SEMANTIC and field_type is str:
+            # Semantic similarity for string fields
+            logger.info(f"      📝  Semantic Analysis for '{field}' (string field):")
+            self._log_similarity_matrix(field, unique_value_list)
+
+        elif field_type is bool:
+            # Boolean analysis
+            logger.info(f"      🔀  Boolean Analysis for '{field}':")
+            true_models = []
+            false_models = []
             for value, models in unique_values.items():
-                # Wrap long text for better readability
-                display_value = self._wrap_text_for_logging(value, max_length=80, indent=10)
-                models_str = ", ".join(models)
-                logger.debug(f"        • Value by {models_str}:")
-                for line in display_value.split("\n"):
-                    logger.debug(f"          {line}")
+                if value.lower() == "true":
+                    true_models.extend(models)
+                elif value.lower() == "false":
+                    false_models.extend(models)
 
-            # Calculate and show semantic similarity matrix if we have 2-5 unique values
-            if 2 <= len(unique_values) <= 5:
-                self._log_similarity_matrix(field, list(unique_values.keys()))
+            total = len(true_models) + len(false_models)
+            if total > 0:
+                true_pct = (len(true_models) / total) * 100
+                false_pct = (len(false_models) / total) * 100
+
+                if true_models:
+                    true_names = ", ".join(true_models)
+                    logger.info(f"        ✓ True: {len(true_models)} models ({true_pct:.1f}%) - {true_names}")
+                if false_models:
+                    false_names = ", ".join(false_models)
+                    logger.info(f"        ✗ False: {len(false_models)} models ({false_pct:.1f}%) - {false_names}")
+
+        elif field_type in (int, float) or self._is_numeric_field(unique_value_list):
+            # Numeric analysis
+            logger.info(
+                f"      📊  Numeric Analysis for '{field}' ({field_type.__name__ if hasattr(field_type, '__name__') else 'numeric'}):"
+            )
+            numeric_values = []
+            value_to_models = {}
+            for value_str, models in unique_values.items():
+                try:
+                    num_val = float(value_str)
+                    numeric_values.append(num_val)
+                    value_to_models[num_val] = models
+                except ValueError:
+                    continue
+
+            if numeric_values:
+                min_val = min(numeric_values)
+                max_val = max(numeric_values)
+                avg_val = sum(numeric_values) / len(numeric_values)
+                range_val = max_val - min_val
+
+                logger.info(f"        📈  Range: {min_val} → {max_val} (Δ{range_val})")
+                logger.info(f"        📊  Average: {avg_val:.2f}")
+                logger.info("        🎯  Values with models:")
+                for value in sorted(set(numeric_values)):
+                    models_list = value_to_models.get(value, [])
+                    models_str = ", ".join(models_list)
+                    logger.info(
+                        f"           • {value} ({len(models_list)} model{'s' if len(models_list) != 1 else ''}) - {models_str}"
+                    )
+
+    def _is_numeric_field(self, values: List[str]) -> bool:
+        """Check if all values in the list are numeric."""
+        try:
+            for value in values:
+                float(value)
+            return True
+        except ValueError:
+            return False
 
     def _log_similarity_matrix(self, field: str, unique_values: List[str]) -> None:
         """Log a pairwise semantic similarity matrix for unique values."""
@@ -1334,46 +1539,449 @@ Provide a response in the same JSON format as the tied responses above.
 
         return results
 
-    def _extract_round_metrics(self, rounds: List[ConsensusRound[T]]) -> List[Dict[str, Any]]:
+    def _extract_round_metrics(self, rounds: List[ConsensusRound[T]]) -> List[RoundMetric]:
         """Extract metrics from each round for state tracking."""
-        metrics = []
+        metrics: List[RoundMetric] = []
         for round in rounds:
-            round_metric = {
-                "round_number": round.round_number,
-                "convergence_score": self._calculate_convergence_score([round]),
-                "consensus_achieved": round.consensus_achieved,
-                "num_responses": len(round.responses),
-                "unique_votes": (
-                    len(set(self._get_voting_key_from_content(r.content) for r in round.responses))
-                    if round.responses
-                    else 0
+            round_metric = RoundMetric(
+                round_number=round.round_number,
+                convergence_score=self._calculate_convergence_score([round]),
+                consensus_achieved=round.consensus_achieved,
+                num_responses=len(round.responses),
+                unique_votes=(
+                    len(set(self._get_voting_group(r.content) for r in round.responses)) if round.responses else 0
                 ),
-            }
+            )
             metrics.append(round_metric)
         return metrics
 
-    def reset_state(self) -> None:
-        """Reset the consensus state history."""
-        self._state.reset()
-        self._log_based_on_verbosity("State history has been reset", VerbosityLevel.VERBOSE)
+    def _log_final_consensus_result(self, result: ConsensusResult[T], start_time: datetime) -> None:
+        """Log comprehensive final consensus result - single output with all key information."""
+        if self._settings.verbosity == VerbosityLevel.SILENT:
+            return
 
-    def get_state(self) -> ConsensusState[T]:
-        """Get the current consensus state object."""
-        return self._state
+        duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
 
-    def get_state_stats(self) -> Dict[str, Any]:
-        """Get statistics about the consensus state."""
-        return self._state.get_stats()
+        # Determine result status and formatting
+        if result.consensus_achieved:
+            status_icon = "✅"
+            status_text = "SUCCESS"
+            result_display = status_text  # No emoji in table
+        else:
+            status_icon = "⚠️"
+            status_text = "FALLBACK"
+            result_display = status_text  # No emoji in table
 
-    def _log_based_on_verbosity(self, message: str, min_level: VerbosityLevel) -> None:
-        """Log a message if verbosity level permits."""
-        if self._settings.verbosity.value >= min_level.value:
-            logger.info(message)
+        # Build comprehensive log message
+        log_lines = []
+        log_lines.append("")  # Empty line for spacing
+        log_lines.append("=" * 80)
+        log_lines.append(f"{status_icon}  CONSENSUS {status_text}")
+        log_lines.append("=" * 80)
 
-    def _get_voting_key_from_content(self, content: T) -> str:
-        """Generate a voting key from content for comparison."""
-        # T is bound to TypedCallBaseForConsensus which has get_voting_key method
-        return content.get_voting_key()
+        # Core metrics as a table
+        log_lines.append("")  # Add spacing
+        log_lines.append("📊  SUMMARY:")
+
+        table_data = [
+            ["Result", result_display],
+            ["Duration", f"{duration_ms:.1f}ms"],
+            ["Rounds", str(result.total_rounds)],
+            ["Models", str(len(result.participating_models))],
+            ["Convergence", f"{result.convergence_score:.3f}"],
+        ]
+
+        # Voting details
+        if result.rounds:
+            final_round = result.rounds[-1]
+            unique_votes = len(set(self._get_voting_group(r.content) for r in final_round.responses))
+
+            # Build detailed vote groups with actual response content
+            vote_groups_detailed = {}
+            for response in final_round.responses:
+                vote_key = self._get_voting_group(response.content)
+                if vote_key not in vote_groups_detailed:
+                    vote_groups_detailed[vote_key] = {
+                        "models": [],
+                        "response": response.content,
+                    }
+                vote_groups_detailed[vote_key]["models"].append(response.id)
+
+            # Sort groups by size
+            sorted_groups = sorted(
+                vote_groups_detailed.items(),
+                key=lambda x: len(x[1]["models"]),
+                reverse=True,
+            )
+            top_group_size = len(sorted_groups[0][1]["models"]) if sorted_groups else 0
+            agreement = top_group_size / len(final_round.responses) if final_round.responses else 0
+
+            # Calculate field consistency and vote stability
+            field_consistency = self._calculate_field_consistency(result.rounds)
+            vote_stability = self._calculate_vote_stability(result.rounds)
+
+            # Add voting metrics to the table
+            table_data.extend(
+                [
+                    [
+                        "Agreement",
+                        f"{agreement:.1%} ({top_group_size}/{len(final_round.responses)})",
+                    ],
+                    ["Field Consistency", f"{field_consistency:.1%}"],
+                    ["Vote Stability", f"{vote_stability:.1%}"],
+                    ["Unique Votes", str(unique_votes)],
+                    ["Threshold", f"{self._settings.threshold:.1%}"],
+                ]
+            )
+
+        # Add total model calls if available
+        if result.metrics:
+            table_data.append(["Total Model Calls", str(result.metrics.total_model_calls)])
+
+        # Format the table using regular string formatting
+        # Find max width for proper alignment
+        max_metric_width = max(len("Metric"), max(len(row[0]) for row in table_data))
+        max_value_width = max(len("Value"), max(len(str(row[1])) for row in table_data))
+
+        # Add header
+        log_lines.append(f"   {'Metric':<{max_metric_width}}  {'Value':<{max_value_width}}")
+        log_lines.append(f"   {'-' * max_metric_width}  {'-' * max_value_width}")
+
+        # Add data rows
+        for metric, value in table_data:
+            log_lines.append(f"   {metric:<{max_metric_width}}  {value:<{max_value_width}}")
+
+        # Detailed voting breakdown for all rounds (or just final if only one)
+        if result.rounds:
+            total_rounds = result.total_rounds
+
+            # If multiple rounds, show evolution; otherwise just show the single round
+            rounds_to_show = result.rounds if total_rounds > 1 else [result.rounds[-1]]
+
+            for round_idx, round_data in enumerate(rounds_to_show):
+                if not round_data.responses:
+                    continue
+
+                # Build vote groups for this round
+                vote_groups_for_round = {}
+                for response in round_data.responses:
+                    vote_key = self._get_voting_group(response.content)
+                    if vote_key not in vote_groups_for_round:
+                        vote_groups_for_round[vote_key] = {
+                            "models": [],
+                            "response": response.content,
+                        }
+                    vote_groups_for_round[vote_key]["models"].append(response.id)
+
+                # Sort groups by size
+                sorted_round_groups = sorted(
+                    vote_groups_for_round.items(),
+                    key=lambda x: len(x[1]["models"]),
+                    reverse=True,
+                )
+
+                log_lines.append("")  # Add spacing
+                # Show which round this voting is from (1-indexed for display)
+                display_round = round_idx + 1
+                log_lines.append(f"🗳️  VOTING BREAKDOWN (Round {display_round}/{total_rounds}):")
+
+                for i, (vote_key, vote_info) in enumerate(sorted_round_groups, 1):
+                    models_str = ", ".join(vote_info["models"])
+                    vote_count = len(vote_info["models"])
+                    percentage = (vote_count / len(round_data.responses)) * 100
+
+                    # Get a summary of what they voted for
+                    response_content = vote_info["response"]
+                    vote_summary = self._get_vote_summary(response_content)
+
+                    winner_indicator = "👑" if i == 1 else "  "
+                    log_lines.append(
+                        f"   {winner_indicator} Vote #{i}: {vote_count} models ({percentage:.1f}%) - {models_str}"
+                    )
+                    log_lines.append(f"      └─ {vote_summary}")
+
+        # Model Contributions Table
+        if result.model_contributions:
+            log_lines.append("")  # Add spacing
+            log_lines.append("🤝  MODEL CONTRIBUTIONS (Score Range: 0.0-1.0):")
+            log_lines.append("   Score Interpretation: ≥0.8=High, ≥0.6=Medium, ≥0.4=Low, <0.4=Very Low")
+
+            # Prepare contribution data for table
+            contrib_data = []
+            for model_id, score in sorted(result.model_contributions.items(), key=lambda x: x[1], reverse=True):
+                # Classify contribution level
+                if score >= 0.8:
+                    level = "High"
+                elif score >= 0.6:
+                    level = "Medium"
+                elif score >= 0.4:
+                    level = "Low"
+                else:
+                    level = "Very Low"
+                contrib_data.append([model_id, f"{score:.3f}", level])
+
+            if contrib_data:
+                # Format contribution table using regular string formatting
+                max_model_width = max(len("Model"), max(len(row[0]) for row in contrib_data))
+                max_score_width = max(len("Score (0-1)"), max(len(row[1]) for row in contrib_data))
+                max_level_width = max(len("Level"), max(len(row[2]) for row in contrib_data))
+
+                # Add header
+                log_lines.append(
+                    f"   {'Model':<{max_model_width}}  {'Score (0-1)':<{max_score_width}}  {'Level':<{max_level_width}}"
+                )
+                log_lines.append(f"   {'-' * max_model_width}  {'-' * max_score_width}  {'-' * max_level_width}")
+
+                # Add data rows
+                for model, score, level in contrib_data:
+                    log_lines.append(
+                        f"   {model:<{max_model_width}}  {score:<{max_score_width}}  {level:<{max_level_width}}"
+                    )
+
+        # Response Evolution Summary (for multi-round consensus)
+        if result.total_rounds > 1 and result.rounds:
+            log_lines.append("")  # Add spacing
+            log_lines.append("🔄  RESPONSE EVOLUTION:")
+
+            evolution_data = []
+            # Track which models participated in each round
+            for round_idx, round_data in enumerate(result.rounds):
+                round_num = round_idx + 1  # 1-indexed for display
+
+                if round_idx == 0:
+                    # Round 1: All models start fresh (no evolution yet)
+                    for response in round_data.responses:
+                        evolution_data.append([f"Round {round_num}", response.id, "Initial response"])
+                else:
+                    # Subsequent rounds: Check for evolution
+                    if round_data.response_evolutions:
+                        for evolution in round_data.response_evolutions:
+                            changes = []
+                            if evolution.vote_changed:
+                                changes.append("Vote Changed")
+                            if evolution.field_changes:
+                                changes.append(f"{len(evolution.field_changes)} fields modified")
+
+                            if changes:
+                                evolution_data.append(
+                                    [
+                                        f"Round {round_num}",
+                                        evolution.id,
+                                        ", ".join(changes),
+                                    ]
+                                )
+                            else:
+                                evolution_data.append([f"Round {round_num}", evolution.id, "No changes"])
+                    else:
+                        # No evolutions tracked for this round
+                        for response in round_data.responses:
+                            evolution_data.append(
+                                [
+                                    f"Round {round_num}",
+                                    response.id,
+                                    "No changes tracked",
+                                ]
+                            )
+
+            if evolution_data:
+                # Format evolution table using regular string formatting
+                max_round_width = max(len("Round"), max(len(row[0]) for row in evolution_data))
+                max_model_width = max(len("Model"), max(len(row[1]) for row in evolution_data))
+                max_changes_width = max(len("Changes"), max(len(row[2]) for row in evolution_data))
+
+                # Add header
+                log_lines.append(
+                    f"   {'Round':<{max_round_width}}  {'Model':<{max_model_width}}  {'Changes':<{max_changes_width}}"
+                )
+                log_lines.append(f"   {'-' * max_round_width}  {'-' * max_model_width}  {'-' * max_changes_width}")
+
+                # Add data rows
+                for round_str, model, changes in evolution_data:
+                    log_lines.append(
+                        f"   {round_str:<{max_round_width}}  {model:<{max_model_width}}  {changes:<{max_changes_width}}"
+                    )
+            else:
+                log_lines.append("   No evolution data available")
+
+        # Information Flow (if tracked)
+        if result.rounds:
+            has_flow = any(r.information_flow for r in result.rounds)
+            if has_flow or result.total_rounds > 1:
+                log_lines.append("")  # Add spacing
+                log_lines.append("📡  INFORMATION FLOW:")
+
+                flow_data = []
+                for round_idx, round_data in enumerate(result.rounds):
+                    round_num = round_idx + 1  # 1-indexed for display
+
+                    if round_idx == 0:
+                        # Round 1: No prior influence (models start independently)
+                        for response in round_data.responses:
+                            flow_data.append(
+                                [
+                                    f"Round {round_num}",
+                                    response.id,
+                                    "Independent (no prior rounds)",
+                                ]
+                            )
+                    elif round_data.information_flow:
+                        # Subsequent rounds with tracked influence
+                        for (
+                            influenced_model,
+                            influencers,
+                        ) in round_data.information_flow.items():
+                            if influencers:
+                                flow_data.append(
+                                    [
+                                        f"Round {round_num}",
+                                        influenced_model,
+                                        " → ".join(influencers),
+                                    ]
+                                )
+                            else:
+                                flow_data.append(
+                                    [
+                                        f"Round {round_num}",
+                                        influenced_model,
+                                        "No direct influence",
+                                    ]
+                                )
+                    else:
+                        # No flow data for this round but show models participated
+                        for response in round_data.responses:
+                            flow_data.append(
+                                [
+                                    f"Round {round_num}",
+                                    response.id,
+                                    "Influence not tracked",
+                                ]
+                            )
+
+                if flow_data:
+                    # Format flow table using regular string formatting
+                    max_round_width = max(len("Round"), max(len(row[0]) for row in flow_data))
+                    max_model_width = max(len("Model"), max(len(row[1]) for row in flow_data))
+                    max_influenced_width = max(len("Influenced By"), max(len(row[2]) for row in flow_data))
+
+                    # Add header
+                    log_lines.append(
+                        f"   {'Round':<{max_round_width}}  {'Model':<{max_model_width}}  {'Influenced By':<{max_influenced_width}}"
+                    )
+                    log_lines.append(
+                        f"   {'-' * max_round_width}  {'-' * max_model_width}  {'-' * max_influenced_width}"
+                    )
+
+                    # Add data rows
+                    for round_str, model, influenced in flow_data:
+                        log_lines.append(
+                            f"   {round_str:<{max_round_width}}  {model:<{max_model_width}}  {influenced:<{max_influenced_width}}"
+                        )
+
+        # Final response info
+        if result.final_response:
+            log_lines.append("")  # Add spacing
+            log_lines.append("🎯  FINAL RESPONSE:")
+            # Show key fields from the response
+            response_dict = result.final_response.model_dump()
+            for key, value in response_dict.items():
+                if key == "reasoning":
+                    continue  # Show reasoning separately below
+                # Wrap long values for readability
+                value_str = str(value)
+                if len(value_str) > 60:
+                    wrapped_value = self._wrap_text_for_logging(value_str, max_length=60, indent=4)
+                    log_lines.append(f"   • {key}:")
+                    for line in wrapped_value.split("\n"):
+                        log_lines.append(f"     {line}")
+                else:
+                    log_lines.append(f"   • {key}: {value_str}")
+
+        # Disagreement analysis
+        if result.rounds and result.rounds[-1].disagreement_analysis:
+            disagreement = result.rounds[-1].disagreement_analysis
+            if disagreement.disagreement_fields:
+                log_lines.append("")  # Add spacing
+                log_lines.append(f"⚡  DISAGREEMENTS: {list(disagreement.disagreement_fields.keys())}")
+            if disagreement.consensus_fields:
+                log_lines.append(f"🤝  CONSENSUS FIELDS: {disagreement.consensus_fields}")
+
+        # Reasoning - show beautifully wrapped
+        if result.reasoning:
+            log_lines.append("")  # Add spacing
+            log_lines.append("💭  CONSENSUS REASONING:")
+            wrapped_reasoning = self._wrap_text_for_logging(result.reasoning, max_length=76, indent=3)
+            for line in wrapped_reasoning.split("\n"):
+                log_lines.append(f"   {line}")
+
+        log_lines.append("=" * 80)
+
+        # Log everything as a single block
+        logger.info("\n" + "\n".join(log_lines))
+
+    def _get_vote_summary(self, response_content: T) -> str:
+        """Generate a detailed summary of what a vote group voted for, including reasoning."""
+        try:
+            # Convert to dict to inspect fields
+            content_dict = response_content.model_dump()
+
+            # Separate voting fields and ignored/reasoning fields
+            voting_fields = []
+            ignored_fields = []
+            reasoning_text = ""
+
+            for field_name, field_value in content_dict.items():
+                # Handle reasoning specially
+                if field_name == "reasoning":
+                    reasoning_text = str(field_value)
+                    continue
+
+                # Get field metadata to check if it's ignored
+                field_info = response_content.__class__.model_fields.get(field_name)
+                is_ignored = False
+                if field_info and field_info.json_schema_extra:
+                    extra = field_info.json_schema_extra
+                    if isinstance(extra, dict) and "voting_comparison" in extra:
+                        voting_comparison = extra["voting_comparison"]
+                        if isinstance(voting_comparison, dict):
+                            strategy = voting_comparison.get("strategy")
+                            if strategy == "IGNORE" or (
+                                hasattr(ComparisonStrategy, "IGNORE") and strategy == ComparisonStrategy.IGNORE.value
+                            ):
+                                is_ignored = True
+
+                # Format the field value nicely
+                if isinstance(field_value, (str, int, float, bool)):
+                    field_str = f"{field_name}={field_value}"
+                else:
+                    field_str = f"{field_name}={type(field_value).__name__}"
+
+                if is_ignored:
+                    ignored_fields.append(f"({field_str})")  # Parentheses indicate ignored
+                else:
+                    voting_fields.append(field_str)
+
+            # Build the summary
+            summary_parts = []
+
+            # Add voting fields first
+            if voting_fields:
+                summary_parts.append(", ".join(voting_fields))
+
+            # Add ignored fields with indicator
+            if ignored_fields:
+                summary_parts.append(f"🔒 {', '.join(ignored_fields)}")
+
+            # Add reasoning with wrapping
+            if reasoning_text:
+                # Wrap reasoning to multiple lines with proper indentation
+                wrapped_reasoning = self._wrap_text_for_logging(reasoning_text, max_length=70, indent=10)
+                summary_parts.append(f"💭 {wrapped_reasoning}")
+
+            return "\n      ".join(summary_parts) if summary_parts else "No fields found"
+
+        except Exception:
+            # Safe fallback
+            return str(response_content)
 
     def _calculate_field_similarity(self, values: List[str]) -> float:
         """Calculate semantic similarity score for a set of field values.
@@ -1432,174 +2040,3 @@ Provide a response in the same JSON format as the tied responses above.
         # Fallback to basic calculation
         similarity = 1.0 - ((len(unique_values) - 1) / len(values))
         return similarity
-
-    def _log_field_similarities(self, round: ConsensusRound[T]) -> None:
-        """Log detailed field similarity analysis for verbose output."""
-        if not round.responses or not round.disagreement_analysis:
-            return
-
-        logger.info("  Field Similarity Analysis:")
-
-        # Calculate similarity for each field with semantic details
-        field_similarities: Dict[str, tuple[float, str]] = {}
-
-        for field, values in round.disagreement_analysis.disagreement_fields.items():
-            similarity = self._calculate_field_similarity(values)
-
-            # Determine if values are semantically similar despite being textually different
-            unique_values = len(set(values))
-            semantic_note = ""
-            if unique_values > 1 and similarity >= 0.7:
-                semantic_note = " (semantically aligned)"
-            elif unique_values > 1 and similarity >= 0.5:
-                semantic_note = " (partially aligned)"
-            elif unique_values == 1:
-                semantic_note = " (identical)"
-
-            field_similarities[field] = (similarity, semantic_note)
-
-        # Sort fields by similarity (lowest first - most disagreement)
-        sorted_fields = sorted(field_similarities.items(), key=lambda x: x[0][1])
-
-        for field, (similarity, note) in sorted_fields:
-            # Create visual indicator
-            bar_length = int(similarity * 20)
-            bar = "█" * bar_length + "░" * (20 - bar_length)
-
-            # Determine status emoji based on semantic similarity
-            if similarity >= 0.8:
-                status = "✓"  # High agreement (semantic or textual)
-            elif similarity >= 0.5:
-                status = "~"  # Moderate agreement
-            else:
-                status = "✗"  # Low agreement
-
-            logger.info(f"    {status} {field}: [{bar}] {similarity:.2%}{note}")
-
-        # Log consensus progress visualization
-        self._log_consensus_progress_visual(round)
-
-    def _log_consensus_progress_visual(self, round: ConsensusRound[T]) -> None:
-        """Log visual representation of consensus progress."""
-        if not round.responses:
-            return
-
-        # Create model voting visualization
-        logger.info("  Model Voting Alignment:")
-
-        # Group models by their votes
-        vote_groups: Dict[str, List[str]] = {}
-        for response in round.responses:
-            vote_key = self._get_voting_key_from_content(response.content)
-            if vote_key not in vote_groups:
-                vote_groups[vote_key] = []
-            vote_groups[vote_key].append(response.id)
-
-        # Sort groups by size (largest first)
-        sorted_groups = sorted(vote_groups.items(), key=lambda x: len(x[1]), reverse=True)
-
-        # Visualize voting alignment
-        total_models = len(round.responses)
-        for i, (vote_key, models) in enumerate(sorted_groups):
-            percentage = (len(models) / total_models) * 100
-            bar_length = int(percentage / 5)  # Scale to 20 chars max
-            bar = "▓" * bar_length + "░" * (20 - bar_length)
-
-            # Create model list string
-            model_list = ", ".join(models[:3])
-            if len(models) > 3:
-                model_list += f", +{len(models) - 3} more"
-
-            logger.info(f"    Group {i + 1} [{bar}] {percentage:.1f}% ({len(models)} models): {model_list}")
-            logger.info(f"      Vote hash: {vote_key}")
-
-        # Show convergence trend if we have evolution data
-        if hasattr(self, "_response_evolution_tracking") and self._response_evolution_tracking:
-            self._log_evolution_trends(round)
-
-    def _log_evolution_trends(self, round: ConsensusRound[T]) -> None:
-        """Log how models are evolving their responses."""
-        logger.info("  Response Evolution Trends:")
-
-        # Count models that changed votes vs stayed same
-        changed_count = 0
-        stayed_count = 0
-
-        for evolutions in self._response_evolution_tracking.values():
-            for evolution in evolutions:
-                if evolution.round_to == round.round_number:
-                    if evolution.vote_changed:
-                        changed_count += 1
-                    else:
-                        stayed_count += 1
-
-        if changed_count + stayed_count > 0:
-            change_percentage = (changed_count / (changed_count + stayed_count)) * 100
-            logger.info(
-                f"    Vote changes: {changed_count} models changed ({change_percentage:.1f}%), {stayed_count} stayed"
-            )
-
-            # Show influence patterns
-            influence_map: Dict[str, int] = {}
-            for evolutions in self._response_evolution_tracking.values():
-                for evolution in evolutions:
-                    if evolution.round_to == round.round_number and evolution.influenced_by:
-                        for influencer in evolution.influenced_by:
-                            influence_map[influencer] = influence_map.get(influencer, 0) + 1
-
-            if influence_map:
-                logger.info("    Most influential models:")
-                for model, influence_count in sorted(influence_map.items(), key=lambda x: x[1], reverse=True)[:3]:
-                    logger.info(f"      • {model}: influenced {influence_count} other models")
-
-    def _log_round_metrics(self, round: ConsensusRound[T], round_num: int) -> None:
-        """Log metrics for a consensus round based on verbosity level."""
-        if self._settings.verbosity == VerbosityLevel.SILENT:
-            return
-
-        # Basic logging for NORMAL level
-        if self._settings.verbosity.value >= VerbosityLevel.NORMAL.value:
-            unique_votes = len(set(self._get_voting_key_from_content(r.content) for r in round.responses))
-            convergence = self._calculate_convergence_score([round])
-            logger.info(
-                f"Round {round_num}: {len(round.responses)} responses, "
-                f"{unique_votes} unique votes, convergence: {convergence:.2f}"
-            )
-
-        # Detailed logging for VERBOSE level
-        if self._settings.verbosity == VerbosityLevel.VERBOSE:
-            # Log voting distribution
-            vote_counts: dict[str, int] = {}
-            for response in round.responses:
-                key = self._get_voting_key_from_content(response.content)
-                vote_counts[key] = vote_counts.get(key, 0) + 1
-
-            logger.info(f"  Voting distribution: {dict(sorted(vote_counts.items(), key=lambda x: x[1], reverse=True))}")
-
-            if round.consensus_achieved:
-                logger.info(f"  ✓ Consensus achieved in round {round_num}")
-
-            # Log disagreement analysis if present
-            if round.disagreement_analysis:
-                num_disagreements = len(round.disagreement_analysis.disagreement_fields)
-                logger.info(f"  Disagreements: {num_disagreements} fields (excluding IGNORED fields like 'reasoning')")
-                if round.disagreement_analysis.disagreement_fields:
-                    # Log detailed field analysis with similarity scores
-                    self._log_field_similarities(round)
-
-                    for (
-                        field,
-                        values,
-                    ) in round.disagreement_analysis.disagreement_fields.items():
-                        unique_values = len(set(values))
-                        logger.info(f"    - {field}: {unique_values} unique values")
-
-                        # Show actual values for better understanding
-                        if unique_values <= 3:  # Only show if not too many unique values
-                            value_counts = Counter(values)
-                            for value, count in value_counts.most_common():
-                                wrapped = self._wrap_text_for_logging(value, max_length=70, indent=10)
-                                lines = wrapped.split("\n")
-                                logger.info(f"        • ({count} votes) {lines[0]}")
-                                for line in lines[1:]:
-                                    logger.info(f"          {line}")

@@ -22,7 +22,7 @@ from com_blockether_catalyst.prompt.PromptAlignmentTypes import (
     AlignmentPrinciple,
     AlignmentPrincipleList,
     EvaluationResult,
-    SemanticStringList,
+    SemanticString,
 )
 
 
@@ -43,10 +43,10 @@ class TestPromptAlignmentCoreEnhanced:
         evaluation_result = EvaluationResult(
             alignment_score=0.85,
             feedback="Good alignment",
-            strengths=SemanticStringList(["Clear"]),
-            weaknesses=SemanticStringList([]),
-            suggested_improvements=SemanticStringList([]),
-            reasoning="The prompt aligns well with the target behavior and produces quality responses consistently.",
+            strengths=[SemanticString(s) for s in ["Clear"]],
+            weaknesses=[SemanticString(s) for s in []],
+            suggested_improvements=[SemanticString(s) for s in []],
+            reasoning="The prompt aligns exceptionally well with the target behavior and produces quality responses consistently across multiple evaluation dimensions. The clarity of instruction and specificity of requirements ensure robust and reliable model outputs that meet all defined criteria.",
         )
         mock.call = AsyncMock(
             return_value=ConsensusResult(
@@ -69,8 +69,8 @@ class TestPromptAlignmentCoreEnhanced:
         mock = MagicMock(spec=Consensus)
         alignment_feedback = AlignmentFeedback(
             overall_assessment="Excellent prompt structure that can be learned from",
-            specific_issues=SemanticStringList([]),
-            improvement_suggestions=SemanticStringList([]),
+            specific_issues=[SemanticString(s) for s in []],
+            improvement_suggestions=[SemanticString(s) for s in []],
             principles_to_apply=AlignmentPrincipleList(
                 [
                     AlignmentPrinciple(
@@ -224,9 +224,9 @@ class TestPromptAlignmentCoreEnhanced:
                 final_response=EvaluationResult(
                     alignment_score=0.4,
                     feedback="Needs improvement",
-                    strengths=SemanticStringList([]),
-                    weaknesses=SemanticStringList(["Too vague"]),
-                    suggested_improvements=SemanticStringList(["Be more specific"]),
+                    strengths=[SemanticString(s) for s in []],
+                    weaknesses=[SemanticString(s) for s in ["Too vague"]],
+                    suggested_improvements=[SemanticString(s) for s in ["Be more specific"]],
                     reasoning="The prompt lacks the specificity required for quality responses.",
                 ),
                 rounds=[],
@@ -240,9 +240,9 @@ class TestPromptAlignmentCoreEnhanced:
                 final_response=EvaluationResult(
                     alignment_score=0.9,
                     feedback="Much better",
-                    strengths=SemanticStringList(["Specific"]),
-                    weaknesses=SemanticStringList([]),
-                    suggested_improvements=SemanticStringList([]),
+                    strengths=[SemanticString(s) for s in ["Specific"]],
+                    weaknesses=[SemanticString(s) for s in []],
+                    suggested_improvements=[SemanticString(s) for s in []],
                     reasoning="The prompt now includes the specificity needed for alignment.",
                 ),
                 rounds=[],
@@ -256,9 +256,9 @@ class TestPromptAlignmentCoreEnhanced:
                 final_response=EvaluationResult(
                     alignment_score=0.9,
                     feedback="Final check",
-                    strengths=SemanticStringList(["Specific"]),
-                    weaknesses=SemanticStringList([]),
-                    suggested_improvements=SemanticStringList([]),
+                    strengths=[SemanticString(s) for s in ["Specific"]],
+                    weaknesses=[SemanticString(s) for s in []],
+                    suggested_improvements=[SemanticString(s) for s in []],
                     reasoning="The prompt successfully aligns with the specified requirements and demonstrates good structure.",
                 ),
                 rounds=[],
@@ -347,8 +347,8 @@ class TestPromptAlignmentCoreEnhanced:
             consensus_achieved=True,
             final_response=AlignmentFeedback(
                 overall_assessment="Analysis of ideal response",
-                specific_issues=SemanticStringList([]),
-                improvement_suggestions=SemanticStringList([]),
+                specific_issues=[SemanticString(s) for s in []],
+                improvement_suggestions=[SemanticString(s) for s in []],
                 principles_to_apply=AlignmentPrincipleList(
                     [AlignmentPrinciple(principle="Test principle", importance=0.8)]
                 ),

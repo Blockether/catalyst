@@ -14,9 +14,6 @@ import traceback
 import time
 from typing import Any, Optional, Dict, List
 from pathlib import Path
-import json
-import pprint
-import inspect
 import keyword
 import builtins
 import re
@@ -24,36 +21,22 @@ import re
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
-from rich.syntax import Syntax
 from rich.panel import Panel
-from rich.columns import Columns
-from rich.text import Text
 from rich.prompt import Prompt, Confirm
 from rich import print as rprint
-from rich.pretty import Pretty
-from rich.layout import Layout
-from rich.live import Live
-from rich.align import Align
 from rich.rule import Rule
 import ast
 import glob
-from pathlib import Path as PathlibPath
-from difflib import SequenceMatcher
 
 # Check for CLI dependencies since this is a tool
 try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
-    from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
     from prompt_toolkit.lexers import PygmentsLexer
     from prompt_toolkit.styles import Style
     from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.shortcuts import radiolist_dialog
-    from prompt_toolkit.shortcuts import input_dialog
-    from prompt_toolkit.application.current import get_app_session
-    from prompt_toolkit.application import get_app
     from pygments.lexers.python import PythonLexer
 except ImportError:
     print("Error: This tool requires CLI dependencies.")
@@ -80,7 +63,6 @@ class PythonCompleter(Completer):
         string_match = re.search(r'["\']([^"\']*)$', text)
         if string_match:
             partial_path = string_match.group(1)
-            # quote_char = text[string_match.start()]  # Not used currently
 
             # Expand tilde to home directory
             if partial_path.startswith('~'):
@@ -282,8 +264,6 @@ class PickleViewer:
         self._history: List[str] = []
         self._locals: Dict[str, Any] = {}
         self._last_interrupt_time: float = 0
-        self._pretty_print_mode: bool = False
-        self._expand_path: Optional[str] = None
 
         # Setup prompt toolkit session
         self._setup_prompt_session()
@@ -310,11 +290,6 @@ class PickleViewer:
             """Ctrl+L: Open file chooser"""
             event.app.exit(result='__file_chooser__')
 
-        @bindings.add('c-f')
-        def _(event):
-            """Ctrl+F: Fuzzy search in data"""
-            event.app.exit(result='__fuzzy_search__')
-
         # Note: Ctrl+E is now handled within the interactive viewer, not here
 
         @bindings.add('escape')
@@ -324,7 +299,7 @@ class PickleViewer:
 
         # Create the prompt session
         self._session = PromptSession(
-            message=HTML('<prompt>&gt;&gt;&gt;</prompt> '),
+            message='>>> ',
             history=FileHistory(str(history_file)),
             auto_suggest=AutoSuggestFromHistory(),
             enable_history_search=True,
@@ -751,153 +726,6 @@ class PickleViewer:
         # Clear screen when done
         self._console.clear()
 
-    def _fuzzy_search(self) -> None:
-        """Perform fuzzy search in data structures."""
-        if not self._locals:
-            self._console.print("[yellow]No variables defined[/yellow]")
-            return
-
-        # Show available variables
-        var_list = [k for k in self._locals.keys() if not k.startswith('_') and k not in
-                    ['len', 'type', 'dir', 'vars', 'isinstance', 'hasattr', 'getattr',
-                     'filter', 'map', 'list', 'dict', 'set', 'tuple', 'sum', 'min', 'max',
-                     'sorted', 'reversed', 'enumerate', 'zip', 'any', 'all', 'print']]
-
-        if var_list:
-            self._console.print("[bold cyan]Available variables:[/bold cyan] " + ", ".join(f"[bold green]{v}[/bold green]" for v in var_list))
-
-        # Create temporary prompt sessions with proper ESC handling
-        kb = KeyBindings()
-
-        @kb.add('escape', eager=True)
-        def _(event):
-            event.app.exit(result='')
-
-        @kb.add('c-c')
-        def _(event):
-            event.app.exit(result='')
-
-        # Get the variable to search in
-        try:
-            var_session = PromptSession(
-                message="Enter variable to search in (ESC to cancel): ",
-                key_bindings=kb,
-                enable_open_in_editor=False
-            )
-            var_name = var_session.prompt(default=var_list[0] if var_list else 'x')
-            if not var_name:  # ESC pressed
-                return
-        except (KeyboardInterrupt, EOFError):
-            return
-
-        if var_name not in self._locals:
-            self._console.print(f"[red]Variable '{var_name}' not found[/red]")
-            return
-
-        # Get search pattern
-        try:
-            pattern_session = PromptSession(
-                message="Enter search pattern (fuzzy matching, ESC to cancel): ",
-                key_bindings=kb,
-                enable_open_in_editor=False
-            )
-            pattern = pattern_session.prompt()
-            if not pattern:
-                return
-        except (KeyboardInterrupt, EOFError):
-            return
-
-        # Get the object to search
-        obj = self._locals[var_name]
-
-        # Perform fuzzy search
-        results = self._fuzzy_search_recursive(obj, pattern, path=var_name)
-
-        if results:
-            self._console.print(f"\n[bold green]Found {len(results)} matches:[/bold green]")
-            for path, value, score in results[:20]:  # Limit to 20 results
-                self._console.print(f"  [bold blue]{path}[/bold blue] (score: {score:.2f})")
-                self._console.print(f"    → {self._format_value(value, max_length=60)}")
-
-            if len(results) > 20:
-                self._console.print(f"\n[bold yellow]... and {len(results) - 20} more matches[/bold yellow]")
-        else:
-            self._console.print(f"[yellow]No matches found for '{pattern}'[/yellow]")
-
-    def _fuzzy_search_recursive(self, obj: Any, pattern: str, path: str = '',
-                                 results: Optional[List] = None, depth: int = 0) -> List:
-        """Recursively search for fuzzy matches in data structure."""
-        if results is None:
-            results = []
-
-        if depth > 5:  # Limit depth to prevent infinite recursion
-            return results
-
-        pattern_lower = pattern.lower()
-
-        # Helper function to calculate fuzzy match score
-        def fuzzy_score(text: str) -> float:
-            text_lower = str(text).lower()
-            # Check for substring match first (higher score)
-            if pattern_lower in text_lower:
-                return 1.0
-            # Use SequenceMatcher for fuzzy matching
-            return SequenceMatcher(None, pattern_lower, text_lower).ratio()
-
-        try:
-            if isinstance(obj, dict):
-                for key, value in obj.items():
-                    # Check if key matches
-                    key_score = fuzzy_score(str(key))
-                    if key_score > 0.6:  # Threshold for fuzzy match
-                        results.append((f"{path}[{repr(key)}]", value, key_score))
-
-                    # Check if string value matches
-                    if isinstance(value, str):
-                        value_score = fuzzy_score(value)
-                        if value_score > 0.6:
-                            results.append((f"{path}[{repr(key)}]", value, value_score))
-
-                    # Recurse into nested structures
-                    if isinstance(value, (dict, list, tuple)):
-                        self._fuzzy_search_recursive(value, pattern, f"{path}[{repr(key)}]", results, depth + 1)
-
-            elif isinstance(obj, (list, tuple)):
-                for i, item in enumerate(obj[:100]):  # Limit to first 100 items
-                    # Check if string item matches
-                    if isinstance(item, str):
-                        item_score = fuzzy_score(item)
-                        if item_score > 0.6:
-                            results.append((f"{path}[{i}]", item, item_score))
-
-                    # Recurse into nested structures
-                    if isinstance(item, (dict, list, tuple)):
-                        self._fuzzy_search_recursive(item, pattern, f"{path}[{i}]", results, depth + 1)
-
-            elif hasattr(obj, '__dict__'):
-                for attr, value in vars(obj).items():
-                    # Check attribute name
-                    attr_score = fuzzy_score(attr)
-                    if attr_score > 0.6:
-                        results.append((f"{path}.{attr}", value, attr_score))
-
-                    # Check if string value matches
-                    if isinstance(value, str):
-                        value_score = fuzzy_score(value)
-                        if value_score > 0.6:
-                            results.append((f"{path}.{attr}", value, value_score))
-
-                    # Recurse into nested structures
-                    if isinstance(value, (dict, list, tuple)):
-                        self._fuzzy_search_recursive(value, pattern, f"{path}.{attr}", results, depth + 1)
-
-        except Exception:
-            pass  # Skip items that can't be accessed
-
-        # Sort by score (highest first) and return
-        results.sort(key=lambda x: x[2], reverse=True)
-        return results
-
     def _load_file(self, filepath: Path) -> None:
         """Load a pickle file."""
         try:
@@ -1144,7 +972,6 @@ class PickleViewer:
 
 [bold]Hotkeys:[/bold]
   [cyan]Ctrl+L[/cyan]   - Open pickle file chooser dialog
-  [cyan]Ctrl+F[/cyan]   - Fuzzy search in data structures
 
 [bold]Intellisense Features:[/bold]
   [cyan]Tab[/cyan]      - Autocomplete variables, attributes, and methods
@@ -1199,7 +1026,6 @@ class PickleViewer:
 
         # Essential hotkeys
         welcome_info.add_row("[bold yellow]Essential Hotkeys:[/bold yellow]", "")
-        welcome_info.add_row("  Ctrl+F", "Fuzzy search in data structures")
         welcome_info.add_row("  ESC", "Cancel current prompt/dialog")
         welcome_info.add_row("  Ctrl+C (2x)", "Exit the viewer")
         welcome_info.add_row("  Ctrl+D", "Exit the viewer")
@@ -1261,10 +1087,6 @@ class PickleViewer:
                 if query == '__file_chooser__':
                     self._open_file_chooser()
                     continue
-                elif query == '__fuzzy_search__':
-                    self._fuzzy_search()
-                    continue
-
                 if not query or not query.strip():
                     continue
 

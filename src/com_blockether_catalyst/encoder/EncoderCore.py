@@ -5,6 +5,7 @@ This module provides a singleton encoder that's initialized once and reused
 across the application for generating text embeddings.
 """
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import List, Optional, Union
@@ -100,7 +101,7 @@ class EncoderCore:
         embedding2: np.ndarray,
     ) -> float:
         """
-        Calculate cosine similarity between two embeddings.
+        Calculate cosine similarity between two embeddings using sklearn.
 
         Args:
             embedding1: First embedding vector
@@ -115,16 +116,13 @@ class EncoderCore:
         if embedding1.shape != embedding2.shape:
             raise ValueError(f"Embedding shapes must match: {embedding1.shape} != {embedding2.shape}")
 
-        # Normalize embeddings
-        norm1 = np.linalg.norm(embedding1)
-        norm2 = np.linalg.norm(embedding2)
+        from sklearn.metrics.pairwise import cosine_similarity
 
-        # Handle zero vectors
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
+        # Reshape for sklearn (needs 2D arrays)
+        emb1 = embedding1.reshape(1, -1)
+        emb2 = embedding2.reshape(1, -1)
 
-        # Calculate cosine similarity
-        similarity = np.dot(embedding1, embedding2) / (norm1 * norm2)
+        similarity = cosine_similarity(emb1, emb2)[0, 0]
         return float(similarity)
 
     @classmethod

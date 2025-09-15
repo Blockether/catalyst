@@ -79,4 +79,5 @@ class InstructorLLMCall(ArityOneTypedCall[str, T]):
             response_model=self.response_model,
             temperature=self.temperature,
         )
+
         return response  # type: ignore[no-any-return]

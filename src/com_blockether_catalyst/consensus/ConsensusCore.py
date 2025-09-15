@@ -12,11 +12,11 @@ from .Consensus import Consensus
 from .ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
-    TypedCallBaseForConsensus,
 )
+from .VotingComparison import BaseModelWithReasoning
 
-# Type variable bound to TypedCallBaseForConsensus
-T = TypeVar("T", bound=TypedCallBaseForConsensus)
+# Type variable bound to BaseModelWithReasoning
+T = TypeVar("T", bound=BaseModelWithReasoning)
 
 
 class ConsensusCore(Generic[T]):

@@ -1,5 +1,5 @@
 <!-- Replace loading indicator content with actual response -->
-<div id="loading-{{ message_id }}" class="flex items-start gap-2 sm:gap-3" hx-swap-oob="outerHTML">
+<div id="loading-{{ message_id }}" class="flex items-start gap-2 sm:gap-3">
     {% if is_error %}
     <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-red-500 flex items-center justify-center text-white text-xs sm:text-sm font-bold flex-shrink-0">
         !
@@ -11,11 +11,11 @@
         </div>
     </div>
     {% else %}
-    <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs sm:text-sm font-bold flex-shrink-0">
-        W
-    </div>xhr
+    <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-[#FFCC00] flex items-center justify-center text-white text-xs sm:text-sm font-bold flex-shrink-0">
+        {{ assistant_avatar }}
+    </div>
     <div class="flex-1 min-w-0">
-        <div class="text-xs text-gray-500 mb-1">Workflow Assistant</div>
+        <div class="text-xs text-gray-500 mb-1">{{ assistant_name }}</div>
         <div class="bg-gray-100 rounded-xl sm:rounded-2xl rounded-tl-none px-3 sm:px-4 py-2 sm:py-3 max-w-full sm:max-w-3xl">
             <div class="markdown-raw">{{ response }}</div>
         </div>

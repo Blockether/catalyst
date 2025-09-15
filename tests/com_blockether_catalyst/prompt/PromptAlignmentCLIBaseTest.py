@@ -38,7 +38,12 @@ class TestPromptAlignmentCLIBase:
     @pytest.fixture
     def cli_instance(self, tmp_path):
         """Create a test CLI instance."""
-        return self.ConcreteImplementation(prompt_name="test", prompt_dir=tmp_path / "prompts")
+        # Create the prompts directory and test file
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir(exist_ok=True)
+        test_file = prompts_dir / "test.txt"
+        test_file.write_text("Test prompt with {placeholder1} and {placeholder2}")
+        return self.ConcreteImplementation(prompt_name="test", prompt_dir=prompts_dir)
 
     def test_get_prompt_placeholders_extraction(self, cli_instance):
         """Test that placeholders are correctly extracted from prompt."""
@@ -116,22 +121,22 @@ class TestPromptAlignmentCLIBase:
         assert is_valid is True
         assert len(missing) == 0
 
-    def test_fill_prompt_success(self, cli_instance):
+    def test_fill_template_success(self, cli_instance):
         """Test successful prompt filling."""
         prompt = "User {username} has {count} items"
         values = {"username": "alice123", "count": 5}
 
-        result = cli_instance._fill_prompt(prompt, values)
+        result = cli_instance._fill_template(prompt, values)
 
         assert result == "User alice123 has 5 items"
 
-    def test_fill_prompt_missing_placeholder_raises_error(self, cli_instance):
+    def test_fill_template_missing_placeholder_raises_error(self, cli_instance):
         """Test that missing placeholders raise ValueError."""
         prompt = "User {username} has {count} items in {location}"
         values = {"username": "bob456"}
 
         with pytest.raises(ValueError) as exc_info:
-            cli_instance._fill_prompt(prompt, values)
+            cli_instance._fill_template(prompt, values)
 
         error_msg = str(exc_info.value)
         assert "Missing required placeholders" in error_msg
@@ -139,33 +144,33 @@ class TestPromptAlignmentCLIBase:
         assert "location" in error_msg
         assert "Available values: username" in error_msg
 
-    def test_fill_prompt_no_placeholders(self, cli_instance):
+    def test_fill_template_no_placeholders(self, cli_instance):
         """Test filling prompt without placeholders."""
         prompt = "Static prompt text"
         values = {"unused": "value"}
 
-        result = cli_instance._fill_prompt(prompt, values)
+        result = cli_instance._fill_template(prompt, values)
 
         assert result == "Static prompt text"
 
-    def test_fill_prompt_empty_values_dict(self, cli_instance):
+    def test_fill_template_empty_values_dict(self, cli_instance):
         """Test error message when no values provided."""
         prompt = "Hello {name}"
         values = {}
 
         with pytest.raises(ValueError) as exc_info:
-            cli_instance._fill_prompt(prompt, values)
+            cli_instance._fill_template(prompt, values)
 
         error_msg = str(exc_info.value)
         assert "Missing required placeholders: name" in error_msg
         assert "Available values: none" in error_msg
 
-    def test_fill_prompt_complex_types(self, cli_instance):
+    def test_fill_template_complex_types(self, cli_instance):
         """Test filling prompt with non-string values."""
         prompt = "Count: {count}, List: {items}, Flag: {enabled}"
         values = {"count": 42, "items": [1, 2, 3], "enabled": True}
 
-        result = cli_instance._fill_prompt(prompt, values)
+        result = cli_instance._fill_template(prompt, values)
 
         assert result == "Count: 42, List: [1, 2, 3], Flag: True"
 
@@ -222,15 +227,29 @@ class TestPromptAlignmentCLIBase:
 
     def test_display_raw_json(self, cli_instance):
         """Test that _display_raw_json properly formats and displays JSON."""
-        test_data = {
-            "sections": [
-                {"title": "Introduction", "page": 1},
-                {"title": "Methods", "page": 5},
+        from typing import List
+
+        from pydantic import BaseModel
+
+        class TestSection(BaseModel):
+            title: str
+            page: int
+
+        class TestData(BaseModel):
+            sections: List[TestSection]
+            keywords: List[str]
+            count: int
+            nested: Dict[str, Any]
+
+        test_data = TestData(
+            sections=[
+                TestSection(title="Introduction", page=1),
+                TestSection(title="Methods", page=5),
             ],
-            "keywords": ["machine learning", "AI"],
-            "count": 42,
-            "nested": {"deep": {"value": "test"}},
-        }
+            keywords=["machine learning", "AI"],
+            count=42,
+            nested={"deep": {"value": "test"}},
+        )
 
         # Mock the console to capture output
         with patch.object(cli_instance.console, "print") as mock_print:
@@ -254,12 +273,15 @@ class TestPromptAlignmentCLIBase:
         """Test that _display_raw_json handles non-serializable objects."""
         from datetime import datetime
 
-        test_data = {
-            "timestamp": datetime.now(),
-            "path": Path("/test/path"),
-            "function": lambda x: x,  # Non-serializable
-        }
+        from pydantic import BaseModel, Field
 
-        # Should not raise an error due to default=str
+        class TestDataWithTime(BaseModel):
+            timestamp: datetime = Field(default_factory=datetime.now)
+            path: Path
+            data: str
+
+        test_data = TestDataWithTime(path=Path("/test/path"), data="test data")
+
+        # Should not raise an error
         with patch.object(cli_instance.console, "print"):
             cli_instance._display_raw_json(test_data)

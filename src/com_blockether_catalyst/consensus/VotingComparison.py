@@ -6,6 +6,7 @@ allowing fields to be compared in different ways (exact match, range, ignored, e
 """
 
 from enum import Enum
+from textwrap import dedent
 from typing import Any, Callable, Dict, Optional, TypeVar, Union, overload
 
 from pydantic import BaseModel
@@ -47,7 +48,7 @@ class VotingMetadata(BaseModel):
         description="For RANGE strategy, the bin width as a fraction (0.2 = 20% bins for ~10% matching)",
     )
     threshold: float = PydanticField(
-        default=0.8,
+        default=0.7,
         description="For SEMANTIC and derived strategies, similarity threshold",
     )
     decimal_places: Optional[int] = PydanticField(
@@ -84,15 +85,15 @@ class FieldComparator:
             True if values are considered equal according to strategy
         """
         if strategy == ComparisonStrategy.IGNORE:
-            return True  # Always considered equal
+            return True
 
         if strategy == ComparisonStrategy.EXACT:
             return bool(value1 == value2)
 
         if strategy == ComparisonStrategy.RANGE:
             if not isinstance(value1, (int, float)) or not isinstance(value2, (int, float)):
-                return bool(value1 == value2)  # Fall back to exact for non-numeric
-            tolerance = tolerance or 0.1  # Default 10% tolerance
+                return bool(value1 == value2)
+            tolerance = tolerance or 0.1
             return abs(value1 - value2) <= tolerance * max(abs(value1), abs(value2), 1)
 
         if strategy == ComparisonStrategy.CUSTOM:
@@ -226,94 +227,7 @@ class FieldComparator:
             return 0.0
 
     @staticmethod
-    def _compare_sequence_ordered_alike(seq1: Any, seq2: Any, threshold: float) -> bool:
-        """Compare sequences allowing size differences, preserving order for matching elements."""
-        if not isinstance(seq1, (list, tuple)) or not isinstance(seq2, (list, tuple)):
-            return bool(seq1 == seq2)
-
-        if not seq1 and not seq2:
-            return True
-        if not seq1 or not seq2:
-            # Empty vs non-empty - check if threshold allows it
-            return threshold <= 0.0
-
-        # Use sliding window to find best alignment
-        smaller = seq1 if len(seq1) <= len(seq2) else seq2
-        larger = seq2 if len(seq1) <= len(seq2) else seq1
-
-        best_match_ratio = 0.0
-
-        # Try different starting positions in the larger sequence
-        for start_idx in range(len(larger) - len(smaller) + 1):
-            matches = 0
-            for i, item in enumerate(smaller):
-                if FieldComparator._compare_items_recursively(item, larger[start_idx + i], threshold):
-                    matches += 1
-
-            match_ratio = matches / len(smaller)
-            best_match_ratio = max(best_match_ratio, match_ratio)
-
-        # Also check partial matches at boundaries
-        # Check prefix match
-        prefix_matches = 0
-        for i in range(min(len(seq1), len(seq2))):
-            if FieldComparator._compare_items_recursively(seq1[i], seq2[i], threshold):
-                prefix_matches += 1
-            else:
-                break
-
-        prefix_ratio = prefix_matches / max(len(seq1), len(seq2))
-        best_match_ratio = max(best_match_ratio, prefix_ratio)
-
-        return best_match_ratio >= threshold
-
-    @staticmethod
-    def _compare_sequence_unordered_alike(seq1: Any, seq2: Any, threshold: float) -> bool:
-        """Compare sequences allowing size differences, ignoring order."""
-        if not isinstance(seq1, (list, tuple)) or not isinstance(seq2, (list, tuple)):
-            return bool(seq1 == seq2)
-
-        if not seq1 and not seq2:
-            return True
-        if not seq1 or not seq2:
-            # Empty vs non-empty - check if threshold allows it
-            return threshold <= 0.0
-
-        # Sort both sequences to ensure consistent comparison
-        # Create sortable representations of items
-        def get_sort_key(item: Any) -> tuple[str, Any]:
-            return item.reasoning
-
-        # Sort both sequences by their content
-        sorted_seq1 = sorted(seq1, key=get_sort_key)
-        sorted_seq2 = sorted(seq2, key=get_sort_key)
-
-        # Find best matches between sorted items
-        smaller = sorted_seq1 if len(sorted_seq1) <= len(sorted_seq2) else sorted_seq2
-        larger = sorted_seq2 if len(sorted_seq1) <= len(sorted_seq2) else sorted_seq1
-
-        matches = 0
-        used_indices = set()
-
-        # Match each item in smaller sequence with best match in larger
-        for item in smaller:
-            for idx, other_item in enumerate(larger):
-                if idx in used_indices:
-                    continue
-
-                if FieldComparator._compare_items_recursively(item, other_item, threshold):
-                    matches += 1
-                    used_indices.add(idx)
-                    break
-
-        # Calculate match ratio based on the larger sequence (more restrictive)
-        # This ensures that [1,2] vs [1,2,3,4,5] gives lower score than [1,2] vs [1,2,3]
-        match_ratio = matches / max(len(seq1), len(seq2))
-
-        return match_ratio >= threshold
-
-    @staticmethod
-    def _extract_voting_metadata(field_info: Any) -> "VotingMetadata":
+    def _extract_voting_metadata(field_info: FieldInfo) -> "VotingMetadata":
         """Extract voting metadata from field info."""
         voting_meta = VotingMetadata()  # Default values
 
@@ -406,7 +320,7 @@ def VotingField(
         **kwargs: All standard Pydantic Field keyword arguments
 
     Usage:
-        class MyResponse(TypedCallBaseForConsensus):
+        class MyResponse(BaseModelWithReasoning):
             # Exact match required for this field (default behavior)
             answer: int = VotingField(description="The answer")
 
@@ -466,12 +380,15 @@ class BaseModelWithReasoning(BaseModel):
         min_length=150,
         comparison=ComparisonStrategy.IGNORE,
         threshold=0.80,
-        description=(
-            "Explain your thought process step by step. Include: "
-            "1) Initial observations and analysis of the input, "
-            "2) Key decision points and why you made specific choices, "
-            "3) How you arrived at each value in the fields above, "
-            "4) Any assumptions or interpretations you made, "
-            "5) Confidence level and potential alternatives considered"
+        description=dedent(
+            """
+            Before answering, work through this step-by-step:
+
+            1. UNDERSTAND: What is the core question being asked or what is the task?
+            2. ANALYZE: What are the key factors/components involved?
+            3. REASON: What logical connections can I make?
+            4. SYNTHESIZE: How do these elements combine?
+            5. CONCLUDE: What is the most accurate/helpful response?
+            """
         ),
     )

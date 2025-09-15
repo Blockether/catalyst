@@ -5,27 +5,25 @@ Users inherit from these base classes to implement their own LLM providers.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Dict, Generic, List, TypeVar
 
 from pydantic import BaseModel, Field
 
 from com_blockether_catalyst.consensus.Consensus import Consensus
 from com_blockether_catalyst.consensus.ConsensusTypes import (
     ConsensusResult,
-    TypedCallBaseForConsensus,
 )
+from com_blockether_catalyst.consensus.VotingComparison import BaseModelWithReasoning
 
-from .KnowledgeExtractionTypes import (
-    ChunkingDecision,
-    KnowledgeMetadata,
-    KnowledgePageData,
+from .KnowledgeTypes import (
+    ChunkingDecisionResponse,
+    DocumentMetadata,
     KnowledgePageDataWithRawText,
-    TermCooccurrence,
     TermMeaningExtractionResponse,
 )
 
 # Type variables for the response types
-TResponse = TypeVar("TResponse", bound=TypedCallBaseForConsensus)
+TResponse = TypeVar("TResponse", bound=BaseModelWithReasoning)
 
 
 class BaseConsensusCall(ABC, Generic[TResponse]):
@@ -33,7 +31,7 @@ class BaseConsensusCall(ABC, Generic[TResponse]):
     Base class for all consensus-based LLM calls.
 
     This class handles the consensus logic while allowing subclasses to define
-    their own fill_prompt implementations with different signatures.
+    their own fill_template implementations with different signatures.
     """
 
     def __init__(self, consensus: Consensus[TResponse]):
@@ -51,7 +49,7 @@ class BaseConsensusCall(ABC, Generic[TResponse]):
         return self._consensus
 
     @abstractmethod
-    def fill_prompt(self, *args: Any, **kwargs: Any) -> str:
+    def fill_template(self, *args: Any, **kwargs: Any) -> str:
         """
         Fill the prompt for the specific extraction type.
 
@@ -82,14 +80,14 @@ class BaseConsensusCall(ABC, Generic[TResponse]):
         and applies post-processing to potentially add calculated fields.
 
         Args:
-            *args: Arguments to pass to fill_prompt and post_process
-            **kwargs: Keyword arguments to pass to fill_prompt and post_process
+            *args: Arguments to pass to fill_template and post_process
+            **kwargs: Keyword arguments to pass to fill_template and post_process
 
         Returns:
             ConsensusResult containing the extraction response,
             potentially enhanced with calculated fields
         """
-        prompt = self.fill_prompt(*args, **kwargs)
+        prompt = self.fill_template(*args, **kwargs)
         result = await self.perform_llm_call(prompt)
         return result
 
@@ -104,7 +102,7 @@ class BaseTermExtractionCall(BaseConsensusCall[TermMeaningExtractionResponse]):
     """
 
     @abstractmethod
-    def fill_prompt(
+    def fill_template(
         self,
         term: str,
         type: str,
@@ -125,7 +123,7 @@ class BaseTermExtractionCall(BaseConsensusCall[TermMeaningExtractionResponse]):
         Args:
             result: The consensus result from the LLM call
             term: The keyword term
-            **kwargs: Other arguments passed to fill_prompt
+            **kwargs: Other arguments passed to fill_template
 
         Returns:
             Enhanced consensus result with full_form set to the term
@@ -143,7 +141,7 @@ class BaseTermExtractionCall(BaseConsensusCall[TermMeaningExtractionResponse]):
         return result
 
 
-class BaseDocumentChunkingCall(BaseConsensusCall[ChunkingDecision]):
+class BaseDocumentChunkingCall(BaseConsensusCall[ChunkingDecisionResponse]):
     """
     Base class for document chunking calls.
 
@@ -152,11 +150,11 @@ class BaseDocumentChunkingCall(BaseConsensusCall[ChunkingDecision]):
     """
 
     @abstractmethod
-    def fill_prompt(
+    def fill_template(
         self,
         page: KnowledgePageDataWithRawText,
         document_name: str,
-        metadata: KnowledgeMetadata,
+        metadata: DocumentMetadata,
     ) -> str:
         """
         Fill the prompt for document chunking.

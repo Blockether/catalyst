@@ -12,30 +12,31 @@ from unittest.mock import AsyncMock, MagicMock
 
 import anyio
 import pytest
+from pydantic import Field
 
 from com_blockether_catalyst.consensus.ConsensusCore import ConsensusCore
 from com_blockether_catalyst.consensus.ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
-    TypedCallBaseForConsensus,
 )
+from com_blockether_catalyst.consensus.VotingComparison import BaseModelWithReasoning
 from com_blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
 
-class TestResponse(TypedCallBaseForConsensus):
+class VotingTestResponse(BaseModelWithReasoning):
     """Test response model for consensus testing."""
 
     value: int
     confidence: float
 
 
-class MockTypedCall(ArityOneTypedCall[str, TestResponse]):
+class MockTypedCall(ArityOneTypedCall[str, VotingTestResponse]):
     """Mock typed call for testing."""
 
-    def __init__(self, response: TestResponse):
+    def __init__(self, response: VotingTestResponse):
         self._response = response
 
-    async def call(self, x: str) -> TestResponse:
+    async def call(self, x: str) -> VotingTestResponse:
         return self._response
 
 
@@ -43,29 +44,28 @@ class TestVotingConsensus:
     """Test voting-based consensus functionality."""
 
     @pytest.fixture
-    def mock_judge(self) -> Any:
-        """Create mock judge typed call for tie-breaking."""
-        return MockTypedCall(
-            TestResponse(
-                value=42,
-                confidence=0.9,
-                reasoning="Judge decision for tie-breaking based on comprehensive analysis.",
-            )
+    def mock_judge(self) -> MockTypedCall:
+        """Create a mock judge for tie-breaking."""
+        judge_response = VotingTestResponse(
+            value=42,
+            confidence=1.0,
+            reasoning="Judge decision: After comprehensive evaluation of all model arguments and careful consideration of the evidence presented, I determine the value to be 42. This decision incorporates analysis of all perspectives and aims to provide the most balanced and well-supported conclusion based on the available information.",
         )
+        return MockTypedCall(judge_response)
 
     @pytest.mark.anyio
-    async def test_majority_voting_consensus(self, mock_judge: Any) -> None:
+    async def test_majority_voting_consensus(self, mock_judge) -> None:
         """Test that consensus is achieved through majority voting."""
         # Create 3 models - 2 with same response, 1 different
-        majority_response = TestResponse(
+        majority_response = VotingTestResponse(
             value=100,
             confidence=0.9,
-            reasoning="Based on careful analysis of the data, the value should be 100 due to multiple factors.",
+            reasoning="Based on careful analysis of the data and comprehensive evaluation of multiple factors, the value should be 100. This conclusion draws from historical patterns, statistical analysis, and careful consideration of all available evidence. The confidence in this assessment is high due to consistent supporting data.",
         )
-        outlier_response = TestResponse(
+        outlier_response = VotingTestResponse(
             value=200,
             confidence=0.8,
-            reasoning="My analysis suggests a different value of 200 based on alternative interpretation.",
+            reasoning="My analysis suggests a different value of 200 based on alternative interpretation of the underlying data patterns. This assessment considers different weighting factors and alternative analytical approaches. While this differs from the majority view, it represents a valid alternative perspective based on thorough examination.",
         )
 
         models = [
@@ -103,18 +103,18 @@ class TestVotingConsensus:
         assert "MAJORITY CONSENSUS" in result.reasoning or "consensus" in result.reasoning.lower()
 
     @pytest.mark.anyio
-    async def test_tie_with_judge(self, mock_judge: Any) -> None:
+    async def test_tie_with_judge(self, mock_judge) -> None:
         """Test that judge is invoked to break ties."""
         # Create 2 models with different responses (tie scenario)
-        response1 = TestResponse(
+        response1 = VotingTestResponse(
             value=100,
             confidence=0.9,
-            reasoning="First model believes the value is 100 based on standard analysis methodology.",
+            reasoning="First model believes the value is 100 based on standard analysis methodology and comprehensive evaluation of available data. This assessment follows established analytical frameworks and incorporates multiple validation checks to ensure reliability and accuracy in the final determination.",
         )
-        response2 = TestResponse(
+        response2 = VotingTestResponse(
             value=200,
             confidence=0.9,
-            reasoning="Second model believes the value is 200 based on alternative analysis approach.",
+            reasoning="Second model believes the value is 200 based on alternative analysis approach that emphasizes different data weighting strategies. This methodology considers alternative theoretical frameworks and applies different validation criteria, leading to a higher confidence in this particular value assessment.",
         )
 
         models = [
@@ -151,23 +151,23 @@ class TestVotingConsensus:
         assert result.final_response.value in [100, 200]
 
     @pytest.mark.anyio
-    async def test_plurality_consensus(self, mock_judge: Any) -> None:
+    async def test_plurality_consensus(self, mock_judge) -> None:
         """Test that plurality (not majority) can achieve consensus with threshold."""
         # Create 5 models: 3 vote A, 1 votes B, 1 votes C
-        response_a = TestResponse(
+        response_a = VotingTestResponse(
             value=100,
             confidence=0.9,
-            reasoning="Multiple models agree on value 100 based on convergent analysis methodologies.",
+            reasoning="Multiple models agree on value 100 based on convergent analysis methodologies and consistent evaluation criteria. This consensus emerges from shared analytical approaches and similar interpretation of underlying data patterns, providing strong confidence in this assessment.",
         )
-        response_b = TestResponse(
+        response_b = VotingTestResponse(
             value=150,
             confidence=0.8,
-            reasoning="This model suggests 150 based on a slightly different interpretation of the data.",
+            reasoning="This model suggests 150 based on a slightly different interpretation of the data patterns and alternative weighting of contributing factors. While similar to other approaches, this analysis places greater emphasis on specific data characteristics that lead to this intermediate value.",
         )
-        response_c = TestResponse(
+        response_c = VotingTestResponse(
             value=200,
             confidence=0.7,
-            reasoning="This model proposes 200 based on an alternative theoretical framework altogether.",
+            reasoning="This model proposes 200 based on an alternative theoretical framework altogether that emphasizes different analytical principles and methodological approaches. This perspective considers unique aspects of the problem space that other models may not fully account for in their assessments.",
         )
 
         models = [
@@ -194,7 +194,6 @@ class TestVotingConsensus:
         consensus = ConsensusCore.consensus(
             models=models,
             judge=mock_judge,
-            settings=ConsensusSettings(threshold=0.6, max_rounds=1),
         )
 
         result = await consensus.call("What is the value?")
@@ -204,14 +203,14 @@ class TestVotingConsensus:
         assert result.final_response.value == 100
 
     @pytest.mark.anyio
-    async def test_no_consensus_fallback(self, mock_judge: Any) -> None:
+    async def test_no_consensus_fallback(self, mock_judge) -> None:
         """Test fallback to voting when consensus not achieved after max rounds."""
         # Create 3 models with all different responses
         responses = [
-            TestResponse(
+            VotingTestResponse(
                 value=100 + i * 50,
                 confidence=0.8,
-                reasoning=f"Model {i} has unique perspective leading to value {100 + i * 50} conclusion.",
+                reasoning=f"Model {i} has unique perspective leading to value {100 + i * 50} conclusion based on specialized analytical approach and domain-specific considerations. This assessment incorporates unique methodological elements and specialized validation criteria that distinguish it from other model perspectives in the consensus process.",
             )
             for i in range(3)
         ]
@@ -229,7 +228,6 @@ class TestVotingConsensus:
         consensus = ConsensusCore.consensus(
             models=models,
             judge=mock_judge,
-            settings=ConsensusSettings(threshold=0.95, max_rounds=2),
         )
 
         result = await consensus.call("What is the value?")
@@ -242,27 +240,27 @@ class TestVotingConsensus:
         assert "not achieved" in result.reasoning.lower() or "fallback" in result.reasoning.lower()
 
     @pytest.mark.anyio
-    async def test_convergence_through_rounds(self, mock_judge: Any) -> None:
+    async def test_convergence_through_rounds(self) -> None:
         """Test that models can converge over multiple rounds."""
         # This is a simplified test - in reality, models would adjust based on peer responses
 
         # Round 0: All different
         # Round 1: Two converge
         # Round 2: All converge
-        converged_response = TestResponse(
+        converged_response = VotingTestResponse(
             value=150,
             confidence=0.95,
-            reasoning="After reviewing peer analyses, consensus emerges that 150 is the optimal value.",
+            reasoning="After reviewing peer analyses and conducting comprehensive evaluation of alternative approaches, consensus emerges that 150 is the optimal value. This determination balances multiple perspectives and incorporates insights from various analytical methodologies to arrive at the most balanced assessment.",
         )
 
-        class AdaptiveTypedCall(ArityOneTypedCall[str, TestResponse]):
+        class AdaptiveTypedCall(ArityOneTypedCall[str, VotingTestResponse]):
             """Mock that changes response based on round."""
 
             def __init__(self, model_id: str):
                 self.model_id = model_id
                 self.round_count = 0
 
-            async def call(self, x: str) -> TestResponse:
+            async def call(self, x: str) -> VotingTestResponse:
                 # Simulate convergence over rounds
                 if "peer" in x.lower() or "refinement" in x.lower():
                     # This is a refinement round
@@ -273,22 +271,22 @@ class TestVotingConsensus:
 
                 # Initial round - return different values
                 if self.model_id == "model1":
-                    return TestResponse(
+                    return VotingTestResponse(
                         value=100,
                         confidence=0.7,
-                        reasoning="Initial analysis suggests value of 100 based on first principles approach.",
+                        reasoning="Initial analysis suggests value of 100 based on first principles approach and fundamental theoretical considerations. This assessment draws from core analytical principles and applies rigorous validation methodology to ensure confidence in the initial determination.",
                     )
                 elif self.model_id == "model2":
-                    return TestResponse(
+                    return VotingTestResponse(
                         value=200,
                         confidence=0.7,
-                        reasoning="Initial analysis suggests value of 200 based on empirical observations.",
+                        reasoning="Initial analysis suggests value of 200 based on empirical observations and comprehensive data evaluation. This assessment prioritizes observational evidence and statistical analysis to support the higher value determination through rigorous analytical methodology.",
                     )
                 else:
-                    return TestResponse(
+                    return VotingTestResponse(
                         value=150,
                         confidence=0.8,
-                        reasoning="Initial analysis suggests value of 150 as a balanced middle ground.",
+                        reasoning="Initial analysis suggests value of 150 as a balanced middle ground that considers multiple analytical perspectives and balances various contributing factors. This assessment represents a compromise approach that incorporates insights from different methodological frameworks.",
                     )
 
         models = [
@@ -299,6 +297,14 @@ class TestVotingConsensus:
             )
             for i in range(1, 4)
         ]
+
+        # Create judge for fallback when no consensus
+        judge_response = VotingTestResponse(
+            value=150,
+            confidence=1.0,
+            reasoning="Judge decision: After comprehensive review of the convergence patterns across all rounds and careful analysis of model responses, the collective reasoning demonstrates convergence towards 150. This determination reflects the weighted consensus emerging from iterative refinement and cross-model deliberation processes.",
+        )
+        mock_judge = MockTypedCall(judge_response)
 
         consensus = ConsensusCore.consensus(
             models=models,

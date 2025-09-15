@@ -107,7 +107,7 @@ pip install "com-blockether-catalyst[extraction,api] @ git+https://github.com/Bl
 
 ## Knowledge Extraction
 
-1. Deploy a multimodal model serve - such as [MiniCPM-o-2_6](https://huggingface.co/openbmb/MiniCPM-o-2_6 or [QwenVL](https://huggingface.co/unsloth/Qwen2.5-VL-3B-Instruct-GGUF) - on an OpenAI-compatible inference platform to enable advanced document extraction and analysis capabilities.
+1. Deploy a multimodal model serve - such as [MiniCPM-o-2_6](https://huggingface.co/openbmb/MiniCPM-o-2_6 or [QwenVL](https://huggingface.co/unsloth/gpt-4o-GGUF) - on an OpenAI-compatible inference platform to enable advanced document extraction and analysis capabilities.
 
 See: https://www.alibabacloud.com/help/en/model-studio/qwen-vl-compatible-with-openai
 

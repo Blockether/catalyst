@@ -18,10 +18,10 @@ from pdfplumber.display import PageImage
 from PIL import Image
 
 from .ImageRecognition import ImageRecognition, ImageRecognitionSettings
-from .KnowledgeExtractionTypes import (
+from .KnowledgeTypes import (
+    DocumentMetadata,
     ImageMetadata,
     KnowledgeExtractionResult,
-    KnowledgeMetadata,
     KnowledgePageData,
     KnowledgePageDataWithRawText,
     KnowledgeProcessorSettings,
@@ -80,7 +80,12 @@ class PDFKnowledgeExtractor:
             raise FileNotFoundError(f"PDF file not found: {source}")
 
         id = self._calculate_id(source)
-        result = KnowledgeExtractionResult(filename=source.name, id=id, source_type="pdf")
+        result = KnowledgeExtractionResult(
+            document_filename=source.name,
+            document_metadata=DocumentMetadata(document_path=""),
+            id=id,
+            source_type="pdf",
+        )
 
         # Store document name and path for logging and image naming
         self._current_document = source.name
@@ -89,12 +94,13 @@ class PDFKnowledgeExtractor:
         with pdfplumber.open(source) as pdf:
             # Extract metadata
             if pdf.metadata:
-                result.metadata = KnowledgeMetadata(
+                result.document_metadata = DocumentMetadata(
                     title=pdf.metadata.get("Title", None),
                     author=pdf.metadata.get("Author", None),
                     subject=pdf.metadata.get("Subject", None),
                     creation_date=str(pdf.metadata.get("CreationDate", "")),
                     modification_date=str(pdf.metadata.get("ModDate", "")),
+                    document_path=f"{self._knowledge_settings.extraction_output_dir}/{source.name}",
                 )
 
             result.total_pages = len(pdf.pages)
@@ -313,7 +319,7 @@ class PDFKnowledgeExtractor:
                     metadata = ImageMetadata(
                         document_name=self._current_document,
                         page=page.page_number,
-                        href=str(image_path),
+                        path=str(image_path),
                         caption=self._image_recognition.caption_for_image(image, context=context),
                     )
 

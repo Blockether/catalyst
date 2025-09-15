@@ -18,3 +18,4 @@ public
 .lsp
 *.log
 verification/**
+.clj-kondo

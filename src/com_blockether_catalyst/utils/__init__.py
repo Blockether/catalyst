@@ -3,13 +3,6 @@ Utility modules for the catalyst framework.
 """
 
 from .ConcurrentProcessor import ConcurrentProcessor
-from .TypedCalls import (
-    ArityOneTypedCall,
-    AsyncBatchProcessor,
-)
+from .TypedCalls import ArityOneTypedCall
 
-__all__ = [
-    "ConcurrentProcessor",
-    "ArityOneTypedCall",
-    "AsyncBatchProcessor",
-]
+__all__ = ["ConcurrentProcessor", "ArityOneTypedCall"]
