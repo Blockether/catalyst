@@ -1,8 +1,8 @@
 # Include all static model files
-recursive-include src/com_blockether_catalyst/static_models *
+recursive-include src/blockether_catalyst/static_models *
 
 # Include templates
-recursive-include src/com_blockether_catalyst/integrations/agno/templates *
+recursive-include src/blockether_catalyst/integrations/agno/templates *
 
 # Include documentation
 include README.md

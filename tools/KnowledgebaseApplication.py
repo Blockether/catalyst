@@ -17,10 +17,10 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAILike
 from agno.memory.manager import MemoryManager
 from pydantic import Field
-from com_blockether_catalyst.asgi.ASGICoreApplication import ASGICoreApplication
+from blockether_catalyst.asgi.ASGICoreApplication import ASGICoreApplication
 
-from com_blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore, KnowledgeSearchResult
-from com_blockether_catalyst.integrations.agno.AgnoOsASGIModule import AgnoOsASGIModule, ChatConfig, MCPConfig
+from blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore, KnowledgeSearchResult
+from blockether_catalyst.integrations.agno.AgnoOsASGIModule import AgnoOsASGIModule, ChatConfig, MCPConfig
 from fastmcp.tools import Tool
 
 # Configure logging

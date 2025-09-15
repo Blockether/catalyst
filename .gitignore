@@ -9,7 +9,7 @@ entity_keyword_graph_test.html
 .DS_Store
 .storage
 build
-src/com_blockether_catalyst.egg-info
+src/blockether_catalyst.egg-info
 .coverage
 site
 input

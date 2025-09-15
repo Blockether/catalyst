@@ -10,8 +10,8 @@ No hallucinations - just accurate answers with full source attribution
 
 <div align="center">
   <h2>
-    <a href="https://pypi.org/project/com-blockether-catalyst/"><img src="https://img.shields.io/pypi/v/com-blockether-catalyst?color=%23007ec6&label=pypi%20package" alt="Package version"></a>
-    <a href="https://pypi.org/project/com-blockether-catalyst/"><img src="https://img.shields.io/pypi/pyversions/com-blockether-catalyst" alt="Supported Python versions"></a>
+    <a href="https://pypi.org/project/blockether-catalyst/"><img src="https://img.shields.io/pypi/v/blockether-catalyst?color=%23007ec6&label=pypi%20package" alt="Package version"></a>
+    <a href="https://pypi.org/project/blockether-catalyst/"><img src="https://img.shields.io/pypi/pyversions/blockether-catalyst" alt="Supported Python versions"></a>
     <a href="https://github.com/Blockether/catalyst/blob/main/LICENSE">
       <img src="https://img.shields.io/badge/license-MIT-green" alt="License - MIT">
     </a>
@@ -60,10 +60,10 @@ Install Catalyst directly from GitHub (PyPI release coming soon):
 
 ```bash
 # Using uv (recommended)
-uv add "com-blockether-catalyst[extraction,api] @ git+https://github.com/Blockether/catalyst.git"
+uv add "blockether-catalyst[extraction,api] @ git+https://github.com/Blockether/catalyst.git"
 
 # Or using pip
-pip install "com-blockether-catalyst[extraction,api] @ git+https://github.com/Blockether/catalyst.git"
+pip install "blockether-catalyst[extraction,api] @ git+https://github.com/Blockether/catalyst.git"
 ```
 
 ## Features

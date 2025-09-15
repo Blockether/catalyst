@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List
 
-from com_blockether_catalyst.knowledge.PDFOptimizer import PDFOptimizer
+from blockether_catalyst.knowledge.PDFOptimizer import PDFOptimizer
 
 def main() -> None:
     """Main entry point for the script."""

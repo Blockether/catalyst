@@ -40,8 +40,8 @@ try:
     from pygments.lexers.python import PythonLexer
 except ImportError:
     print("Error: This tool requires CLI dependencies.")
-    print("Install with: uv add 'com-blockether-catalyst[cli]'")
-    print("or: pip install 'com-blockether-catalyst[cli]'")
+    print("Install with: uv add 'blockether-catalyst[cli]'")
+    print("or: pip install 'blockether-catalyst[cli]'")
     import sys
     sys.exit(1)
 

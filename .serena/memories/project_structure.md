@@ -3,8 +3,8 @@
 ## Main Directories
 
 ```
-com_blockether_catalyst/
-├── src/com_blockether_catalyst/           # Main source code
+blockether_catalyst/
+├── src/blockether_catalyst/           # Main source code
 │   ├── asgi/                              # ASGI web application modules
 │   ├── consensus/                         # LLM consensus and voting systems
 │   ├── encoder/                           # Text encoding and embeddings

@@ -12,7 +12,7 @@ from typing import List
 
 import oxipng
 
-from com_blockether_catalyst.knowledge.ImageOptimizer import ImageOptimizer
+from blockether_catalyst.knowledge.ImageOptimizer import ImageOptimizer
 
 def main() -> None:
     """Main entry point for the script."""

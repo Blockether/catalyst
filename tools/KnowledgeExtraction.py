@@ -31,15 +31,15 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 from rich.prompt import Confirm
 
-from com_blockether_catalyst.consensus.ConsensusCore import ConsensusCore
-from com_blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings, VerbosityLevel
-from com_blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings, VerbosityLevel
+from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
     BaseTermExtractionCall,
     BaseDocumentChunkingCall,
     ExtractionCallsSettings,
 )
-from com_blockether_catalyst.knowledge.KnowledgeExtractionCore import KnowledgeExtractionCore
-from com_blockether_catalyst.knowledge.KnowledgeTypes import (
+from blockether_catalyst.knowledge.KnowledgeExtractionCore import KnowledgeExtractionCore
+from blockether_catalyst.knowledge.KnowledgeTypes import (
     KnowledgeExtractionOutput,
     DocumentMetadata,
     KnowledgePageDataWithRawText,
@@ -48,11 +48,11 @@ from com_blockether_catalyst.knowledge.KnowledgeTypes import (
     ChunkingDecisionResponse,
 )
 
-from com_blockether_catalyst.knowledge.PDKnowledgeExtractorTypes import PDFKnowledgeProcessorSettings, PDFPageCropOffset
-from com_blockether_catalyst.utils.instructor.InstructorLLMCall import InstructorLLMCall
-from com_blockether_catalyst.prompt import PromptAlignmentCore
-from com_blockether_catalyst.prompt.PromptAlignmentCLIBase import PromptAlignmentCLIBase
-from com_blockether_catalyst.prompt.PromptAlignmentTypes import (
+from blockether_catalyst.knowledge.PDKnowledgeExtractorTypes import PDFKnowledgeProcessorSettings, PDFPageCropOffset
+from blockether_catalyst.utils.instructor.InstructorLLMCall import InstructorLLMCall
+from blockether_catalyst.prompt import PromptAlignmentCore
+from blockether_catalyst.prompt.PromptAlignmentCLIBase import PromptAlignmentCLIBase
+from blockether_catalyst.prompt.PromptAlignmentTypes import (
     EvaluationResult,
     AlignmentFeedback,
 )
@@ -202,7 +202,7 @@ class KnowledgeExtraction:
             log_level: Logging level. Defaults to INFO
             validate_inputs: Whether to validate input files exist. Defaults to True
         """
-        self.input_glob = input_glob or "tests/com_blockether_catalyst/test_data/full_sample_test_1.pdf"
+        self.input_glob = input_glob or "tests/blockether_catalyst/test_data/full_sample_test_1.pdf"
         self.output_dir = output_dir or Path("public/knowledge_extraction")
         self.log_level = log_level
         self.extractor = None
@@ -288,7 +288,7 @@ class KnowledgeExtraction:
         self.logger = logging.getLogger(__name__)
 
         # Enable detailed consensus logging
-        consensus_logger = logging.getLogger("com_blockether_catalyst.consensus")
+        consensus_logger = logging.getLogger("blockether_catalyst.consensus")
         consensus_logger.setLevel(logging.DEBUG)  # Capture all consensus logs
 
         self.logger.info("=" * 70)
@@ -960,7 +960,7 @@ async def main() -> None:
     extract_parser.add_argument(
         "input_glob",
         nargs="?",
-        default="tests/com_blockether_catalyst/test_data/full_sample_test_1.pdf",
+        default="tests/blockether_catalyst/test_data/full_sample_test_1.pdf",
         type=validate_glob_pattern,
         help="Glob pattern for input PDF files (use quotes for patterns with spaces)"
     )

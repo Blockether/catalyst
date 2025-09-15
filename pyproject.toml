@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["com_blockether_catalyst*"]
+include = ["blockether_catalyst*"]
 
 [tool.setuptools.package-data]
-"com_blockether_catalyst.integrations.agno" = ["templates/**/*.html"]
-"com_blockether_catalyst" = ["assets/static_models/**/*"]
+"blockether_catalyst.integrations.agno" = ["templates/**/*.html"]
+"blockether_catalyst" = ["assets/static_models/**/*"]
 
 [project]
-name = "com-blockether-catalyst"
+name = "blockether-catalyst"
 version = "0.1.0"
 description = "A comprehensive toolkit for building enterprise-grade LLM-powered applications"
 readme = "README.md"
@@ -113,7 +113,7 @@ ignore = ["E501", "F401"]
 [tool.isort]
 profile = "black"
 line_length = 120
-known_first_party = ["com_blockether_catalyst"]
+known_first_party = ["blockether_catalyst"]
 
 [tool.black]
 line-length = 120
