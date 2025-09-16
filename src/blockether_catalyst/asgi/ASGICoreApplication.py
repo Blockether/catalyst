@@ -171,7 +171,7 @@ class ASGICoreApplication(ASGIApplicationConfig):
         # Mount module's static files if any
         for mount in module.statics:
             if mount.directory.exists():
-                mount_url = f"{full_prefix}{mount.mount}"
+                mount_url = os.path.join(full_prefix, mount.mount.lstrip("/"))
                 self._app.mount(
                     mount_url,
                     StaticFiles(directory=os.path.join(os.getcwd(), mount.directory), html=mount.html),
