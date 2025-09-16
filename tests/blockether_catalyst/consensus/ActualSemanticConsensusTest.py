@@ -15,21 +15,29 @@ from pydantic import Field
 
 from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
-from blockether_catalyst.consensus.VotingComparison import BaseModelWithReasoning
+from blockether_catalyst.consensus.VotingComparison import (
+    BaseModelWithReasoning,
+    ComparisonStrategy,
+    VotingField,
+)
 from blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
 
 class SimpleResponse(BaseModelWithReasoning):
     """Simple response for testing semantic voting."""
 
-    # Semantic field - should normalize case and whitespace
-    category: str = Field(default="")
+    # Custom comparison field - should normalize case and whitespace
+    category: str = VotingField(
+        default="",
+        comparison=ComparisonStrategy.CUSTOM,
+        custom_comparator=lambda v1, v2: v1.lower().strip() == v2.lower().strip(),
+    )
 
     # Exact field - must match exactly
-    code: int = Field(default=0)
+    code: int = VotingField(default=0, comparison=ComparisonStrategy.EXACT)
 
     # Ignored field - doesn't affect voting
-    metadata: str = Field(default="")
+    metadata: str = VotingField(default="", comparison=ComparisonStrategy.IGNORE)
 
 
 class StaticMockCall(ArityOneTypedCall):
@@ -248,7 +256,7 @@ class TestActualSemanticConsensus:
         consensus_60 = ConsensusCore.consensus(
             models=models,
             judge=judge,
-            settings=ConsensusSettings(max_rounds=1, threshold=0.6),
+            settings=ConsensusSettings(max_rounds=1, threshold=0.6, first_round_threshold=0.6),
         )
 
         result_60 = await consensus_60.call("Test 60% threshold")
@@ -259,7 +267,7 @@ class TestActualSemanticConsensus:
         consensus_70 = ConsensusCore.consensus(
             models=models,
             judge=judge,
-            settings=ConsensusSettings(max_rounds=1, threshold=0.7),
+            settings=ConsensusSettings(max_rounds=1, threshold=0.7, first_round_threshold=0.7),
         )
 
         result_70 = await consensus_70.call("Test 70% threshold")

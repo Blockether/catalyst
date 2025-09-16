@@ -17,15 +17,19 @@ from pydantic import Field
 
 from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
-from blockether_catalyst.consensus.VotingComparison import BaseModelWithReasoning
+from blockether_catalyst.consensus.VotingComparison import (
+    BaseModelWithReasoning,
+    ComparisonStrategy,
+    VotingField,
+)
 from blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
 
 class EdgeCaseResponse(BaseModelWithReasoning):
     """Simple response model for edge case testing."""
 
-    answer: int = Field(description="The answer")
-    confidence: float = Field(default=0.8)
+    answer: int = VotingField(description="The answer", comparison=ComparisonStrategy.EXACT)
+    confidence: float = VotingField(default=0.8, comparison=ComparisonStrategy.IGNORE)
 
 
 class MockJudgeCall(ArityOneTypedCall[str, EdgeCaseResponse]):
@@ -142,7 +146,7 @@ class TestEdgeCaseConsensus:
         assert result.consensus_achieved is True
         assert result.final_response.answer == self.DEFAULT_ANSWER
         # Check that all models participated
-        assert result.num_models == 5
+        assert len(result.participating_models) == 5
         # Verify that only 4 models successfully responded (one failed)
         successful_responses = len(result.rounds[-1].responses)
         assert successful_responses == 4  # Only successful models responded
@@ -174,9 +178,23 @@ class TestEdgeCaseConsensus:
             settings=ConsensusSettings(max_rounds=2),
         )
 
-        # When all models fail, should raise an error (no judge fallback)
-        with pytest.raises(ValueError, match="Too many models failed"):
-            await consensus.call("Test with all failures")
+        # When all models fail, the judge is used as fallback
+        result = await consensus.call("Test with all failures")
+
+        # Should still get a result from the judge
+        assert result.final_response.answer == 42  # MockJudgeCall returns 42
+
+        # Verify that no models succeeded (all rounds should have empty responses)
+        for round_data in result.rounds:
+            assert len(round_data.responses) == 0
+
+        # Check that consensus was not achieved (since models failed)
+        assert not result.consensus_achieved
+
+        # The reasoning should indicate that all models failed
+        assert (
+            "all models failed" in result.reasoning.lower() or "fallback" in result.reasoning.lower()
+        )  # No consensus since models failed
 
     @pytest.mark.anyio
     async def test_invalid_threshold_settings(self) -> None:
@@ -250,9 +268,9 @@ class TestEdgeCaseConsensus:
 
         result = await consensus.call("Test max rounds")
 
-        # Should use majority vote when max rounds is reached
-        # Even though models disagree, consensus is achieved through voting
-        assert result.consensus_achieved is True
+        # Should use judge when max rounds is reached with no majority
+        # With 3 different answers, judge is used to break the tie
+        assert result.consensus_achieved is False  # No consensus, judge used
         # With 3 different answers, it will pick one through voting
         # The exact answer depends on the voting mechanism
         assert result.final_response.answer in [
@@ -341,7 +359,7 @@ class TestEdgeCaseConsensus:
         # All models agree, should achieve consensus
         assert result.consensus_achieved is True
         assert result.final_response.answer == self.DEFAULT_ANSWER
-        assert result.num_models == 3
+        assert len(result.participating_models) == 3
 
     @pytest.mark.anyio
     async def test_network_error_simulation(self) -> None:

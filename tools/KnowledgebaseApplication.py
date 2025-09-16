@@ -16,6 +16,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAILike
 from agno.memory.manager import MemoryManager
+from agno.reasoning.step import ReasoningSteps
 from pydantic import Field
 from blockether_catalyst.asgi.ASGICoreApplication import ASGICoreApplication
 
@@ -59,7 +60,6 @@ asgi_app = ASGICoreApplication(
 )
 
 db = SqliteDb()
-
 
 class DocumentReference(TypedDict):
     document_name: str
@@ -119,22 +119,27 @@ def knowledge_retriever(
     num_documents: int,
     **kwargs
 ) -> Optional[list[dict]]:
-    return [result.__dict__ for result in knowledge_retriever_internal(query=query, num_documents=num_documents)]
+    return knowledge_retriever_internal(query=query, num_documents=num_documents)
 
 
 QuestionReasoningAgent = Agent(
     model=KnowledgeProviderGPT4oModel,
     name="QuestionReasoningAgent",
-    description="Agent for reasoning about questions",
+    description="You are a meticulous, thoughtful, and logical Reasoning Agent who solves complex problems through clear, structured, step-by-step analysis.",
+    output_schema=ReasoningSteps,
     instructions=dedent("""
+        ALWAYS: Query the KNOWLEDGE BASE with user question to retrieve relevant documents where NUM_DOCUMENTS to retrieve: 5 or <SPECIFIED_BY_USER_IN_PROMPT>
         Perform the following steps to ensure accurate and relevant responses:
+
          1. UNDERSTAND: What is the core question being asked?
          2. ANALYZE: What are the key factors/components involved in the question?
          3. REASON: What logical connections can I make taking into account the retrieved knowledge?
          4. SYNTHESIZE: How do these elements from the knowledge base and the user's question come together to form a coherent answer?
          5. CONCLUDE: What is the most accurate/helpful response?
     """),
-    markdown=True,
+    search_knowledge=True,
+    knowledge_retriever=knowledge_retriever, # type: ignore
+    markdown=False,
     retries=2,
     telemetry=False
 )
@@ -163,7 +168,7 @@ MainKnowledgebaseAgent = Agent(
         """
         Answer user question from {DOMAIN} domain for {APPLICATION} application.
 
-        Query the knowledgebase with question to retrieve relevant documents where NUM_DOCUMENTS to retrieve: 5 or <SPECIFIED_BY_USER_IN_PROMPT>
+        Query the KNOWLEDGE BASE with question to retrieve relevant documents where NUM_DOCUMENTS to retrieve: 5 or <SPECIFIED_BY_USER_IN_PROMPT>
 
         Guidelines:
          1. Carefully analyze the retrieved knowledge to understand the context and details and how they relate to the user's question.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import (
@@ -290,7 +291,7 @@ class TermOccurrence(BaseModel):
     document_name: str = Field(description="Name of the source document")
     page: int = Field(description="Page number (1-indexed) where the term was found")
     chunk_index: int = Field(description="Index of the chunk where the term was found")
-    total: int = Field(description="Total occurrences of the term in the document")
+    total: int = Field(description="Total occurrences of the term in this specific chunk")
 
 
 class TermCooccurrence(BaseModel):
@@ -316,7 +317,7 @@ class TermCandidate(BaseModel):
     term: str = Field(description="The term text")
     page: int = Field(description="Page number where this term appears")
     chunk: int = Field(description="Chunk index where this term appears")
-    total: int = Field(description="Total occurrences of this term in the document")
+    total: int = Field(description="Total occurrences of this term in the specific chunk")
     type: Literal["acronym", "keyword", "unknown"] = Field(description="Type of term")
 
 
@@ -494,6 +495,14 @@ class SearchResult(BaseModel):
     score: float
     doc_id: str
     metadata: SearchResultMetadata
+
+
+@dataclass
+class TopTermsResult:
+    """Result containing top keywords and acronyms from TF-IDF analysis."""
+
+    keywords: List[Tuple[str, float]]  # List of (keyword, score) tuples ordered by n-gram size then score
+    acronyms: List[Tuple[str, float]]  # List of (acronym, score) tuples ordered by score
 
 
 class KnowledgeSearchResult(BaseModel):

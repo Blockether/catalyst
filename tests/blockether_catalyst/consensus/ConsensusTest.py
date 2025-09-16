@@ -12,16 +12,20 @@ from blockether_catalyst.consensus.ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
 )
-from blockether_catalyst.consensus.VotingComparison import BaseModelWithReasoning
+from blockether_catalyst.consensus.VotingComparison import (
+    BaseModelWithReasoning,
+    ComparisonStrategy,
+    VotingField,
+)
 from blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
 
 class SimpleResponse(BaseModelWithReasoning):
     """Simple response model for testing."""
 
-    answer: str
-    confidence: float = 1.0
-    reasoning: Optional[str] = None
+    answer: str = VotingField(comparison=ComparisonStrategy.EXACT)
+    confidence: float = VotingField(default=1.0, comparison=ComparisonStrategy.IGNORE)
+    reasoning: Optional[str] = VotingField(default=None, comparison=ComparisonStrategy.IGNORE)
 
 
 class MockModel(ArityOneTypedCall[str, SimpleResponse]):
@@ -218,7 +222,7 @@ class TestConsensus:
 
         # Should reach max rounds and use fallback
         assert result.total_rounds == 2
-        assert "fallback" in result.reasoning.lower() or "could not reach" in result.reasoning.lower()
+        assert "fell back" in result.reasoning.lower() or "could not reach" in result.reasoning.lower()
 
     @pytest.mark.anyio
     async def test_cross_voting_mechanism(self):

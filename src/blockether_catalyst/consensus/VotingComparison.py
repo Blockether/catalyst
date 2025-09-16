@@ -55,6 +55,10 @@ class VotingMetadata(BaseModel):
         default=None,
         description="For numeric comparisons, number of decimal places to consider",
     )
+    custom_comparator: Optional[Callable[[Any, Any], bool]] = PydanticField(
+        default=None,
+        description="For CUSTOM strategy, the comparison function",
+    )
 
 
 class FieldComparator:
@@ -88,7 +92,8 @@ class FieldComparator:
             return True
 
         if strategy == ComparisonStrategy.EXACT:
-            return bool(value1 == value2)
+            # Python's == handles lists, dicts, and most types correctly
+            return value1 == value2
 
         if strategy == ComparisonStrategy.RANGE:
             if not isinstance(value1, (int, float)) or not isinstance(value2, (int, float)):
@@ -99,6 +104,18 @@ class FieldComparator:
         if strategy == ComparisonStrategy.CUSTOM:
             if custom_comparator:
                 return custom_comparator(value1, value2)
+            return bool(value1 == value2)
+
+        if strategy == ComparisonStrategy.SEMANTIC:
+            # For semantic comparison using embeddings
+            if isinstance(value1, str) and isinstance(value2, str):
+                from blockether_catalyst.encoder.EncoderCore import EncoderCore
+
+                emb1 = EncoderCore.encode_single(value1)
+                emb2 = EncoderCore.encode_single(value2)
+                similarity = EncoderCore.cosine_similarity(emb1, emb2)
+
+                return similarity >= (threshold or 0.7)
             return bool(value1 == value2)
 
         if strategy == ComparisonStrategy.DERIVED:
@@ -248,6 +265,8 @@ class FieldComparator:
                         voting_meta_kwargs["decimal_places"] = voting_comparison["decimal_places"]
                     if "threshold" in voting_comparison and isinstance(voting_comparison["threshold"], (int, float)):
                         voting_meta_kwargs["threshold"] = voting_comparison["threshold"]
+                    if "custom_comparator" in voting_comparison and callable(voting_comparison["custom_comparator"]):
+                        voting_meta_kwargs["custom_comparator"] = voting_comparison["custom_comparator"]
 
                     voting_meta = VotingMetadata(**voting_meta_kwargs)
 

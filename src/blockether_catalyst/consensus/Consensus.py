@@ -99,6 +99,10 @@ class Consensus(
         # Validate and store consensus configuration
         if not models:
             raise ValueError("At least one model must be specified")
+        if len(models) < 3:
+            raise ValueError("Consensus requires at least 3 models for meaningful voting")
+        if len(models) % 2 == 0:
+            raise ValueError("Consensus requires an odd number of models to avoid ties")
         if not judge:
             raise ValueError("Judge must be provided for tie-breaking")
 
@@ -107,6 +111,30 @@ class Consensus(
 
         # Use provided settings or create defaults
         self._settings = settings or ConsensusSettings()
+
+        # Validate and auto-adjust threshold if needed
+        # Maximum possible threshold for N models is (N+1)/2 / N
+        # This ensures we can always achieve consensus with a simple majority
+        num_models = len(models)
+        max_threshold = ((num_models + 1) / 2) / num_models
+
+        if self._settings.threshold > max_threshold:
+            # Auto-adjust to 95% of maximum to leave some margin
+            adjusted_threshold = max_threshold * 0.95
+            logger.warning(
+                f"Threshold {self._settings.threshold:.3f} exceeds maximum {max_threshold:.3f} "
+                f"for {num_models} models. Auto-adjusting to {adjusted_threshold:.3f}"
+            )
+            self._settings.threshold = adjusted_threshold
+
+        # Also validate first_round_threshold
+        if self._settings.first_round_threshold > max_threshold:
+            adjusted_threshold = max_threshold * 0.95
+            logger.warning(
+                f"First round threshold {self._settings.first_round_threshold:.3f} exceeds maximum "
+                f"{max_threshold:.3f} for {num_models} models. Auto-adjusting to {adjusted_threshold:.3f}"
+            )
+            self._settings.first_round_threshold = adjusted_threshold
 
     @property
     def settings(self) -> ConsensusSettings:
@@ -707,7 +735,11 @@ Provide a response in the same JSON format as the tied responses above.
     ) -> str:
         """Generate reasoning explanation for the consensus result."""
         if consensus_achieved:
-            return f"Consensus was successfully achieved after {len(rounds)} round(s) of deliberation. All participating models converged to agreement through iterative refinement and peer collaboration. The final response represents the collective wisdom of all {len(self._models)} models."
+            # Check if it was unanimous (consensus in first round with all models agreeing)
+            if len(rounds) == 1:
+                return f"Unanimous consensus was achieved in the first round. All {len(self._models)} models independently arrived at the same conclusion, demonstrating strong agreement on the answer."
+            else:
+                return f"Consensus was successfully achieved after {len(rounds)} round(s) of deliberation. All participating models converged to agreement through iterative refinement and peer collaboration. The final response represents the collective wisdom of all {len(self._models)} models."
         else:
             dissent_info = (
                 f" with {len(dissenting_models)} dissenting model(s): {', '.join(dissenting_models)}"
@@ -1105,52 +1137,19 @@ Provide a response in the same JSON format as the tied responses above.
             if voting_meta.strategy == ComparisonStrategy.IGNORE:
                 continue
 
-            # Compare based on strategy
-            if voting_meta.strategy == ComparisonStrategy.SEMANTIC:
-                # For semantic comparison, check similarity
-                if isinstance(value1, str) and isinstance(value2, str):
-                    from ..encoder.EncoderCore import EncoderCore
+            # Use FieldComparator for all comparison logic
+            fields_match = FieldComparator.compare_fields(
+                value1,
+                value2,
+                strategy=voting_meta.strategy,
+                tolerance=voting_meta.tolerance,
+                threshold=voting_meta.threshold,
+                decimal_places=voting_meta.decimal_places,
+                custom_comparator=voting_meta.custom_comparator if hasattr(voting_meta, "custom_comparator") else None,
+            )
 
-                    emb1 = EncoderCore.encode_single(value1)
-                    emb2 = EncoderCore.encode_single(value2)
-                    similarity = EncoderCore.cosine_similarity(emb1, emb2)
-
-                    if similarity < voting_meta.threshold:
-                        return False  # Not similar enough
-                else:
-                    # Non-string semantic comparison - just check equality
-                    if value1 != value2:
-                        return False
-
-            elif voting_meta.strategy == ComparisonStrategy.RANGE:
-                # For range comparison, check if within tolerance
-                if isinstance(value1, (int, float)) and isinstance(value2, (int, float)):
-                    if value1 == 0 and value2 == 0:
-                        continue  # Both zero, consider equal
-                    # Check relative difference
-                    max_val = max(abs(value1), abs(value2))
-                    if max_val > 0:
-                        rel_diff = abs(value1 - value2) / max_val
-                        if rel_diff > voting_meta.tolerance:
-                            return False
-                else:
-                    if value1 != value2:
-                        return False
-
-            elif voting_meta.strategy == ComparisonStrategy.DERIVED:
-                # For nested models, recursively compare
-                if isinstance(value1, (BaseModel, RootModel)) and isinstance(value2, (BaseModel, RootModel)):
-                    # Create temporary wrapper to use our comparison
-                    if not self._responses_are_similar(cast(T, value1), cast(T, value2)):
-                        return False
-                else:
-                    if value1 != value2:
-                        return False
-
-            else:
-                # EXACT comparison (default)
-                if value1 != value2:
-                    return False
+            if not fields_match:
+                return False
 
         # All non-ignored fields match according to their strategies
         return True
@@ -1226,15 +1225,14 @@ Provide a response in the same JSON format as the tied responses above.
             return analysis
 
         # Collect all field values with model IDs for traceability
-        field_values: DefaultDict[str, List[str]] = defaultdict(list)
-        field_values_with_models: DefaultDict[str, List[tuple[str, str]]] = defaultdict(list)
+        field_values: DefaultDict[str, List[Any]] = defaultdict(list)
+        field_values_with_models: DefaultDict[str, List[tuple[str, Any]]] = defaultdict(list)
 
         for response in responses:
             response_dict = response.content.model_dump()
             for field, value in response_dict.items():
-                str_value = str(value)
-                field_values[field].append(str_value)
-                field_values_with_models[field].append((response.id, str_value))
+                field_values[field].append(value)
+                field_values_with_models[field].append((response.id, value))
 
         # Track ignored fields for logging
         ignored_fields = []
@@ -1243,6 +1241,7 @@ Provide a response in the same JSON format as the tied responses above.
         for field, values in field_values.items():
             # Check if field should be ignored based on ComparisonStrategy
             field_info = model_fields.get(field)
+            voting_meta = None
             if field_info:
                 # Extract voting metadata using the helper method
                 voting_meta = FieldComparator._extract_voting_metadata(field_info)
@@ -1253,14 +1252,38 @@ Provide a response in the same JSON format as the tied responses above.
                         logger.debug(f"    ⊘ Field '{field}' is IGNORED for consensus (strategy=IGNORE)")
                     continue
 
-            unique_values = list(set(values))
+            # Check if all values are the same using proper comparison
+            # We need to compare them pairwise since we can't hash complex types
+            all_same = True
+            if len(values) > 1:
+                first_value = values[0]
+                for other_value in values[1:]:
+                    # Use the field comparator to check equality
+                    if field_info and voting_meta:
+                        if not FieldComparator.compare_fields(
+                            first_value,
+                            other_value,
+                            strategy=voting_meta.strategy,
+                            tolerance=voting_meta.tolerance,
+                            threshold=voting_meta.threshold,
+                            decimal_places=voting_meta.decimal_places,
+                            custom_comparator=getattr(voting_meta, "custom_comparator", None),
+                        ):
+                            all_same = False
+                            break
+                    else:
+                        # No field info, use simple equality
+                        if first_value != other_value:
+                            all_same = False
+                            break
 
-            if len(unique_values) == 1:
+            if all_same:
                 # Consensus on this field
                 analysis.consensus_fields.append(field)
             else:
-                # Disagreement on this field (but only for fields that matter)
-                analysis.disagreement_fields[field] = values
+                # Disagreement on this field (store string representations for display)
+                str_values = [str(v) for v in values]
+                analysis.disagreement_fields[field] = str_values
 
                 # Don't log during analysis - only show in final consolidated output
                 pass
@@ -1579,16 +1602,33 @@ Provide a response in the same JSON format as the tied responses above.
         log_lines.append(f"{status_icon}  CONSENSUS {status_text}")
         log_lines.append("=" * 80)
 
-        # Core metrics as a table
+        # Core metrics as a table with explanations
         log_lines.append("")  # Add spacing
-        log_lines.append("📊  SUMMARY:")
+        log_lines.append("📊  SUMMARY WITH EXPLANATIONS:")
+        log_lines.append("")
+
+        # Add legend for understanding the metrics
+        log_lines.append("   📖 METRIC EXPLANATIONS:")
+        log_lines.append("   • Result: SUCCESS = consensus reached, FALLBACK = used judge/majority vote")
+        log_lines.append("   • Convergence: 1.0 = perfect agreement, <threshold = no consensus")
+        log_lines.append("   • Agreement: % of models voting for the winning response")
+        log_lines.append("   • Field Consistency: % of fields where all models agree")
+        log_lines.append("   • Vote Stability: How consistent models were across rounds")
+        log_lines.append("   • Threshold: Minimum agreement % needed for consensus")
+        log_lines.append("")
 
         table_data = [
-            ["Result", result_display],
+            ["Result", f"{result_display} {'✓' if result.consensus_achieved else '✗'}"],
             ["Duration", f"{duration_ms:.1f}ms"],
-            ["Rounds", str(result.total_rounds)],
-            ["Models", str(len(result.participating_models))],
-            ["Convergence", f"{result.convergence_score:.3f}"],
+            [
+                "Rounds",
+                f"{result.total_rounds} {'(max)' if result.total_rounds >= self._settings.max_rounds else ''}",
+            ],
+            ["Models", f"{len(result.participating_models)} participating"],
+            [
+                "Convergence",
+                f"{result.convergence_score:.3f} {'✓ above threshold' if result.convergence_score >= self._settings.threshold else f'✗ below {self._settings.threshold:.2f}'}",
+            ],
         ]
 
         # Voting details
@@ -1620,17 +1660,29 @@ Provide a response in the same JSON format as the tied responses above.
             field_consistency = self._calculate_field_consistency(result.rounds)
             vote_stability = self._calculate_vote_stability(result.rounds)
 
-            # Add voting metrics to the table
+            # Add voting metrics to the table with explanations
             table_data.extend(
                 [
                     [
                         "Agreement",
-                        f"{agreement:.1%} ({top_group_size}/{len(final_round.responses)})",
+                        f"{agreement:.1%} ({top_group_size}/{len(final_round.responses)}) {'🎯 consensus!' if agreement >= self._settings.threshold else '⚠️ no consensus'}",
                     ],
-                    ["Field Consistency", f"{field_consistency:.1%}"],
-                    ["Vote Stability", f"{vote_stability:.1%}"],
-                    ["Unique Votes", str(unique_votes)],
-                    ["Threshold", f"{self._settings.threshold:.1%}"],
+                    [
+                        "Field Consistency",
+                        f"{field_consistency:.1%} {'✓ all fields agree' if field_consistency == 1.0 else f'⚠️ {(1 - field_consistency):.1%} fields differ'}",
+                    ],
+                    [
+                        "Vote Stability",
+                        f"{vote_stability:.1%} {'✓ stable' if vote_stability >= 0.8 else '⚠️ models changed votes'}",
+                    ],
+                    [
+                        "Unique Votes",
+                        f"{unique_votes} {'✓ unanimous' if unique_votes == 1 else f'⚠️ {unique_votes} different answers'}",
+                    ],
+                    [
+                        "Threshold",
+                        f"{self._settings.threshold:.1%} required for consensus",
+                    ],
                 ]
             )
 
@@ -1949,11 +2001,25 @@ Provide a response in the same JSON format as the tied responses above.
                             ):
                                 is_ignored = True
 
-                # Format the field value nicely
+                # Format the field value nicely - show actual values
                 if isinstance(field_value, (str, int, float, bool)):
                     field_str = f"{field_name}={field_value}"
+                elif isinstance(field_value, (list, dict)):
+                    # For lists and dicts, show a compact JSON representation
+                    import json
+
+                    try:
+                        json_str = json.dumps(field_value, separators=(",", ":"))
+                        # Truncate if too long
+                        if len(json_str) > 100:
+                            json_str = json_str[:97] + "..."
+                        field_str = f"{field_name}={json_str}"
+                    except (TypeError, ValueError):
+                        # Fallback for non-JSON-serializable
+                        field_str = f"{field_name}={str(field_value)[:100]}"
                 else:
-                    field_str = f"{field_name}={type(field_value).__name__}"
+                    # For other types, try string representation
+                    field_str = f"{field_name}={str(field_value)[:100]}"
 
                 if is_ignored:
                     ignored_fields.append(f"({field_str})")  # Parentheses indicate ignored

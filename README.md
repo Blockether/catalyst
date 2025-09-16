@@ -1,6 +1,5 @@
 <h2 align="center">
   <img width="35%" alt="Catalyst logo" src="docs/assets/logo.png"><br/>
-  Catalyst
 </h2>
 
 <div align="center">
@@ -107,12 +106,22 @@ pip install "blockether-catalyst[extraction,api] @ git+https://github.com/Blocke
 
 ## Knowledge Extraction
 
-1. Deploy a multimodal model serve - such as [MiniCPM-o-2_6](https://huggingface.co/openbmb/MiniCPM-o-2_6 or [QwenVL](https://huggingface.co/unsloth/gpt-4o-GGUF) - on an OpenAI-compatible inference platform to enable advanced document extraction and analysis capabilities.
+1. Deploy an OpenAI‑compatible multimodal model server (for image+text extraction).
+   - Examples: MiniCPM-o-2_6 (https://huggingface.co/openbmb/MiniCPM-o-2_6) or QwenVL (https://huggingface.co/unsloth/gpt-4o-GGUF).
+   - Why: a local/remote OpenAI-compatible endpoint enables accurate multimodal extraction (images, tables, captions).
+   - Compatibility note: see OpenAI-compatible deployment guidance — https://www.alibabacloud.com/help/en/model-studio/qwen-vl-compatible-with-openai
 
-See: https://www.alibabacloud.com/help/en/model-studio/qwen-vl-compatible-with-openai
+2. Clone this repository:
+```bash
+git clone https://github.com/Blockether/catalyst.git
+cd catalyst
+```
 
-2. Clone this repository
-3. Perform knowledge extraction using tools/KnowledgeExtraction.py
+3. Run the knowledge extraction tool:
+```bash
+python tools/KnowledgeExtraction.py "*.pdf"
+```
+- Ensure your model server endpoint and credentials (if any) are configured before running the extractor.
 
 ## License
 

@@ -9,12 +9,14 @@ import logging
 import pickle
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import InMemoryVectorStore
 from pydantic import BaseModel, Field
+
+from blockether_catalyst.knowledge.KnowledgeVectorizers import KnowledgeVectorizers
 
 from ..encoder.EncoderCore import EncoderCore
 from .KnowledgeTypes import (
@@ -26,6 +28,7 @@ from .KnowledgeTypes import (
     SearchResultMetadata,
     Term,
     TermWithLinks,
+    TopTermsResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +90,9 @@ class KnowledgeSearchCore:
     TERM_RELEVANCE_WEIGHT: float = 0.4
     TERM_FREQUENCY_WEIGHT: float = 0.7
     TERM_DIVERSITY_WEIGHT: float = 0.3
+    KEYWORD_BOOST_WEIGHT: float = 0.3  # Boost for results containing top keywords
+    ACRONYM_BOOST_WEIGHT: float = 0.2  # Boost for results containing top acronyms
+    NGRAM_SIZE_BOOST: float = 0.1  # Additional boost per n-gram size for keywords
     _is_initialized_from_state: bool = False
 
     def __init__(
@@ -270,12 +276,23 @@ class KnowledgeSearchCore:
         start_time = time.time()
         logger.info(f"Performing enhanced search for query: '{query}'")
 
+        vectorizers = KnowledgeVectorizers(keywords_min_df=1, acronyms_min_df=1)
+
         # Perform vector search
         search_results = self._similarity_search(query, k=k, threshold=threshold)
 
+        max_keywords_from_query = 5
+        max_acronyms_from_query = 5
+        top_terms = self._get_top_keywords_and_acronyms(query, vectorizers, max_keywords=max_keywords_from_query, max_acronyms=max_acronyms_from_query)
+
+        # Log the extracted terms if present
+        if top_terms.keywords:
+            logger.info(f"Top keywords from query (by n-gram size): {top_terms.keywords[:max_keywords_from_query]}")
+        if top_terms.acronyms:
+            logger.info(f"Top acronyms from query: {top_terms.acronyms[:max_acronyms_from_query]}")
+
         # Convert to enhanced search results with term analysis
         enhanced_results: List[KnowledgeSearchResult] = []
-
         for result in search_results:
             enh_result = KnowledgeSearchResult(
                 text=result.text,
@@ -403,6 +420,71 @@ class KnowledgeSearchCore:
         )
 
         return normalized_results
+
+    def _get_top_keywords_and_acronyms(
+        self,
+        query: str,
+        vectorizers: KnowledgeVectorizers,
+        max_keywords: int = 10,
+        max_acronyms: int = 10,
+    ) -> TopTermsResult:
+        """
+        Extract and rank keywords and acronyms from a query using TF-IDF.
+
+        Keywords are sorted by n-gram size (descending) then by TF-IDF score (descending).
+        Acronyms are sorted by TF-IDF score (descending).
+
+        Args:
+            query: The search query text
+            vectorizers: KnowledgeVectorizers instance for TF-IDF extraction
+            max_keywords: Maximum number of keywords to return
+            max_acronyms: Maximum number of acronyms to return
+
+        Returns:
+            TopTermsResult containing ranked keywords and acronyms
+        """
+        keyword_vectorizer = vectorizers.keywords_vectorizer()
+        acronyms_vectorizer = vectorizers.acronyms_vectorizer()
+
+        # Extract keywords using TF-IDF
+        top_keywords: List[Tuple[str, float]] = []
+        tfidf_keywords_matrix = keyword_vectorizer.fit_transform([query])
+        keywords = keyword_vectorizer.get_feature_names_out()
+        if len(keywords) > 0:  # Check if we have any features
+            keywords_scores = tfidf_keywords_matrix.toarray()[0]  # type: ignore
+
+            # Create list of (keyword, score) for non-zero scores
+            keyword_pairs = [
+                (keywords[idx], keywords_scores[idx]) for idx in range(len(keywords)) if keywords_scores[idx] > 0
+            ]
+
+            # Sort by n-gram size (word count) descending, then by score descending
+            keyword_pairs.sort(key=lambda x: (len(x[0].split()), x[1]), reverse=True)
+            top_keywords = keyword_pairs[:max_keywords]
+
+            if top_keywords:
+                logger.debug(f"Top keywords from query (by n-gram size): {top_keywords[:5]}")
+
+        # Extract acronyms using TF-IDF
+        top_acronyms: List[Tuple[str, float]] = []
+        tfidf_acronyms_matrix = acronyms_vectorizer.fit_transform([query])
+        acronyms = acronyms_vectorizer.get_feature_names_out()
+        if len(acronyms) > 0:  # Check if we have any features
+            acronyms_scores = tfidf_acronyms_matrix.toarray()[0]  # type: ignore
+
+            # Create list of (acronym, score) for non-zero scores, sorted by score
+            acronym_pairs = [
+                (acronyms[idx], acronyms_scores[idx]) for idx in range(len(acronyms)) if acronyms_scores[idx] > 0
+            ]
+
+            # Sort by score descending
+            acronym_pairs.sort(key=lambda x: x[1], reverse=True)
+            top_acronyms = acronym_pairs[:max_acronyms]
+
+            if top_acronyms:
+                logger.debug(f"Top acronyms from query: {top_acronyms[:5]}")
+
+        return TopTermsResult(keywords=top_keywords, acronyms=top_acronyms)
 
     def _normalize_term_info(self, term: TermWithLinks, link_limit: int) -> Dict[str, Any]:
         """

@@ -522,13 +522,16 @@ class KnowledgeExtractionCore:
             logger.warning(f"Document {document_result.document_filename} has no valid chunk texts")
             return []
 
+        keyword_vectorizer = vectorizers.keywords_vectorizer()
+        acronyms_vectorizer = vectorizers.acronyms_vectorizer()
+
         # Extract keywords and acronyms from chunks
-        tfidf_keywords_matrix = vectorizers.keywords_vectorizer.fit_transform(chunk_texts)
-        keywords = vectorizers.keywords_vectorizer.get_feature_names_out()
+        tfidf_keywords_matrix = keyword_vectorizer.fit_transform(chunk_texts)
+        keywords = keyword_vectorizer.get_feature_names_out()
         keywords_scores_matrix = tfidf_keywords_matrix.toarray()  # type: ignore
 
-        tfidf_acronyms_matrix = vectorizers.acronyms_vectorizer.fit_transform(chunk_texts)
-        acronyms = vectorizers.acronyms_vectorizer.get_feature_names_out()
+        tfidf_acronyms_matrix = acronyms_vectorizer.fit_transform(chunk_texts)
+        acronyms = acronyms_vectorizer.get_feature_names_out()
         acronyms_scores_matrix = tfidf_acronyms_matrix.toarray()  # type: ignore
 
         # Check if no features were extracted at all
@@ -546,12 +549,15 @@ class KnowledgeExtractionCore:
                 # Create keyword candidates for this chunk
                 for keyword_idx, score in enumerate(chunk_scores_keywords):
                     if score > 0:  # Only add non-zero scores
+                        keyword = LinkedKnowledge._normalize_term(keywords[keyword_idx])
+                        # Count actual occurrences of the term in the chunk
+                        term_count = len(self._find_term_positions_in_text(keyword, chunk.text))
                         keyword_candidates.append(
                             TermCandidate(
-                                term=LinkedKnowledge._normalize_term(keywords[keyword_idx]),
+                                term=keyword,
                                 document_filename=document_result.document_filename,
                                 document_id=document_result.id,
-                                total=score,
+                                total=term_count,  # Use actual count instead of TF-IDF score
                                 page=chunk.page,
                                 chunk=chunk.index,
                                 type="keyword",
@@ -564,20 +570,25 @@ class KnowledgeExtractionCore:
                 # Create acronym candidates for this chunk
                 for acronym_idx, score in enumerate(chunk_scores_acronyms):
                     if score > 0:
+                        acronym = LinkedKnowledge._normalize_term(acronyms[acronym_idx]).upper()
+                        # Count actual occurrences of the term in the chunk
+                        term_count = len(self._find_term_positions_in_text(acronym, chunk.text))
                         acronyms_candidates.append(
                             TermCandidate(
-                                term=LinkedKnowledge._normalize_term(acronyms[acronym_idx]).upper(),
+                                term=acronym,
                                 document_filename=document_result.document_filename,
                                 document_id=document_result.id,
-                                total=score,
+                                total=term_count,  # Use actual count instead of TF-IDF score
                                 page=chunk.page,
                                 chunk=chunk.index,
                                 type="acronym",
                             )
                         )
 
-        # Combine and sort all candidates
+        # Combine and sort all candidates by their TF-IDF scores (not by count)
+        # We still want to preserve the TF-IDF ordering for importance
         all_candidates = keyword_candidates + acronyms_candidates
+        # Since we no longer have scores, sort by total count instead
         all_candidates.sort(key=lambda x: x.total, reverse=True)
 
         return all_candidates

@@ -22,31 +22,25 @@ class KnowledgeVectorizers:
         self._keywords_min_df = keywords_min_df
         self._acronyms_min_df = acronyms_min_df
 
-        self._keywords_vectorizer = CountVectorizer(
+    def keywords_vectorizer(self) -> CountVectorizer:
+        """Get the keywords vectorizer."""
+        return CountVectorizer(
             stop_words="english",
             strip_accents="ascii",
             ngram_range=(2, 4),
-            min_df=keywords_min_df,
+            min_df=self._keywords_min_df,
             analyzer="word",
             dtype=np.int64,
         )
 
-        self._acronyms_vectorizer = CountVectorizer(
+    def acronyms_vectorizer(self) -> CountVectorizer:
+        """Get the acronyms vectorizer."""
+        return CountVectorizer(
             stop_words=None,
             strip_accents="ascii",
             ngram_range=(1, 1),
-            min_df=acronyms_min_df,
+            min_df=self._acronyms_min_df,
             token_pattern=r"\b[A-Z]{2,}([_/-][A-Z]+)?\b",
             lowercase=False,
             dtype=np.int64,
         )
-
-    @property
-    def keywords_vectorizer(self) -> CountVectorizer:
-        """Get the keywords vectorizer."""
-        return self._keywords_vectorizer
-
-    @property
-    def acronyms_vectorizer(self) -> CountVectorizer:
-        """Get the acronyms vectorizer."""
-        return self._acronyms_vectorizer
