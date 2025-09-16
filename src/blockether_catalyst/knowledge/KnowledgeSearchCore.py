@@ -97,7 +97,7 @@ class KnowledgeSearchCore:
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
+        resources_base_url: Optional[str] = None,
         linked_knowledge: Optional[LinkedKnowledge] = None,
         pickle_path: Optional[Union[str, Path]] = None,
         auto_load: bool = True,
@@ -116,7 +116,7 @@ class KnowledgeSearchCore:
 
         start_time = time.time()
 
-        self._base_url = base_url
+        self._resources_base_url = resources_base_url
 
         self.pickle_path = Path(pickle_path) if pickle_path else None
         if not linked_knowledge and auto_load and self.pickle_path and self.pickle_path.exists():
@@ -309,10 +309,10 @@ class KnowledgeSearchCore:
         for result in enhanced_results:
             # Build document reference with href (properly encoded)
             doc_href = ""
-            if self._base_url and result.document_path:
+            if self._resources_base_url and result.document_path:
                 # Encode the path to handle spaces and special characters
                 encoded_path = quote(result.document_path, safe='/')
-                doc_href = f"{self._base_url}/{encoded_path}"
+                doc_href = f"{self._resources_base_url}/{encoded_path}"
 
             # Simplified normalized result
             normalized_result = {
@@ -327,7 +327,7 @@ class KnowledgeSearchCore:
                 "images": [
                     {
                         "caption": img.caption,
-                        "href": f"{self._base_url}/{quote(img.path, safe='/')}",
+                        "href": f"{self._resources_base_url}/{quote(img.path, safe='/')}",
                         "page": img.page,
                     }
                     for img in result.images
@@ -873,7 +873,7 @@ class KnowledgeSearchCore:
         self.pickle_path = load_path
 
     @classmethod
-    def from_pickle(cls, path: Union[str, Path], base_url: str) -> "KnowledgeSearchCore":
+    def from_pickle(cls, path: Union[str, Path], resources_base_url: str) -> "KnowledgeSearchCore":
         """
         Create a KnowledgeSearchCore instance by loading from a pickle file.
 
@@ -897,7 +897,7 @@ class KnowledgeSearchCore:
             linked_knowledge=None,
             pickle_path=path,
             auto_load=True,
-            base_url=base_url,
+            resources_base_url=resources_base_url,
         )
 
         return instance

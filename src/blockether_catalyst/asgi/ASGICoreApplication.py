@@ -4,6 +4,7 @@ ASGI Core Application - Root application manager with module support
 
 import logging
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, cast
 
@@ -170,11 +171,11 @@ class ASGICoreApplication(ASGIApplicationConfig):
         # Mount module's static files if any
         for mount in module.statics:
             if mount.directory.exists():
-                mount_url = f"{full_prefix}{mount.url}"
+                mount_url = f"{full_prefix}{mount.mount}"
                 self._app.mount(
                     mount_url,
-                    StaticFiles(directory=str(mount.directory), html=mount.html),
-                    name=f"{module_name}_{mount.url.replace('/', '_')}",
+                    StaticFiles(directory=os.path.join(os.getcwd(), mount.directory), html=mount.html),
+                    name=f"{module_name}_{mount.mount.replace('/', '_')}",
                 )
 
     def run(

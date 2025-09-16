@@ -77,7 +77,7 @@ class HTMXResponse(BaseModel):
 class StaticMount(BaseModel):
     """Configuration for static file serving."""
 
-    url: str  # URL path like "/static" or "/assets"
+    mount: str  # URL path like "/static" or "/assets"
     directory: Path  # Directory containing static files
     name: Optional[str] = None  # Optional mount name
     html: bool = False  # Whether to serve HTML files

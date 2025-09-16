@@ -78,7 +78,7 @@ class ChatConfig(BaseModel):
     token_cookie_max_age: int = 86400
     assistant_name: str = "Omniscient Assistant"
     assistant_avatar: str = "O"
-    base_url: str = "http://localhost:8002"
+    base_url: str
     auth_token_resolver: AuthTokenResolver = default_token_resolver
 
 
@@ -566,7 +566,7 @@ class AgnoOsASGIModule(ASGICoreModule):
                         if (this.iframe) {
                             // Show loading indicator
                             this.showLoadingIndicator();
-                            
+
                             // Create a one-time load event listener for this reload
                             const onReloadComplete = () => {
                                 this.hideLoadingIndicator();
@@ -574,10 +574,10 @@ class AgnoOsASGIModule(ASGICoreModule):
                                 // Remove the listener after it fires
                                 this.iframe.removeEventListener('load', onReloadComplete);
                             };
-                            
+
                             // Add the load listener before changing src
                             this.iframe.addEventListener('load', onReloadComplete);
-                            
+
                             // Force reload by appending timestamp to prevent caching
                             const url = new URL(this.buildIframeUrl());
                             url.searchParams.set('_reload', Date.now());
