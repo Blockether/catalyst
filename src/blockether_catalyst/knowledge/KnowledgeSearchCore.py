@@ -5,28 +5,26 @@ This module provides sophisticated search functionality that combines semantic s
 with knowledge about terms, their meanings, co-occurrences, and relationships.
 """
 
+import heapq
 import logging
 import pickle
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from urllib.parse import quote
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import InMemoryVectorStore
-from pydantic import BaseModel, Field
 
 from blockether_catalyst.knowledge.KnowledgeVectorizers import KnowledgeVectorizers
 
 from ..encoder.EncoderCore import EncoderCore
 from .KnowledgeTypes import (
-    ImageMetadata,
     KnowledgeSearchResult,
-    KnowledgeTableData,
     LinkedKnowledge,
     SearchResult,
     SearchResultMetadata,
-    Term,
     TermWithLinks,
     TopTermsResult,
 )
@@ -82,7 +80,7 @@ class KnowledgeSearchCore:
     """
 
     # Class constants
-    DEFAULT_K_RESULTS: int = 10
+    DEFAULT_K_RESULTS: int = 5
     DEFAULT_THRESHOLD: float = 0.1
     DEFAULT_MAX_DEPTH: int = 2
     DEFAULT_MAX_COOCCURRENCES: int = 5
@@ -91,8 +89,10 @@ class KnowledgeSearchCore:
     TERM_FREQUENCY_WEIGHT: float = 0.7
     TERM_DIVERSITY_WEIGHT: float = 0.3
     KEYWORD_BOOST_WEIGHT: float = 0.3  # Boost for results containing top keywords
-    ACRONYM_BOOST_WEIGHT: float = 0.2  # Boost for results containing top acronyms
-    NGRAM_SIZE_BOOST: float = 0.1  # Additional boost per n-gram size for keywords
+    ACRONYM_BOOST_WEIGHT: float = 0.4  # Boost for results containing top acronyms
+    NGRAM_SIZE_BOOST: float = 0.3  # Additional boost per n-gram size for keywords
+    MAX_TOP_KEYWORDS_FROM_QUERY: int = 5  # Maximum number of top keywords to extract from query
+    MAX_TOP_ACRONYMS_FROM_QUERY: int = 5  # Maximum number of top acronyms to extract from query
     _is_initialized_from_state: bool = False
 
     def __init__(
@@ -278,114 +278,47 @@ class KnowledgeSearchCore:
 
         vectorizers = KnowledgeVectorizers(keywords_min_df=1, acronyms_min_df=1)
 
-        # Perform vector search
-        search_results = self._similarity_search(query, k=k, threshold=threshold)
+        # Perform vector search (get more results initially for better ranking)
+        search_results = self._similarity_search(query, k=k * 2, threshold=threshold)
 
-        max_keywords_from_query = 5
-        max_acronyms_from_query = 5
-        top_terms = self._get_top_keywords_and_acronyms(query, vectorizers, max_keywords=max_keywords_from_query, max_acronyms=max_acronyms_from_query)
+        # Extract top keywords and acronyms from the query
+        top_terms = self._get_top_keywords_and_acronyms(
+            query,
+            vectorizers,
+            max_keywords=self.MAX_TOP_KEYWORDS_FROM_QUERY,
+            max_acronyms=self.MAX_TOP_ACRONYMS_FROM_QUERY,
+        )
 
         # Log the extracted terms if present
         if top_terms.keywords:
-            logger.info(f"Top keywords from query (by n-gram size): {top_terms.keywords[:max_keywords_from_query]}")
-        if top_terms.acronyms:
-            logger.info(f"Top acronyms from query: {top_terms.acronyms[:max_acronyms_from_query]}")
-
-        # Convert to enhanced search results with term analysis
-        enhanced_results: List[KnowledgeSearchResult] = []
-        for result in search_results:
-            enh_result = KnowledgeSearchResult(
-                text=result.text,
-                score=result.score,
-                document_id=result.metadata.document_id or "",
-                document_name=result.metadata.document_name or "",
-                page=result.metadata.page or 0,
-                chunk_index=result.metadata.chunk_index or 0,
-                metadata=result.metadata,
-                document_path=result.metadata.document_path,
+            logger.info(
+                f"Top keywords from query (by n-gram size): {top_terms.keywords[: self.MAX_TOP_KEYWORDS_FROM_QUERY]}"
             )
+        if top_terms.acronyms:
+            logger.info(f"Top acronyms from query: {top_terms.acronyms[: self.MAX_TOP_ACRONYMS_FROM_QUERY]}")
 
-            # Extract primary terms efficiently using chunk metadata
-            chunk_terms = result.metadata.terms
-            for term_key in chunk_terms:
-                if term_key in self._linked_knowledge.terms:
-                    term = self._linked_knowledge.terms[term_key]
-                    enh_result.primary_terms.append(term)
-                    enh_result.all_terms.add(term.term)
-
-            # Resolve co-occurrences and links for all primary terms
-            visited_terms = set()
-            for term in enh_result.primary_terms:
-                # Add the primary term key to visited set
-                visited_terms.add(term.term)
-
-                # Recursively resolve linked terms up to max_depth
-                # Create a new visited set for each primary term to allow cross-references
-                term_visited = visited_terms.copy()
-                linked_terms = self._resolve_linked_terms(term, max_depth, visited=term_visited)
-                for linked_term in linked_terms:
-                    if linked_term not in enh_result.related_terms:
-                        enh_result.related_terms.append(linked_term)
-                        enh_result.all_terms.add(linked_term.term)
-
-                # Add co-occurring terms (only at first level, not recursive)
-                if term.cooccurrences and max_cooccurrences > 0:
-                    for cooccurrence in term.cooccurrences[:max_cooccurrences]:
-                        if cooccurrence.term in self._linked_knowledge.terms:
-                            cooccurring_term = self._linked_knowledge.terms[cooccurrence.term]
-                            if cooccurring_term not in enh_result.related_terms:
-                                enh_result.related_terms.append(cooccurring_term)
-                                enh_result.all_terms.add(cooccurring_term.term)
-
-            # Calculate term frequencies in the query
-            for term_str in enh_result.all_terms:
-                term_lower = term_str.lower()
-                # Count occurrences of this term in the query
-                count = query.lower().count(term_lower)
-                if count > 0:
-                    enh_result.term_frequencies[term_str] = count
-
-            # Calculate term relevance score
-            # Higher score for results with more query terms and higher frequencies
-            if enh_result.term_frequencies:
-                # Sum of frequencies weighted by term importance
-                total_freq = sum(enh_result.term_frequencies.values())
-                unique_terms = len(enh_result.term_frequencies)
-                # Combine frequency and diversity
-                enh_result.term_relevance_score = (
-                    total_freq * self.TERM_FREQUENCY_WEIGHT + unique_terms * self.TERM_DIVERSITY_WEIGHT
-                )
-
-            enh_result.primary_terms.sort(key=lambda t: t.total)
-            enh_result.related_terms.sort(key=lambda t: t.total)
-
-            # Add images and tables from the page if available
-            if enh_result.page and enh_result.document_id:
-                self._add_page_content(enh_result, enh_result.document_id, enh_result.page)
-
-            enhanced_results.append(enh_result)
-
-        # Sort results by combined score (similarity + term relevance)
-        enhanced_results.sort(
-            key=lambda r: (r.score * self.SIMILARITY_WEIGHT + r.term_relevance_score * self.TERM_RELEVANCE_WEIGHT),
-            reverse=True,
+        # Enhance search results with term analysis and boosting
+        # The function now handles efficient top-k selection internally
+        enhanced_results = self._enhance_search_results(
+            search_results, query, top_terms, max_depth, max_cooccurrences, k
         )
 
         # Convert to normalized format
         normalized_results: List[Dict[str, Any]] = []
 
         for result in enhanced_results:
-            # Build document reference with href
+            # Build document reference with href (properly encoded)
             doc_href = ""
             if self._base_url and result.document_path:
-                doc_href = f"{self._base_url}/{result.document_path}"
+                # Encode the path to handle spaces and special characters
+                encoded_path = quote(result.document_path, safe='/')
+                doc_href = f"{self._base_url}/{encoded_path}"
 
             # Simplified normalized result
             normalized_result = {
                 "score": result.score,
                 "content": result.text,
                 "document_name": result.document_name,
-                "document_path": result.document_path,
                 "page": result.page,
                 "author": result.metadata.author if result.metadata else None,
                 "publication_date": result.metadata.publication_date if result.metadata else None,
@@ -394,7 +327,7 @@ class KnowledgeSearchCore:
                 "images": [
                     {
                         "caption": img.caption,
-                        "href": f"{self._base_url}/{img.path}",
+                        "href": f"{self._base_url}/{quote(img.path, safe='/')}",
                         "page": img.page,
                     }
                     for img in result.images
@@ -403,16 +336,17 @@ class KnowledgeSearchCore:
                     {
                         "markdown": table.to_markdown(),
                         "page": table.page,
-                        "number_of_rows": table.rows,
-                        "number_of_columns": table.columns,
                     }
                     for table in result.tables
                 ],
-                "primary_terms": [self._normalize_term_info(term, k) for term in result.primary_terms],
-                "related_terms": [self._normalize_term_info(term, max(3, k)) for term in result.related_terms],
+                "primary_terms": [self._normalize_term_info(term, k) for term in result.primary_terms[:k]],
+                "related_terms": [self._normalize_term_info(term, int(k / 2)) for term in result.related_terms[:3]],
             }
 
-            normalized_results.append(normalized_result)
+            # Clean empty values from the result before appending
+            cleaned_result = self._clean_empty_values(normalized_result)
+            if cleaned_result:  # Only append if result is not empty after cleaning
+                normalized_results.append(cleaned_result)
 
         search_time = time.time() - start_time
         logger.info(
@@ -446,45 +380,300 @@ class KnowledgeSearchCore:
         keyword_vectorizer = vectorizers.keywords_vectorizer()
         acronyms_vectorizer = vectorizers.acronyms_vectorizer()
 
-        # Extract keywords using TF-IDF
-        top_keywords: List[Tuple[str, float]] = []
-        tfidf_keywords_matrix = keyword_vectorizer.fit_transform([query])
-        keywords = keyword_vectorizer.get_feature_names_out()
-        if len(keywords) > 0:  # Check if we have any features
-            keywords_scores = tfidf_keywords_matrix.toarray()[0]  # type: ignore
+        try:
+            # Extract keywords using TF-IDF
+            top_keywords: List[Tuple[str, float]] = []
+            tfidf_keywords_matrix = keyword_vectorizer.fit_transform([query])
+            keywords = keyword_vectorizer.get_feature_names_out()
+            if len(keywords) > 0:  # Check if we have any features
+                keywords_scores = tfidf_keywords_matrix.toarray()[0]  # type: ignore
 
-            # Create list of (keyword, score) for non-zero scores
-            keyword_pairs = [
-                (keywords[idx], keywords_scores[idx]) for idx in range(len(keywords)) if keywords_scores[idx] > 0
-            ]
+                # Create list of (keyword, score) for non-zero scores
+                keyword_pairs = [
+                    (keywords[idx], keywords_scores[idx]) for idx in range(len(keywords)) if keywords_scores[idx] > 0
+                ]
 
-            # Sort by n-gram size (word count) descending, then by score descending
-            keyword_pairs.sort(key=lambda x: (len(x[0].split()), x[1]), reverse=True)
-            top_keywords = keyword_pairs[:max_keywords]
+                # Sort by n-gram size (word count) descending, then by score descending
+                keyword_pairs.sort(key=lambda x: (len(x[0].split()), x[1]), reverse=True)
+                top_keywords = keyword_pairs[:max_keywords]
 
-            if top_keywords:
-                logger.debug(f"Top keywords from query (by n-gram size): {top_keywords[:5]}")
+                if top_keywords:
+                    logger.debug(f"Top keywords from query (by n-gram size): {top_keywords[:5]}")
+
+        except ValueError as e:
+            logger.debug(f"No multi-word keywords found in query '{query}': {e}")
+            top_keywords = []
 
         # Extract acronyms using TF-IDF
         top_acronyms: List[Tuple[str, float]] = []
-        tfidf_acronyms_matrix = acronyms_vectorizer.fit_transform([query])
-        acronyms = acronyms_vectorizer.get_feature_names_out()
-        if len(acronyms) > 0:  # Check if we have any features
-            acronyms_scores = tfidf_acronyms_matrix.toarray()[0]  # type: ignore
+        try:
+            tfidf_acronyms_matrix = acronyms_vectorizer.fit_transform([query])
+            acronyms = acronyms_vectorizer.get_feature_names_out()
+            if len(acronyms) > 0:  # Check if we have any features
+                acronyms_scores = tfidf_acronyms_matrix.toarray()[0]  # type: ignore
 
-            # Create list of (acronym, score) for non-zero scores, sorted by score
-            acronym_pairs = [
-                (acronyms[idx], acronyms_scores[idx]) for idx in range(len(acronyms)) if acronyms_scores[idx] > 0
-            ]
+                # Create list of (acronym, score) for non-zero scores, sorted by score
+                acronym_pairs = [
+                    (acronyms[idx], acronyms_scores[idx]) for idx in range(len(acronyms)) if acronyms_scores[idx] > 0
+                ]
 
-            # Sort by score descending
-            acronym_pairs.sort(key=lambda x: x[1], reverse=True)
-            top_acronyms = acronym_pairs[:max_acronyms]
+                # Sort by score descending
+                acronym_pairs.sort(key=lambda x: x[1], reverse=True)
+                top_acronyms = acronym_pairs[:max_acronyms]
 
-            if top_acronyms:
-                logger.debug(f"Top acronyms from query: {top_acronyms[:5]}")
+                if top_acronyms:
+                    logger.debug(f"Top acronyms from query: {top_acronyms[:5]}")
+        except ValueError as e:
+            logger.debug(f"No acronyms found in query '{query}': {e}")
+            top_acronyms = []
 
         return TopTermsResult(keywords=top_keywords, acronyms=top_acronyms)
+
+    def _calculate_term_boost_score(
+        self,
+        text: str,
+        top_terms: TopTermsResult,
+    ) -> Tuple[float, float, float]:
+        """
+        Calculate boost scores based on presence of top keywords and acronyms in text.
+
+        Args:
+            text: The text to search for keywords and acronyms in
+            top_terms: The top keywords and acronyms extracted from the query
+
+        Returns:
+            Tuple of (total_boost, keyword_boost, acronym_boost)
+        """
+        keyword_boost = 0.0
+        acronym_boost = 0.0
+        text_lower = text.lower()
+
+        # Create lookup dictionaries for faster matching (case-insensitive)
+        top_keyword_dict = {kw[0].lower(): (kw[0], kw[1], len(kw[0].split())) for kw in top_terms.keywords}
+        top_acronym_dict = {ac[0].lower(): (ac[0], ac[1]) for ac in top_terms.acronyms}
+
+        # Check for top keywords in the text
+        for keyword_lower, (
+            keyword_orig,
+            score,
+            ngram_size,
+        ) in top_keyword_dict.items():
+            if keyword_lower in text_lower:
+                # Apply boost based on TF-IDF score and n-gram size
+                keyword_boost += score * self.KEYWORD_BOOST_WEIGHT
+                # Additional boost for larger n-grams (more specific terms)
+                keyword_boost += (ngram_size - 1) * self.NGRAM_SIZE_BOOST * score
+                logger.debug(f"Found keyword '{keyword_orig}' in text, boost: {score * self.KEYWORD_BOOST_WEIGHT}")
+
+        # Check for top acronyms in the text
+        for acronym_lower, (acronym_orig, score) in top_acronym_dict.items():
+            if acronym_lower in text_lower:
+                acronym_boost += score * self.ACRONYM_BOOST_WEIGHT
+                logger.debug(f"Found acronym '{acronym_orig}' in text, boost: {score * self.ACRONYM_BOOST_WEIGHT}")
+
+        total_boost = keyword_boost + acronym_boost
+
+        # Log significant boosts
+        if total_boost > 0:
+            logger.debug(
+                f"Calculated boost scores - Total: {total_boost:.3f} "
+                f"(keyword: {keyword_boost:.3f}, acronym: {acronym_boost:.3f})"
+            )
+
+        return total_boost, keyword_boost, acronym_boost
+
+    def _enhance_search_results(
+        self,
+        search_results: List[SearchResult],
+        query: str,
+        top_terms: TopTermsResult,
+        max_depth: int,
+        max_cooccurrences: int,
+        k: int,
+    ) -> List[KnowledgeSearchResult]:
+        """
+        Convert basic search results to enhanced results with term analysis and boosting.
+
+        This method:
+        1. Applies keyword/acronym boost scores
+        2. Prioritizes terms based on top keywords/acronyms
+        3. Extracts and resolves primary and secondary terms
+        4. Calculates term frequencies and relevance scores
+        5. Adds page content (images/tables)
+        6. Efficiently selects top k results
+
+        Args:
+            search_results: Basic search results from vector search
+            query: The original search query
+            top_terms: Top keywords and acronyms extracted from query
+            max_depth: Maximum depth for exploring related terms
+            max_cooccurrences: Maximum number of co-occurring terms
+            k: Number of results to return
+
+        Returns:
+            List of top k enhanced search results with full term analysis
+        """
+        # Create sets of top terms for fast lookup (case-insensitive)
+        top_keyword_set = {kw[0].lower() for kw in top_terms.keywords}
+        top_acronym_set = {ac[0].lower() for ac in top_terms.acronyms}
+
+        enhanced_results: List[KnowledgeSearchResult] = []
+
+        for result in search_results:
+            enh_result = KnowledgeSearchResult(
+                text=result.text,
+                score=result.score,
+                document_id=result.metadata.document_id or "",
+                document_name=result.metadata.document_name or "",
+                page=result.metadata.page or 0,
+                chunk_index=result.metadata.chunk_index or 0,
+                metadata=result.metadata,
+                document_path=result.metadata.document_path,
+            )
+
+            # Calculate and apply boost score based on presence of top keywords and acronyms
+            total_boost, keyword_boost, acronym_boost = self._calculate_term_boost_score(result.text, top_terms)
+
+            # Extract and categorize terms based on top keywords/acronyms
+            chunk_terms = result.metadata.terms
+            query_lower = query.lower()
+
+            for term_key in chunk_terms:
+                if term_key in self._linked_knowledge.terms:
+                    term = self._linked_knowledge.terms[term_key]
+                    term_lower = term.term.lower()
+
+                    # Check if this term matches any top keywords or acronyms from query
+                    is_top_term = (
+                        term_lower in top_keyword_set
+                        or term_lower in top_acronym_set
+                        or any(keyword in term_lower for keyword in top_keyword_set)
+                        or any(acronym in term_lower for acronym in top_acronym_set)
+                    )
+
+                    # Also check if term appears in the query
+                    is_in_query = term_lower in query_lower
+
+                    # Primary terms: top terms or terms that appear in query
+                    if is_top_term or is_in_query:
+                        enh_result.primary_terms.append(term)
+                        enh_result.all_terms.add(term.term)
+                        # Also count frequency while we're at it
+                        count = query_lower.count(term_lower)
+                        if count > 0:
+                            enh_result.term_frequencies[term.term] = count
+                    else:
+                        # Secondary (related) terms
+                        if term not in enh_result.related_terms:
+                            enh_result.related_terms.append(term)
+                            enh_result.all_terms.add(term.term)
+
+            # Resolve co-occurrences and links for primary terms only
+            visited_terms = set()
+            for term in enh_result.primary_terms:
+                visited_terms.add(term.term)
+
+                # Add linked terms as secondary
+                term_visited = visited_terms.copy()
+                linked_terms = self._resolve_linked_terms(term, max_depth, visited=term_visited)
+                for linked_term in linked_terms:
+                    if linked_term not in enh_result.related_terms and linked_term not in enh_result.primary_terms:
+                        enh_result.related_terms.append(linked_term)
+                        enh_result.all_terms.add(linked_term.term)
+
+                # Add co-occurring terms as secondary
+                if term.cooccurrences and max_cooccurrences > 0:
+                    for cooccurrence in term.cooccurrences[:max_cooccurrences]:
+                        if cooccurrence.term in self._linked_knowledge.terms:
+                            cooccurring_term = self._linked_knowledge.terms[cooccurrence.term]
+                            if (
+                                cooccurring_term not in enh_result.related_terms
+                                and cooccurring_term not in enh_result.primary_terms
+                            ):
+                                enh_result.related_terms.append(cooccurring_term)
+                                enh_result.all_terms.add(cooccurring_term.term)
+
+            # Calculate term relevance score
+            if enh_result.term_frequencies:
+                total_freq = sum(enh_result.term_frequencies.values())
+                unique_terms = len(enh_result.term_frequencies)
+                enh_result.term_relevance_score = (
+                    total_freq * self.TERM_FREQUENCY_WEIGHT + unique_terms * self.TERM_DIVERSITY_WEIGHT
+                )
+
+            # Sort terms by their importance
+            enh_result.primary_terms.sort(key=lambda t: t.total, reverse=True)
+            enh_result.related_terms.sort(key=lambda t: t.total, reverse=True)
+
+            # Add images and tables from the page if available
+            if enh_result.page and enh_result.document_id:
+                self._add_page_content(enh_result, enh_result.document_id, enh_result.page)
+
+            # Calculate final composite score (boost is already applied to score)
+            # Use the boosted score directly in the composite calculation
+            enh_result.final_score = (
+                enh_result.score + total_boost
+            ) * self.SIMILARITY_WEIGHT + enh_result.term_relevance_score * self.TERM_RELEVANCE_WEIGHT
+
+            # Log significant boosts
+            if total_boost > 0:
+                logger.debug(
+                    f"Boosted result from {result.score:.3f} to {enh_result.score + total_boost:.3f} "
+                    f"(final composite: {enh_result.final_score:.3f})"
+                )
+
+            enhanced_results.append(enh_result)
+
+        # Efficiently get top k results using heapq
+        # Use negative score for max heap behavior
+        top_k_results = heapq.nlargest(k, enhanced_results, key=lambda r: r.final_score)
+
+        return top_k_results
+
+    def _clean_empty_values(self, data: Any) -> Any:
+        """
+        Recursively remove empty values from data structures.
+
+        Removes:
+        - None values
+        - Empty strings
+        - Empty lists/vectors
+        - Empty dicts
+        - Dict keys with empty values
+
+        Args:
+            data: The data to clean (can be dict, list, or any value)
+
+        Returns:
+            Cleaned data with empty values removed
+        """
+        if data is None:
+            return None
+
+        if isinstance(data, dict):
+            cleaned = {}
+            for key, value in data.items():
+                cleaned_value = self._clean_empty_values(value)
+                # Only include if value is not empty
+                if cleaned_value is not None and cleaned_value != "" and cleaned_value != [] and cleaned_value != {}:
+                    cleaned[key] = cleaned_value
+            return cleaned if cleaned else None
+
+        if isinstance(data, list):
+            cleaned = []
+            for item in data:
+                cleaned_item = self._clean_empty_values(item)
+                # Only include non-empty items
+                if cleaned_item is not None and cleaned_item != "" and cleaned_item != [] and cleaned_item != {}:
+                    cleaned.append(cleaned_item)
+            return cleaned if cleaned else None
+
+        # For strings, check if empty
+        if isinstance(data, str):
+            return data if data.strip() else None
+
+        # For other types, return as is
+        return data
 
     def _normalize_term_info(self, term: TermWithLinks, link_limit: int) -> Dict[str, Any]:
         """
@@ -495,7 +684,7 @@ class KnowledgeSearchCore:
             link_limit: Maximum number of linked terms to include
 
         Returns:
-            Normalized term information as dictionary
+            Normalized term information as dictionary with empty values removed
         """
         # Resolve linked terms
         linked_terms = []
@@ -507,7 +696,7 @@ class KnowledgeSearchCore:
                 linked_terms.append(
                     {
                         "term": linked_term.term,
-                        "meaning": linked_term.meaning or "N/A",
+                        "meaning": linked_term.meaning[:250] if linked_term.meaning else None,
                         "term_type": linked_term.type,
                         "link_score": link.score,
                         "total_times_occurred_in_knowledgebase": linked_term.total,
@@ -517,13 +706,17 @@ class KnowledgeSearchCore:
         # Sort linked terms by score
         linked_terms.sort(key=lambda x: x["link_score"], reverse=True)
 
-        return {
+        result = {
             "term": term.term,
             "meaning": term.meaning,
             "term_type": term.type,
             "total_times_occurred_in_knowledgebase": term.total,
             "linked_terms": linked_terms,
         }
+
+        # Clean empty values recursively
+        cleaned_result = self._clean_empty_values(result)
+        return cleaned_result if cleaned_result else {}
 
     def _resolve_linked_terms(
         self,

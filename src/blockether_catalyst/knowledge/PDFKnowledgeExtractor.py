@@ -100,7 +100,7 @@ class PDFKnowledgeExtractor:
                     subject=pdf.metadata.get("Subject", None),
                     creation_date=str(pdf.metadata.get("CreationDate", "")),
                     modification_date=str(pdf.metadata.get("ModDate", "")),
-                    document_path=f"{self._knowledge_settings.extraction_output_dir}/{source.name}",
+                    document_path=f"{self._knowledge_settings.extraction_output_dir}/source_documents/{source.name}",
                 )
 
             result.total_pages = len(pdf.pages)

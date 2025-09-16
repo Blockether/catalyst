@@ -23,7 +23,7 @@ from typing import (
     Tuple,
 )
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, PrivateAttr, computed_field
 
 from blockether_catalyst.consensus.VotingComparison import (
     BaseModelWithReasoning,
@@ -71,8 +71,16 @@ class NormalizedDocumentMetadata(BaseModel):
     total_chunks: int = Field(description="Total number of chunks created from document")
     total_terms: int = Field(description="Total number of unique terms found in document")
     total_tables: int = Field(description="Total number of tables found in document")
+    total_images: int = Field(default=0, description="Total number of images found in document")
     total_acronyms: int = Field(description="Total number of unique acronyms found in document")
     total_keywords: int = Field(description="Total number of unique keywords found in document")
+    
+    def __getattr__(self, name):
+        """Handle backward compatibility for missing fields."""
+        if name == 'total_images':
+            # Return 0 for old documents without this field
+            return 0
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 
 # ============================================================================
@@ -526,6 +534,7 @@ class KnowledgeSearchResult(BaseModel):
     # Term frequency statistics
     term_frequencies: Dict[str, int] = Field(default_factory=dict, description="Term -> frequency in query")
     term_relevance_score: float = Field(default=0.0, description="Combined relevance based on term frequencies")
+    final_score: float = Field(default=0.0, description="Composite score including all boosts and weights")
 
     # Page content
     images: List[ImageMetadata] = Field(default_factory=list, description="Images in the result")
@@ -585,6 +594,24 @@ class LinkedKnowledge(BaseModel):
     total_acronyms: int = Field(description="Total count of acronyms across all documents")
     total_keywords: int = Field(description="Total count of keywords across all documents")
     total_chunks: int = Field(description="Total count of chunks across all documents")
+    total_images: Optional[int] = Field(default=0, description="Total count of images across all documents")
+    total_tables: Optional[int] = Field(default=0, description="Total count of tables across all documents")
+    
+    def __getattr__(self, name):
+        """Handle backward compatibility for missing fields."""
+        if name == 'total_images':
+            # Calculate and cache the value
+            value = sum(getattr(doc, 'total_images', 0) for doc in self.documents.values())
+            # Set it so we don't calculate again
+            object.__setattr__(self, 'total_images', value)
+            return value
+        elif name == 'total_tables':
+            # Calculate and cache the value
+            value = sum(getattr(doc, 'total_tables', 0) for doc in self.documents.values())
+            # Set it so we don't calculate again
+            object.__setattr__(self, 'total_tables', value)
+            return value
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     @staticmethod
     def _normalize_term(term: str) -> str:
@@ -720,8 +747,9 @@ class LinkedKnowledge(BaseModel):
                 )
                 pages_index[page_key] = page_data
 
-            # Calculate total tables from pages
+            # Calculate total tables and images from pages
             total_tables = sum(len(page.tables) for page in result.pages)
+            total_images = sum(len(page.images) for page in result.pages)
 
             # Calculate term counts for this document
             doc_terms = set()
@@ -764,12 +792,15 @@ class LinkedKnowledge(BaseModel):
                 total_acronyms=acronyms_count,
                 total_keywords=keywords_count,
                 total_tables=total_tables,
+                total_images=total_images,
             )
 
         # Calculate total statistics across all documents
         total_acronyms_count = sum(1 for term in data.terms.values() if term.type == "acronym")
         total_keywords_count = sum(1 for term in data.terms.values() if term.type == "keyword")
         total_chunks_count = len(chunks)
+        total_images_count = sum(doc.total_images for doc in documents.values())
+        total_tables_count = sum(doc.total_tables for doc in documents.values())
 
         # Create and return LinkedKnowledge object with only necessary indices
         return cls(
@@ -781,6 +812,8 @@ class LinkedKnowledge(BaseModel):
             total_acronyms=total_acronyms_count,
             total_keywords=total_keywords_count,
             total_chunks=total_chunks_count,
+            total_images=total_images_count,
+            total_tables=total_tables_count,
         )
 
 

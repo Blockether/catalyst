@@ -24,11 +24,10 @@ import logging
 import sys
 import glob as glob_module
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypeVar, Tuple
+from typing import Any, Dict, List, Optional, TypeVar
 
 from pydantic import BaseModel
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 from rich.prompt import Confirm
 
 from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
@@ -40,7 +39,6 @@ from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
 )
 from blockether_catalyst.knowledge.KnowledgeExtractionCore import KnowledgeExtractionCore
 from blockether_catalyst.knowledge.KnowledgeTypes import (
-    KnowledgeExtractionOutput,
     DocumentMetadata,
     KnowledgePageDataWithRawText,
     KnowledgeProcessorSettings,
@@ -57,8 +55,6 @@ from blockether_catalyst.prompt.PromptAlignmentTypes import (
     AlignmentFeedback,
 )
 from jinja2 import Environment, FileSystemLoader
-from rich.panel import Panel
-from rich.table import Table
 
 # Type variable for response types
 T = TypeVar("T", bound=BaseModel)
@@ -315,7 +311,7 @@ class KnowledgeExtraction:
         conservative_expert_call = InstructorLLMCall(
             response_model=TermMeaningExtractionResponse,
             model="gpt-4o",
-            temperature=0.1,  # Very low temperature for consistent strict decisions
+            temperature=0.3,
         )
 
         conservative_expert_config = ConsensusCore.model(
@@ -343,7 +339,7 @@ class KnowledgeExtraction:
         liberal_linguist_call = InstructorLLMCall(
             response_model=TermMeaningExtractionResponse,
             model="gpt-4o",
-            temperature=0.8,
+            temperature=0.5,
         )
 
         liberal_linguist_config = ConsensusCore.model(
@@ -383,7 +379,7 @@ class KnowledgeExtraction:
         markdown_expert_call: InstructorLLMCall[ChunkingDecisionResponse] = InstructorLLMCall(
             response_model=ChunkingDecisionResponse,
             model="gpt-4o",
-            temperature=0.2,
+            temperature=0.3,
         )
 
         markdown_expert_config = ConsensusCore.model(

@@ -12,7 +12,7 @@ class KnowledgeVectorizers:
     - One for extracting acronyms (uppercase patterns)
     """
 
-    def __init__(self, keywords_min_df: int, acronyms_min_df: int):
+    def __init__(self, keywords_min_df: int = 1, acronyms_min_df: int = 1):
         """Initialize vectorizers with specified minimum document frequencies.
 
         Args:
@@ -40,7 +40,7 @@ class KnowledgeVectorizers:
             strip_accents="ascii",
             ngram_range=(1, 1),
             min_df=self._acronyms_min_df,
-            token_pattern=r"\b[A-Z]{2,}([_/-][A-Z]+)?\b",
+            token_pattern=r"\b[A-Z]{2,}(?:[_/-][A-Z]+)*\b",
             lowercase=False,
             dtype=np.int64,
         )

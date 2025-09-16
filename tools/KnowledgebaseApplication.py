@@ -11,6 +11,7 @@ This example demonstrates how to create a knowledge base Q&A system using:
 import logging
 from textwrap import dedent
 from typing import List, Optional, TypedDict
+from urllib.parse import quote
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -61,6 +62,7 @@ asgi_app = ASGICoreApplication(
 
 db = SqliteDb()
 
+
 class DocumentReference(TypedDict):
     document_name: str
     page: int
@@ -70,43 +72,126 @@ class DocumentReference(TypedDict):
     modified_date: Optional[str]
 
 
-def knowledge_retriever_internal(
+def _format_result_as_markdown(result: dict) -> str:
+    """Format a single search result as markdown."""
+    lines = []
+
+    # Document header with metadata
+    doc_name = result.get("document_name", "Unknown Document")
+    page = result.get("page")
+    score = result.get("score", 0)
+
+    lines.append(f"## THIS IS PART OF {doc_name} on page {page}, RELEVANCE of this excerpt: {score:.2%}")
+
+    # Metadata section
+    metadata_parts = []
+    if result.get("author"):
+        metadata_parts.append(f"Author: {result['author']}")
+    if result.get("publication_date"):
+        metadata_parts.append(f"Published: {result['publication_date']}")
+
+    if metadata_parts:
+        lines.append("")
+        lines.append("### Metadata:")
+        lines.append(f"*{' | '.join(metadata_parts)}*")
+        lines.append("")
+
+    # Document link if available
+    if result.get("href"):
+        lines.append(f"[View Document]({result['href']})")
+        lines.append("")
+
+    # Main content
+    lines.append("### Content")
+    lines.append(result.get("content", "No content available"))
+    lines.append("")
+
+    # Primary terms section
+    primary_terms = result.get("primary_terms", [])
+    if primary_terms:
+        lines.append("### 🔑 Key Terms")
+        for term in primary_terms[:4]:
+            term_name = term.get("term", "")
+            term_meaning = term.get("meaning", "")
+            term_type = term.get("term_type", "")
+
+            if term_meaning:
+                lines.append(f"- **{term_name}** ({term_type}): {term_meaning[:150]}...")
+            else:
+                lines.append(f"- **{term_name}** ({term_type})")
+        lines.append("")
+
+    # Related terms section (brief)
+    related_terms = result.get("related_terms", [])
+    if related_terms:
+        lines.append("### 🔗 Related Terms")
+        related_list = []
+        for term in related_terms[:5]:
+            term_name = term.get("term", "")
+
+            if term_name:
+                related_list.append(
+                    f"`- {term_name} (type: {term.get('term_type', '')})`, meaning: {term.get('meaning', '')}")
+        if related_list:
+            lines.append("\n  ".join(related_list))
+            lines.append("")
+
+    # Images section
+    images = result.get("images", [])
+    if images:
+        lines.append("### 🖼️ Images")
+        for img in images[:3]:  # Limit to 3 images
+            caption = img.get("caption", "Image")
+            img_page = img.get("page", "")
+            img_href = img.get("href", "")
+            document_name = img.get("document_name")
+
+            if img_href:
+                lines.append(f"\n![{caption} - {document_name} - (Page {img_page})]({img_href})\n <center>{caption} - {document_name} - (Page {img_page})</center>\n")
+            else:
+                lines.append(f"{caption} (Page {img_page})")
+        lines.append("")
+
+    # Tables section
+    tables = result.get("tables", [])
+    if tables:
+        lines.append("### 📊 Tables")
+        for idx, table in enumerate(tables[:2], 1):  # Limit to 2 tables
+            table_md = table.get("markdown", "")
+            table_page = table.get("page", "")
+            if table_md:
+                lines.append(f"**Table {idx} (Page {table_page})**")
+                lines.append(table_md)
+                lines.append("")
+
+    lines.append("---")
+    return "\n".join(lines)
+
+
+def KnowledgeRetriever(
     query: str = Field(..., title="query", description="The search query to find relevant documents."),
-    num_documents: int = Field(..., title="num_documents", description="The number of documents to retrieve.")
+    max_documents: int = Field(..., title="max_documents", description="The number of documents to retrieve.")
 ):
+    max_documents = 10
 
-    # Helper function to resolve linked terms
-    def resolve_linked_terms(term, limit):
-        """Resolve term links to get full term information."""
-        resolved_links = []
-        for link in term.links[:limit]:
-            # Resolve the link_to string to get the actual term object
-            linked_term = search_module.resolve_term(link.link_to)
-            if linked_term:
-                resolved_links.append({
-                    "term": linked_term.term,
-                    "meaning": linked_term.meaning or "N/A",
-                    "term_type": linked_term.type,
-                    "link_score": link.score,
-                    "total_times_occurred_in_knowledgebase": linked_term.total
-                })
-        resolved_links.sort(key=lambda x: x["link_score"], reverse=True)
-        return resolved_links
-
-    num_documents = num_documents or 5
-
-    return search_module.search(
+    results = search_module.search(
         query=query,
-        k=15,
+        k=max_documents,
         threshold=0.5,
         max_depth=2,
-        max_cooccurrences=5
+        max_cooccurrences=3
     )
 
+    return [
+        {
+            "content": _format_result_as_markdown(result)
+        }
+        for result in results
+    ]
 
 
 knowledge_query = Tool.from_function(
-    fn=knowledge_retriever_internal,
+    fn=KnowledgeRetriever,
     name="search_knowledge",
     description="Search the knowledge base for relevant documents and information.",
     enabled=True,
@@ -119,30 +204,9 @@ def knowledge_retriever(
     num_documents: int,
     **kwargs
 ) -> Optional[list[dict]]:
-    return knowledge_retriever_internal(query=query, num_documents=num_documents)
+    print(KnowledgeRetriever(query=query, max_documents=num_documents))
+    return KnowledgeRetriever(query=query, max_documents=num_documents)
 
-
-QuestionReasoningAgent = Agent(
-    model=KnowledgeProviderGPT4oModel,
-    name="QuestionReasoningAgent",
-    description="You are a meticulous, thoughtful, and logical Reasoning Agent who solves complex problems through clear, structured, step-by-step analysis.",
-    output_schema=ReasoningSteps,
-    instructions=dedent("""
-        ALWAYS: Query the KNOWLEDGE BASE with user question to retrieve relevant documents where NUM_DOCUMENTS to retrieve: 5 or <SPECIFIED_BY_USER_IN_PROMPT>
-        Perform the following steps to ensure accurate and relevant responses:
-
-         1. UNDERSTAND: What is the core question being asked?
-         2. ANALYZE: What are the key factors/components involved in the question?
-         3. REASON: What logical connections can I make taking into account the retrieved knowledge?
-         4. SYNTHESIZE: How do these elements from the knowledge base and the user's question come together to form a coherent answer?
-         5. CONCLUDE: What is the most accurate/helpful response?
-    """),
-    search_knowledge=True,
-    knowledge_retriever=knowledge_retriever, # type: ignore
-    markdown=False,
-    retries=2,
-    telemetry=False
-)
 
 MainKnowledgebaseAgent = Agent(
     id="MainKnowledgebaseAgent",
@@ -154,46 +218,90 @@ MainKnowledgebaseAgent = Agent(
     read_chat_history=True,
     db=db,
     debug_mode=True,
-    cache_session=True,
+    cache_session=False,
     enable_agentic_memory=True,
     add_session_summary_to_context=False,
+    add_name_to_context=True,
+    add_datetime_to_context=True,
+    add_history_to_context=True,
     enable_session_summaries=False,
     timezone_identifier="AT",
     search_session_history=True,
     search_knowledge=True,
-    reasoning=True,
-    reasoning_agent=QuestionReasoningAgent,
+    reasoning=False,
+    introduction="Your name is Catalyst KnowledgeProvider. You are an expert in finance, banking, limits, risk management, compliance, and regulations. You help users find and understand information from a knowledge base of documents related to these topics.",
     knowledge_retriever=knowledge_retriever,  # type: ignore
-    instructions=dedent(
-        """
-        Answer user question from {DOMAIN} domain for {APPLICATION} application.
+    dependencies={
+        "terms_count": len(search_module.linked_knowledge.terms),
+        "documents_count": len(search_module.linked_knowledge.documents),
+        "all_keywords_count": search_module.linked_knowledge.total_keywords,
+        "all_acronyms_count": search_module.linked_knowledge.total_acronyms,
+        "all_images_count": search_module.linked_knowledge.total_images,
+        "all_tables_count": search_module.linked_knowledge.total_tables,
+        "all_chunks_count": search_module.linked_knowledge.total_chunks,
+        "documents": [{
+            "document_filename": doc.document_filename,
+            "document_author": doc.author,
+            "document_title": doc.title,
+            "document_pages": doc.total_pages,
+            "document_chunks": doc.total_chunks,
+            "document_images": doc.total_images,
+            "document_tables": doc.total_tables,
+            "document_terms": doc.total_terms,
+            "document_publication_date": doc.publication_date,
+            "document_href": f"{search_module._base_url}/{quote(doc.document_path, safe='/')}"
+        } for doc in search_module.linked_knowledge.documents.values() if doc],
 
-        Query the KNOWLEDGE BASE with question to retrieve relevant documents where NUM_DOCUMENTS to retrieve: 5 or <SPECIFIED_BY_USER_IN_PROMPT>
+    },
+    instructions=[
+        dedent(f"""Answer user question from {DOMAIN} domain for {APPLICATION} application. MANDATORY: ALWAYS USE KNOWLEDGE SEARCH TO ANSWER USER QUESTIONS.
+        ALWAYS RETURN VALID MARKDOWN."""),
+        dedent("""
+           # CORE CAPABILITIES:
+            - Analyze search results from knowledge base
+            - Explain concepts, terms, and acronyms found in documents
+            - Provide context and relationships between different pieces of information
+            - Present information in clear, structured, and meaningful way
+            - YOU CAN show images, all you need to do is to embed the image URL in markdown format ![Alt text](image_url)
 
-        Guidelines:
-         1. Carefully analyze the retrieved knowledge to understand the context and details and how they relate to the user's question.
-         2. Always structure the response in the following format:
-            1. Direct Answer: Provide a clear and concise answer to the question.
-            2. <reasoning>
-               Reasoning Process: Explain the logical steps taken to arrive at the  answer.
-               </reasoning>
-            3. <references>
-                 Claims and References: List the sources of information used, including document names and page numbers.
-                 <reference>Claim 1: "Information from Document A, Page B, confidence: 0-1"</reference>
-                 <reference>Claim 2: "Information from Document C, Page D, confidence: 0-1"</reference>
-               </references>
-            4. Images: If relevant taking into account the context of the question and the captions of the images, include any images that support the answer.
-                <images>
-                  </image_and_caption>
-                  </image_and_caption>
-                </images>
-            5. Tables: If relevant taking into account the context of the question and the content of the tables, include any tables that support the answer.
-                <tables>
-                  </markdown_table>
-                </tables>
+            WORKFLOW for answering questions:
+            1. ANALYZE: Examine provided search results to understand context and relationships
+            2. SYNTHESIZE: Combine information from multiple sources when appropriate
+            3. STRUCTURE: Organize response into logical sections
+            4. CITE: Include source document references and page numbers
+            5. RELATE: Suggest related topics for further exploration
 
-            IMPORTANT: Incorporate the <USER_PREFERENCES> if specified by the user in the prompt or the ones from the memory to further tailor the response style and format.
+            RESPONSE GUIDELINES:
+            - Base all answers on the actual content provided in search results
+            - DO NOT FABRICATE INFORMATION BASED ON GUESSWORK, YOUR TASK IS TO PROVIDE FACTUAL ANSWERS BASED ON THE SEARCH RESULTS, NOTHING MORE.
+            - If information is insufficient, indicate this clearly and suggest next steps.
+            - Use clear, structured sections for complex topics
+            - Include RELEVANCE level based on available information
+            - Highlight key definitions and important points
+            - If information is limited, acknowledge gaps honestly
+            - Suggest related search terms when appropriate
         """),
+        """Align to the following guidelines:
+           1. Common questions answering strategies:
+             - If the user asks about "showing/finding/listing documents/images/tables" then you should perform the corresponding query respectively with word "document", "image", "table" and return the results in a markdown table format.
+             - If the user asks the questions like:
+                - How many documents/images/tables you have then you should respond the "you have" to the knowledge base and respond with the message: "I don't have yet such capability to perform this operation.",
+             - If the user asks mentions word "all" or "every" in the form which doesn't explicitly mentions document name then you should assume a context switch.
+            2. Answer in markdown format:
+               - Use headings, subheadings, bullet points, and numbered lists to organize information clearly. Embed the direct answer to the question in the beginning of the response under a heading "Answer".
+               - Use blockquotes for quoting definitions or important excerpts from documents.
+               - Add header "Citations" and place each citation in bullet point in the form of:
+                - [document_name](document_link), document_author, publication_date, [each page number of the document relevant to the answer], (relevance: 0-1) then newline, header under which the citation is (if possible) then blockquote with the excerpt from the document.
+               - Add header "Keywords and Acronyms" with related terms, their meanings in bullet points and relevance to the question. Remember to have two subheaders "Primary Terms" first and then "Related Terms".
+               - Use horizontal rules (---) to separate different sections of the response.
+               - Use bold and italics to highlight key terms and concepts.
+               - When presenting data or statistics, use markdown tables if applicable.
+               - Add section "Attachments" with images and tables if relevant to the answer. Each attachemnt (image/table) should have a caption with document name and page number.
+               - As a last section add "Overall Confidence" header with the number between 0-1 indicating your confidence in the answer being a mean of the relevance of individual citations.
+        """
+
+    ],
+    markdown=True,
     memory_manager=MemoryManager(
         model=KnowledgeProviderGPT4oModel,
         db=db,
@@ -229,7 +337,7 @@ MainKnowledgebaseAgentEphemeral = MainKnowledgebaseAgent.deep_copy(update={
     "memory_manager": None,
     "store_events": False,
     "search_session_history": False,
-    "read_chat_history": False,
+    "read_chat_history": False
 })
 
 
