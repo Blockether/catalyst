@@ -2,6 +2,9 @@
 
 ## Package Management (ALWAYS use uv)
 ```bash
+# FIRST TIME SETUP or when you get ModuleNotFoundError
+uv sync --all-extras    # Installs ALL dependencies including optional ones!
+
 # Installation
 uv add package
 

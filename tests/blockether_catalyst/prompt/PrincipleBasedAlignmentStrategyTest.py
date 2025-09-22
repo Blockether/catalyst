@@ -13,6 +13,8 @@ from blockether_catalyst.prompt.PrincipleBasedAlignmentStrategy import (
 from blockether_catalyst.prompt.PromptAlignmentTypes import (
     AlignmentFeedback,
     AlignmentPrinciple,
+    AlignmentPrincipleList,
+    SemanticString,
 )
 
 
@@ -35,20 +37,22 @@ class TestPrincipleBasedAlignmentStrategy:
             overall_assessment="Needs improvement to align with requirements",
             specific_issues=[],
             improvement_suggestions=[],
-            principles_to_apply=[
-                AlignmentPrinciple(
-                    principle=self.TEST_PRINCIPLE_TEXT,
-                    importance=0.9,
-                ),
-                AlignmentPrinciple(
-                    principle="Provide step-by-step explanation",
-                    importance=0.8,
-                ),
-                AlignmentPrinciple(
-                    principle="Always define technical terms clearly",
-                    importance=0.85,
-                ),
-            ],
+            principles_to_apply=AlignmentPrincipleList(
+                principles=[
+                    AlignmentPrinciple(
+                        principle=self.TEST_PRINCIPLE_TEXT,
+                        importance=0.9,
+                    ),
+                    AlignmentPrinciple(
+                        principle="Provide step-by-step explanation",
+                        importance=0.8,
+                    ),
+                    AlignmentPrinciple(
+                        principle="Always define technical terms clearly",
+                        importance=0.85,
+                    ),
+                ]
+            ),
             confidence_score=0.85,
             reasoning="These principles will help improve the prompt to better align with expectations and create more effective results. By applying concrete examples, providing step-by-step explanations, and defining technical terms clearly, the prompt will achieve superior performance and alignment with the target behavior.",
         )
@@ -68,12 +72,12 @@ class TestPrincipleBasedAlignmentStrategy:
             overall_assessment="Needs work to improve clarity and specificity",
             specific_issues=[],
             improvement_suggestions=[
-                "Should include more specific details",
-                "Must provide clear context",
-                "Ensure examples are relevant",
-                "Always clarify technical terminology",
+                SemanticString(value="Should include more specific details"),
+                SemanticString(value="Must provide clear context"),
+                SemanticString(value="Ensure examples are relevant"),
+                SemanticString(value="Always clarify technical terminology"),
             ],
-            principles_to_apply=[],
+            principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.75,
             reasoning="The prompt needs these improvements to achieve better alignment with the desired outcomes and user expectations. Adding specific details, providing clear context, ensuring relevant examples, and clarifying technical terminology will transform this prompt into a highly effective instruction set that consistently delivers quality results.",
         )
@@ -93,13 +97,13 @@ class TestPrincipleBasedAlignmentStrategy:
         feedback = AlignmentFeedback(
             overall_assessment="Has issues that need to be addressed",
             specific_issues=[
-                "Prompt lacks clarity",
-                "Too vague about requirements",
-                "Missing context",
-                "No examples provided",
+                SemanticString(value="Prompt lacks clarity"),
+                SemanticString(value="Too vague about requirements"),
+                SemanticString(value="Missing context"),
+                SemanticString(value="No examples provided"),
             ],
             improvement_suggestions=[],
-            principles_to_apply=[],
+            principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.7,
             reasoning="These issues prevent the prompt from achieving its intended purpose and must be addressed for effective alignment. The lack of clarity creates confusion, vague requirements lead to inconsistent outputs, missing context reduces understanding, and the absence of examples leaves the model without concrete guidance for execution.",
         )
@@ -309,14 +313,14 @@ class TestPrincipleBasedAlignmentStrategy:
 
     def test_max_principles_limit(self, strategy: PrincipleBasedAlignmentStrategy) -> None:
         """Test that principle extraction respects the maximum limit."""
-        many_issues = [f"Issue {i}" for i in range(20)]
-        many_suggestions = [f"Should fix issue {i}" for i in range(20)]
+        many_issues = [SemanticString(value=f"Issue {i}") for i in range(20)]
+        many_suggestions = [SemanticString(value=f"Should fix issue {i}") for i in range(20)]
 
         feedback = AlignmentFeedback(
             overall_assessment="Many issues to address for proper alignment",
             specific_issues=many_issues,
             improvement_suggestions=many_suggestions,
-            principles_to_apply=[],
+            principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.7,
             reasoning="There are numerous issues that need to be addressed to achieve proper alignment with the target behavior. Each issue represents a barrier to effective prompt performance. By systematically addressing these problems through principled refinement, we can create a prompt that reliably produces high-quality, consistent outputs aligned with user expectations.",
         )

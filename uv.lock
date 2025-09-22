@@ -1,11 +1,16 @@
 version = 1
 revision = 2
 requires-python = ">=3.12"
+resolution-markers = [
+    "python_full_version >= '3.14' and platform_python_implementation != 'PyPy'",
+    "python_full_version < '3.14' and platform_python_implementation != 'PyPy'",
+    "platform_python_implementation == 'PyPy'",
+]
 
 [[package]]
 name = "agno"
-version = "2.0.4"
-source = { registry = "https://pypi.org/simple" }
+version = "2.0.7"
+source = { git = "https://github.com/agno-agi/agno.git?subdirectory=libs%2Fagno#3b644ce59e43e8d8ea2dbf8e72ebe84236ac3211" }
 dependencies = [
     { name = "docstring-parser" },
     { name = "gitpython" },
@@ -19,10 +24,6 @@ dependencies = [
     { name = "rich" },
     { name = "typer" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/71/bd/eb494729adc33e1594e767ade7cb9610ae09dd83a7cf614f9e35beb11e14/agno-2.0.4.tar.gz", hash = "sha256:6494cb2804f1c1a71c490566dc126dea3dd0ea30829a5613302a3340c10378a4", size = 851104, upload-time = "2025-09-12T20:03:07.086Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/16/59d04658b9197a4515a181f17bf77ea3b412f1d376821d7009dbfab47566/agno-2.0.4-py3-none-any.whl", hash = "sha256:4fe3db9e327217047006287a94de65d997bf7bbac3ad60711b8038a0b02e7d4f", size = 1073419, upload-time = "2025-09-12T20:03:05.072Z" },
 ]
 
 [[package]]
@@ -185,8 +186,12 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "langchain-core" },
+    { name = "markdown-it-py" },
+    { name = "mdformat" },
     { name = "model2vec" },
     { name = "numpy" },
+    { name = "python-markdown" },
+    { name = "rich" },
     { name = "sqlalchemy" },
     { name = "tenacity" },
     { name = "trio" },
@@ -213,6 +218,7 @@ dev = [
     { name = "httpx" },
     { name = "instructor" },
     { name = "isort" },
+    { name = "mangum" },
     { name = "mypy" },
     { name = "poethepoet" },
     { name = "pyright" },
@@ -237,16 +243,20 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agno", marker = "extra == 'api'", specifier = ">=2.0.4" },
+    { name = "agno", marker = "extra == 'api'", git = "https://github.com/agno-agi/agno.git?subdirectory=libs%2Fagno" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.116.1" },
     { name = "fastmcp", marker = "extra == 'api'", specifier = ">=2.12.3" },
     { name = "langchain-core", specifier = ">=0.3.75" },
+    { name = "markdown-it-py", specifier = ">=3.0.0" },
+    { name = "mdformat", specifier = ">=0.7.22" },
     { name = "model2vec", specifier = ">=0.6.0" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "pdfplumber", marker = "extra == 'extraction'", specifier = ">=0.11.7" },
     { name = "pyoxipng", marker = "extra == 'extraction'", specifier = ">=9.1.1" },
     { name = "pypdf", marker = "extra == 'extraction'", specifier = ">=6.0.0" },
+    { name = "python-markdown", specifier = ">=0.1.0" },
     { name = "rapidfuzz", marker = "extra == 'extraction'", specifier = ">=3.14.1" },
+    { name = "rich", specifier = ">=14.1.0" },
     { name = "scikit-learn", marker = "extra == 'extraction'", specifier = ">=1.7.1" },
     { name = "sqlalchemy", specifier = ">=2.0.43" },
     { name = "tenacity", specifier = ">=9.1.2" },
@@ -261,6 +271,7 @@ dev = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "instructor", specifier = ">=1.10.0" },
     { name = "isort", specifier = ">=5.10.0" },
+    { name = "mangum", specifier = ">=0.19.0" },
     { name = "mypy", specifier = ">=1.17.1" },
     { name = "poethepoet", specifier = ">=0.37.0" },
     { name = "pyright", specifier = ">=1.1.405" },
@@ -2270,6 +2281,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f6/b0/4bc07ccd3572a2f9df7e6782f52b0c6c90dcbb803ac4a167702d7d0dfe1e/python_dotenv-1.1.1.tar.gz", hash = "sha256:a8a6399716257f45be6a007360200409fce5cda2661e3dec71d23dc15f6189ab", size = 41978, upload-time = "2025-06-24T04:21:07.341Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5f/ed/539768cf28c661b5b068d66d96a2f155c4971a5d55684a514c1a0e0dec2f/python_dotenv-1.1.1-py3-none-any.whl", hash = "sha256:31f23644fe2602f88ff55e1f5c79ba497e01224ee7737937930c448e4d0e24dc", size = 20556, upload-time = "2025-06-24T04:21:06.073Z" },
+]
+
+[[package]]
+name = "python-markdown"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/b9/4d09c79afd2a6e1c475848552519f8b22bae6bf40e0117fbfbb8ff21d849/python_markdown-0.1.0.tar.gz", hash = "sha256:123d551dfa37cb515688931311bd0129b59208755a0ee5f3c44527b1cee7d780", size = 3631, upload-time = "2025-06-01T04:11:43.108Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/29/46bda42bd3be2fd39b0f504c925d46d1e4d38f7411fdfc74667e3ef85f2f/python_markdown-0.1.0-py3-none-any.whl", hash = "sha256:5bd8991f16549d4bf5572e117d05a419a461361d06b923d5cb6dde44252d0e1a", size = 3958, upload-time = "2025-06-01T04:11:41.459Z" },
 ]
 
 [[package]]

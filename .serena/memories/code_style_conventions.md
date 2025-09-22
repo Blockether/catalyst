@@ -9,6 +9,7 @@
 - **Follow existing patterns exactly**
 - **Line length: 120 chars maximum**
 - **Avoid `Any` type** - prefer typed classes inheriting from Pydantic `BaseModel`
+- **WHEN you are spoting the obvious error YOU SHOULD ALWAYS correct it without proposing the FALLBACK (NO FALLBACK POLICY)**
 
 ### File Organization
 - Every module should have files ending with `Core` and `internal` folder
@@ -17,7 +18,8 @@
 - **AVOID MAGIC NUMBERS** - instead create STATIC fields in class
 
 ### Comment Style
-- **NO inline comments after code** - Never write comments on the same line as code (e.g., `x = 5  # this is bad`)
+- **PROHIBITED: Meaningless inline comments (e.g., `x = 1  # Set x to 1`). Comments must add value, not state the obvious. NO COMMENTS on implementation side unless they explain complex logic.**
+- **NO inline comments after code** - Never write comments on the same line as code
 - Comments should be on their own line above the code they describe
 - Docstrings are preferred over comments for function/class documentation
 
@@ -30,7 +32,18 @@
 - Using `hasattr` and `getattr` by default
 - Use static types instead of dictionaries whenever possible and sensible
 
-### Testing Requirements  
+### Frontend and Templating Standards
+- **Templating Engine**: Always use **Jinja2 (.j2)** templates as the goto solution
+- **CSS Framework**: Always use **TailwindCSS** for styling
+- **Interactive Components**: Always use **HTMX** for dynamic frontend behavior
+- **Template Organization**:
+  - Base templates should provide common structure
+  - Use template inheritance for consistency
+  - Partial templates for reusable components
+- **No custom CSS** unless absolutely necessary - leverage TailwindCSS utility classes
+- **Prefer HTMX attributes** over custom JavaScript for interactivity
+
+### Testing Requirements
 - **Framework**: pytest with anyio (preferred over asyncio)
 - **Test file naming**: Must end in `Test` postfix (e.g., `KnowledgeSearchCoreTest.py`)
 - **Test classes**: Always use classes in test files

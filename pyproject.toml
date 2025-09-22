@@ -39,6 +39,10 @@ dependencies = [
     "tenacity>=9.1.2",
     "trio>=0.30.0",
     "sqlalchemy>=2.0.43",
+    "python-markdown>=0.1.0",
+    "markdown-it-py>=3.0.0",
+    "rich>=14.1.0",
+    "mdformat>=0.7.22",
 ]
 
 [project.urls]
@@ -49,7 +53,7 @@ Issues = "https://github.com/Blockether/catalyst/issues"
 Changelog = "https://github.com/Blockether/catalyst/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-api = ["fastapi>=0.116.1", "fastmcp>=2.12.3", "agno>=2.0.4"]
+api = ["fastapi>=0.116.1", "fastmcp>=2.12.3", "agno @ git+https://github.com/agno-agi/agno.git#subdirectory=libs/agno"]
 
 extraction = ["pdfplumber>=0.11.7", "scikit-learn>=1.7.1", "rapidfuzz>=3.14.1", "pyoxipng>=9.1.1", "pypdf>=6.0.0"]
 
@@ -75,6 +79,7 @@ dev = [
     "httpx>=0.28.1",
     "pyright>=1.1.405",
     "blockether-peekle",
+    "mangum>=0.19.0",
 ]
 
 # Documentation generation
@@ -146,6 +151,9 @@ check-docs = { shell = "if [ -d docs/examples ]; then echo '❌ ERROR: docs/exam
 clean-cache = "uv cache clean"
 clean-pyc = { shell = "find . -type f -name '*.pyc' -delete && find . -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true" }
 clean = ["clean-pyc", "clean-cache"]
+
+# LiteLLM Proxy Server
+proxy = "uvx --with 'litellm[proxy]' litellm --config config.yml --port 3005"
 
 # Complete workflow
 check = ["format", "verify", "test-cov-check", "check-docs"]

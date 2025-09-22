@@ -71,18 +71,18 @@ class TestVotingConsensus:
         models = [
             ConsensusCore.model(
                 id="model1",
-                executor=MockTypedCall(outlier_response),  # Put outlier first
-                perspective="From an alternative perspective",
+                executor=MockTypedCall(majority_response),  # 2 models have majority
+                perspective="From a mathematical perspective",
             ),
             ConsensusCore.model(
                 id="model2",
                 executor=MockTypedCall(majority_response),
-                perspective="From a mathematical perspective",
+                perspective="From a statistical perspective",
             ),
             ConsensusCore.model(
                 id="model3",
-                executor=MockTypedCall(majority_response),
-                perspective="From a statistical perspective",
+                executor=MockTypedCall(outlier_response),  # 1 outlier
+                perspective="From an alternative perspective",
             ),
         ]
 
@@ -96,17 +96,16 @@ class TestVotingConsensus:
         # Run consensus
         result = await consensus.call("What is the value?")
 
-        # With 2/3 models agreeing (66.7%), that's below 70% threshold
-        # So consensus is not achieved, but majority voting picks the right answer
-        assert result.consensus_achieved is False  # No consensus at 66.7%
+        # With 2/3 models agreeing (66.7%), and first_round_threshold auto-adjusted to ~63.3%
+        # consensus IS achieved in first round
+        assert result.consensus_achieved is True  # Consensus at 66.7% > 63.3% threshold
         assert result.final_response.value == 100  # Majority vote wins
         assert result.total_rounds == 1
-        assert "majority" in result.reasoning.lower() or "fallback" in result.reasoning.lower()
 
     @pytest.mark.anyio
     async def test_tie_with_judge(self, mock_judge) -> None:
-        """Test that judge is invoked to break ties."""
-        # Create 2 models with different responses (tie scenario)
+        """Test that judge is invoked when no clear majority exists."""
+        # Create 3 models with different responses (no majority)
         response1 = VotingTestResponse(
             value=100,
             confidence=0.9,
@@ -116,6 +115,11 @@ class TestVotingConsensus:
             value=200,
             confidence=0.9,
             reasoning="Second model believes the value is 200 based on alternative analysis approach that emphasizes different data weighting strategies. This methodology considers alternative theoretical frameworks and applies different validation criteria, leading to a higher confidence in this particular value assessment.",
+        )
+        response3 = VotingTestResponse(
+            value=300,
+            confidence=0.9,
+            reasoning="Third model proposes value of 300 based on yet another analytical framework that considers unique contextual factors and applies specialized evaluation criteria. This approach incorporates domain-specific knowledge and advanced analytical techniques for comprehensive assessment.",
         )
 
         models = [
@@ -128,6 +132,11 @@ class TestVotingConsensus:
                 id="model2",
                 executor=MockTypedCall(response2),
                 perspective="Alternative analysis",
+            ),
+            ConsensusCore.model(
+                id="model3",
+                executor=MockTypedCall(response3),
+                perspective="Specialized analysis",
             ),
         ]
 
@@ -142,14 +151,12 @@ class TestVotingConsensus:
             settings=ConsensusSettings(max_rounds=3),
         )
 
-        # Run consensus - should eventually use judge for tie
+        # Run consensus - with 3 different responses, no consensus
         result = await consensus.call("What is the value?")
 
-        # If consensus not achieved in rounds, judge should be called in fallback
-        # The exact behavior depends on implementation details
-        # But we should get a result
+        # With no majority, judge should be used in fallback
         assert result.final_response is not None
-        assert result.final_response.value in [100, 200]
+        assert result.final_response.value in [100, 200, 300]
 
     @pytest.mark.anyio
     async def test_plurality_consensus(self, mock_judge) -> None:
@@ -239,6 +246,72 @@ class TestVotingConsensus:
         # The judge returns value=42 in our mock
         assert result.final_response.value == 42
         assert "not achieved" in result.reasoning.lower() or "fallback" in result.reasoning.lower()
+
+    @pytest.mark.anyio
+    async def test_reasoning_field_ignored_in_consensus(self, mock_judge) -> None:
+        """Test that reasoning field is properly ignored during consensus voting."""
+        # Create 3 models with identical data but completely different reasoning
+        models = [
+            ConsensusCore.model(
+                id="model1",
+                executor=MockTypedCall(
+                    VotingTestResponse(
+                        value=42,
+                        confidence=0.95,
+                        reasoning="This is my first reasoning about the value being 42. I believe 42 is the answer because it's the answer to life, universe, and everything according to Douglas Adams' famous work. This has deep philosophical implications that resonate with computational theory.",
+                    )
+                ),
+                perspective="First perspective",
+            ),
+            ConsensusCore.model(
+                id="model2",
+                executor=MockTypedCall(
+                    VotingTestResponse(
+                        value=42,
+                        confidence=0.95,
+                        reasoning="Completely different reasoning here. The number 42 emerges from complex mathematical patterns in prime number distributions and has been observed in numerous natural phenomena. Statistical analysis confirms this value with high confidence across multiple domains.",
+                    )
+                ),
+                perspective="Second perspective",
+            ),
+            ConsensusCore.model(
+                id="model3",
+                executor=MockTypedCall(
+                    VotingTestResponse(
+                        value=42,
+                        confidence=0.95,
+                        reasoning="Yet another totally different reasoning. Through empirical observation and rigorous testing, the value 42 consistently appears as the optimal solution. Machine learning models trained on vast datasets converge to this same conclusion independently.",
+                    )
+                ),
+                perspective="Third perspective",
+            ),
+        ]
+
+        consensus = ConsensusCore.consensus(
+            models=models,
+            judge=mock_judge,
+        )
+
+        result = await consensus.call("What is the value?")
+
+        # Should achieve consensus in first round since all data fields match
+        # Only reasoning differs, which should be ignored
+        assert result.consensus_achieved is True
+        assert result.total_rounds == 1  # Consensus in first round
+        assert result.final_response.value == 42
+        assert result.final_response.confidence == 0.95
+        assert "unanimous" in result.reasoning.lower() or "first round" in result.reasoning.lower()
+
+        # Verify that disagreement analysis properly ignored reasoning field
+        assert result.rounds is not None
+        assert len(result.rounds) > 0
+        assert result.rounds[0].disagreement_analysis is not None
+
+        analysis = result.rounds[0].disagreement_analysis
+        assert "reasoning" in analysis.ignored_fields
+        assert "reasoning" not in analysis.disagreement_fields
+        assert "value" in analysis.consensus_fields
+        assert "confidence" in analysis.consensus_fields
 
     @pytest.mark.anyio
     async def test_convergence_through_rounds(self) -> None:

@@ -22,11 +22,11 @@ class ImageRecognitionSettings(BaseModel):
     """Settings for image recognition."""
 
     base_url: str = Field(
-        default="http://localhost:1234/v1",
+        default="http://localhost:3005/v1",
         description="Base URL for the OpenAI-compatible server",
     )
     model_id: str = Field(
-        default="qwen2.5-vl-3b-instruct",
+        default="qwen-vl",
         description="Model ID to use on the server",
     )
     api_key: Optional[str] = Field(
@@ -132,7 +132,7 @@ class ImageRecognition:
             # Generate response using the model
             response = self._llm.chat.completions.create(
                 model=self._settings.model_id,
-                messages=messages,
+                messages=messages,  # type: ignore[arg-type]
                 max_tokens=self._settings.max_tokens,
                 temperature=self._settings.temperature,
             )

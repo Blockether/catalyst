@@ -1,0 +1,245 @@
+# LiteLLM Proxy Configuration
+# Documentation: https://docs.litellm.ai/docs/proxy/configs
+
+# Model configurations with proper naming and fallback support
+model_list:
+  # Local models (primary)
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_base: http://localhost:3006/v1
+      api_key: dummy_key
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+      max_tokens: 128000
+
+  - model_name: qwen-3-4b
+    litellm_params:
+      model: lmstudio/qwen/qwen3-4b-2507
+      api_base: http://localhost:1234/v1
+      api_key: dummy_key
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+      max_tokens: 128000
+
+  - model_name: gpt-4.1
+    litellm_params:
+      model: openai/gpt-4.1
+      api_base: http://localhost:3006/v1
+      api_key: dummy_key
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+      max_tokens: 128000
+
+  # Free models from OpenRouter with proper names
+  - model_name: deepseek-chat-v3.1-free
+    litellm_params:
+      model: openrouter/deepseek/deepseek-chat-v3.1:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  - model_name: grok-4-fast-free
+    litellm_params:
+      model: openrouter/x-ai/grok-4-fast:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  - model_name: nemotron-nano-9b-v2-free
+    litellm_params:
+      model: openrouter/nvidia/nemotron-nano-9b-v2:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  - model_name: mistral-small-3.2-24b-instruct-free
+    litellm_params:
+      model: openrouter/mistralai/mistral-small-3.2-24b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  - model_name: llama-3.3-8b-instruct-free
+    litellm_params:
+      model: openrouter/meta-llama/llama-3.3-8b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  - model_name: qwen3-4b-free
+    litellm_params:
+      model: openrouter/qwen/qwen3-4b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  - model_name: qwen3-30b-a3b-free
+    litellm_params:
+      model: openrouter/qwen/qwen3-30b-a3b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  - model_name: qwen3-8b-free
+    litellm_params:
+      model: openrouter/qwen/qwen3-8b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  - model_name: llama-4-maverick-free
+    litellm_params:
+      model: openrouter/meta-llama/llama-4-maverick:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 120
+      timeout: 50
+    model_info:
+      mode: chat
+
+  # Vision-capable models
+
+  - model_name: qwen-vl
+    litellm_params:
+      model: openrouter/qwen/qwen2.5-vl-72b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 20
+      timeout: 50
+
+  - model_name: qwen-vl
+    litellm_params:
+      model: openrouter/qwen/qwen2.5-vl-72b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: os.environ/OPENROUTER_API_BASE
+      rpm: 20
+      timeout: 50
+
+  - model_name: qwen-vl
+    litellm_params:
+      model: lm_studio/qwen2.5-vl-3b-instruct
+      api_base: http://localhost:1234/v1
+      rpm: 400
+      timeout: 50
+    model_info:
+      mode: chat
+      max_tokens: 128000
+
+# LiteLLM settings
+litellm_settings:
+  drop_params: true  # Drop unsupported params instead of failing
+  max_budget: 1000  # Max budget in USD
+  telemetry: false  # Disable telemetry
+  set_verbose: false  # Set to true for debugging
+
+  # Retry configuration
+  num_retries: 3
+  retry_after: 5  # Wait 5 seconds between retries
+  max_retries: 3
+  request_timeout: 120  # Global timeout
+
+  # Caching
+  cache: true
+  cache_params:
+    type: "local"  # or "redis" for distributed cache
+    ttl: 3600  # Cache for 1 hour
+
+# Router settings for load balancing
+router_settings:
+  routing_strategy: "simple-shuffle"  # Options: simple-shuffle, least-busy, usage-based-routing, latency-based-routing
+  num_retries: 3
+  retry_after: 5
+  timeout: 120
+
+  # Model fallback configuration
+  # These fallbacks will be used when a model fails or is unavailable
+  model_fallbacks:
+    # Primary GPT-4 models with fallback chains
+    gpt-4o: ["grok-4-fast-free", "deepseek-chat-v3.1-free", "mistral-small-3.2-24b-instruct-free", "qwen-3-4b", "llama-3.3-8b-instruct-free", "qwen3-8b-free", "qwen3-4b-free", "nemotron-nano-9b-v2-free"]
+    gpt-4.1: ["gpt-4o", "grok-4-fast-free", "deepseek-chat-v3.1-free"]
+
+    # Free tier models with their own fallback chains
+    grok-4-fast-free: ["deepseek-chat-v3.1-free", "mistral-small-3.2-24b-instruct-free", "llama-3.3-8b-instruct-free"]
+    deepseek-chat-v3.1-free: ["grok-4-fast-free", "mistral-small-3.2-24b-instruct-free", "llama-4-maverick-free"]
+    mistral-small-3.2-24b-instruct-free: ["llama-3.3-8b-instruct-free", "qwen3-30b-a3b-free", "qwen3-8b-free"]
+    llama-3.3-8b-instruct-free: ["llama-4-maverick-free", "qwen3-8b-free", "nemotron-nano-9b-v2-free"]
+    llama-4-maverick-free: ["llama-3.3-8b-instruct-free", "qwen3-30b-a3b-free"]
+
+    # Qwen models fallback chain
+    qwen3-30b-a3b-free: ["qwen3-8b-free", "qwen3-4b-free", "nemotron-nano-9b-v2-free"]
+    qwen3-8b-free: ["qwen3-30b-a3b-free", "qwen3-4b-free", "llama-3.3-8b-instruct-free"]
+    qwen3-4b-free: ["qwen3-8b-free", "nemotron-nano-9b-v2-free"]
+
+    # Smaller model fallbacks
+    nemotron-nano-9b-v2-free: ["qwen3-4b-free", "qwen3-8b-free"]
+
+    # Vision models fallback chain (if one fails, try others)
+    qwen-vl: ["qwen-vl"]  # Will cycle through all available qwen-vl endpoints
+
+  # Redis configuration (optional, for distributed load balancing)
+  # redis_host: "localhost"
+  # redis_port: 6379
+  # redis_password: "your_redis_password"
+
+# General proxy settings
+general_settings:
+  # Master key for admin access (generate with: openssl rand -hex 32)
+
+  # Database for usage tracking (optional)
+  # database_url: "postgresql://user:password@localhost:5432/litellm"
+
+  # Proxy server settings
+  max_parallel_requests: 300
+  infer_model_from_keys: true
+  background_health_checks: true
+  health_check_interval: 300  # Check every 5 minutes
+
+  # Custom auth
+  # custom_auth: "your_custom_auth_function"
+
+  # Alerting (optional)
+  # alerting: ["slack"]
+  # alerting_threshold: 10  # Alert after 10 failures
+
+  # Pass through endpoints (optional)
+  # pass_through_endpoints:
+  #   - path: "/v1/completions"
+  #     target: "https://api.openai.com/v1/completions"
+  #     headers:
+  #       Authorization: "Bearer os.environ/OPENAI_API_KEY"
+
+# Environment variables (optional, can also be set in Docker/system)
+environment_variables:
+  OPENROUTER_API_BASE: "https://openrouter.ai/api/v1"
+  # Add other environment variables as needed

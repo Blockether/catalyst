@@ -23,7 +23,7 @@ uv add package@latest            # NEVER use @latest syntax
 ```bash
 # Clone and install
 git clone <repo>
-uv sync                          # Install dependencies
+uv sync --all-extras             # Install ALL dependencies including optional ones!
 ```
 
 ### 2. Daily Development Cycle
@@ -47,6 +47,17 @@ poe check                        # Full verification
 1. **Format first**: `poe format`
 2. **Fix type errors**: Add type hints, None checks
 3. **Fix linting**: Remove unused imports, etc.
+
+### 5. Troubleshooting Import Errors
+```bash
+# If you get ModuleNotFoundError
+uv sync --all-extras             # This installs ALL optional dependencies!
+
+# Dependencies are organized in pyproject.toml:
+# - api: FastAPI, Agno, etc.
+# - extraction: pdfplumber, scikit-learn, rapidfuzz, pyoxipng, pypdf
+# No need to add them individually!
+```
 
 ## Testing Guidelines
 

@@ -86,23 +86,34 @@ pip install "blockether-catalyst[extraction,api] @ git+https://github.com/Blocke
 - **Visualization**: Knowledge graph and chunk relationship visualizations
 - **MCP Server**: Model Context Protocol support for AI assistants
 
-## SWOT Analysis
+## 🎯 When to Use Catalyst
 
-| **Strengths** 💪 | **Weaknesses** ⚠️ |
-|---|---|
-| ✅ **Regulatory Excellence**: Purpose-built for compliance and audit requirements | ⏱️ **LLM Latency**: Multiple LLM calls per document - prioritizes quality over speed |
-| ✅ **Evidence-Based**: Complete source attribution with page numbers and sections | 💾 **Resource Intensive**: High RAM/CPU usage, more demanding than simple vector search |
-| ✅ **Offline Capable**: Self-contained with embedded models - no API dependencies | 🤖 **Model Dependencies**: Best with GPT-4 level models, weaker models = weaker extraction |
-| ✅ **Platform Agnostic**: Runs on Lambda, containers, edge - anywhere Python runs | ⚙️ **Not Real-Time**: Batch processing adds minutes, not milliseconds |
-| ✅ **Deep Understanding**: Connects acronyms, jargon, and cross-document references | 🔧 **Complexity**: More components = more potential failure points |
+Think of Catalyst as a forensic document investigator rather than a simple search engine. While traditional RAG systems are great for general Q&A, Catalyst excels when you need deep understanding, complete evidence trails, and the ability to connect concepts across massive document repositories.
 
-| **Opportunities** 🎯 | **Threats (When to Avoid)** 🚫 |
-|---|---|
-| 📋 **Regulatory compliance**: Finding specific requirements across massive policy documents | 🔄 **High-frequency updates**: Documents changing every few minutes |
-| ⚖️ **Legal due diligence**: Connecting related clauses and terms across contracts | ❓ **Simple FAQ systems**: Basic vector search is sufficient |
-| 💰 **Financial analysis**: Linking risk metrics with their definitions and calculations | 🌍 **General knowledge**: Use ChatGPT directly |
-| 📚 **Technical documentation**: Understanding system relationships and dependencies | ⚡ **Real-time requirements**: Need sub-second responses |
-| 📊 **Audit support**: Providing complete evidence chains with source materials | |
+### Catalyst vs Traditional RAG
+
+| **Aspect** | **Traditional RAG** | **Catalyst** |
+|-----------|---------------------|--------------|
+| **📥 Document Processing** | • Simple chunking<br>• Basic text extraction<br>• Vector embeddings only | 📄 Extract text, tables, images<br>🧠 Build knowledge graphs<br>🔗 Map relationships & acronyms<br>✅ LLM consensus validation |
+| **🔍 Search Capabilities** | • Semantic similarity only<br>• Isolated chunks<br>• No acronym understanding | ⚡ Hybrid search (semantic + keyword)<br>🔗 Cross-document linking<br>📍 Exact source attribution<br>🎯 Understands domain jargon |
+| **⚙️ Infrastructure** | • Requires vector database<br>• API dependencies<br>• Cloud-first design | 🚫 No vector DB needed<br>🚫 No external services<br>🔌 Runs offline anywhere<br>💨 Minimal footprint |
+| **⏱️ Performance** | • Fast indexing (seconds)<br>• Query: 100-500ms | 🐢 Slow extraction (2-5 min/doc)<br>⚡ Query: milliseconds<br>💾 One-time processing |
+| **📊 Best For** | • General Q&A<br>• Frequently changing docs<br>• Simple retrieval | 🏛️ Regulated industries<br>⚖️ Legal/compliance<br>📋 Audit trails<br>🔍 Deep understanding |
+
+The key difference? Catalyst spends time upfront to deeply understand your documents - extracting not just text but relationships, definitions, and context. This investment pays off when you need answers that would require a human expert to manually read through hundreds of pages.
+
+### Real-World Use Cases
+
+| **Scenario** | **Example Query** | **Use Catalyst?** | **Why** |
+|--------------|-------------------|-------------------|---------|
+| **📋 Compliance Audits** | "Show me all GDPR requirements with source pages" | ✅ **YES** | Full attribution, regulatory-grade accuracy |
+| **⚖️ Legal Discovery** | "Find all liability clauses across 50 contracts" | ✅ **YES** | Cross-document linking, relationship mapping |
+| **💰 Financial Analysis** | "Trace this risk metric to its definition" | ✅ **YES** | Connects terms, definitions, calculations |
+| **🔧 Technical Docs** | "Map all API dependencies in the system" | ✅ **YES** | Understands system relationships |
+| **💬 Chat Support** | "How do I reset my password?" | ❌ **NO** | Use simple RAG - overkill for FAQs |
+| **📱 Mobile Apps** | "Real-time in-app search" | ❌ **NO** | Extraction not suitable for mobile |
+| **🔄 Dynamic Content** | "Latest news updates" | ❌ **NO** | Re-extraction takes minutes |
+| **🌍 General Knowledge** | "Who won the World Cup?" | ❌ **NO** | Just use ChatGPT directly |
 
 ## Knowledge Extraction
 

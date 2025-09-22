@@ -27,12 +27,6 @@ class PDFProcessorTextExtractionSettings(BaseModel):
     use_text_flow: bool = Field(default=True, description="Use natural reading order")
 
 
-class PDFImageProcessingSettings(BaseModel):
-    """Settings for image processing with CLIP and OCR."""
-
-    pass
-
-
 class PDFPageCropOffset(BaseModel):
     """Page cropping offsets in pixels."""
 
@@ -48,10 +42,6 @@ class PDFKnowledgeProcessorSettings(BaseModel):
     pdf_text_extraction: Optional[PDFProcessorTextExtractionSettings] = Field(
         default_factory=lambda: None,
         description="PDF text extraction settings",
-    )
-    pdf_image_processing: Optional[PDFImageProcessingSettings] = Field(
-        default_factory=lambda: None,
-        description="PDF image processing settings",
     )
     pdf_page_crop_offset: Optional[PDFPageCropOffset] = Field(
         default_factory=lambda: None,

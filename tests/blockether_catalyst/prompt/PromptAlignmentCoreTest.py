@@ -72,10 +72,10 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.5,
                     feedback="Prompt lacks detail and context",
-                    strengths=[SemanticString(s) for s in ["Clear question"]],
-                    weaknesses=[SemanticString(s) for s in ["No context requested", "Too brief"]],
+                    strengths=[SemanticString(value=s) for s in ["Clear question"]],
+                    weaknesses=[SemanticString(value=s) for s in ["No context requested", "Too brief"]],
                     suggested_improvements=[
-                        SemanticString(s)
+                        SemanticString(value=s)
                         for s in [
                             "Add request for historical context",
                             "Ask for detailed response",
@@ -95,15 +95,15 @@ class TestPromptAlignmentCore:
                     alignment_score=0.9,
                     feedback="Prompt now requests detailed, contextual information",
                     strengths=[
-                        SemanticString(s)
+                        SemanticString(value=s)
                         for s in [
                             "Clear question",
                             "Requests detail",
                             "Asks for context",
                         ]
                     ],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
                     reasoning="The improved prompt successfully aligns with the target behavior by explicitly requesting detailed information with historical context. The refinements have addressed all identified weaknesses and incorporated the necessary elements to ensure comprehensive, educational responses that meet the specified requirements.",
                 ),
                 rounds=[],
@@ -117,9 +117,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.9,
                     feedback="Final evaluation confirms alignment",
-                    strengths=[SemanticString(s) for s in ["Clear", "Detailed", "Contextual"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
+                    strengths=[SemanticString(value=s) for s in ["Clear", "Detailed", "Contextual"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
                     reasoning="The prompt successfully achieves the target behavior requirements through effective incorporation of feedback and iterative refinement. The final version demonstrates excellent alignment with all specified criteria and provides clear guidance for generating the desired type of response.",
                 ),
                 rounds=[],
@@ -136,10 +136,10 @@ class TestPromptAlignmentCore:
                 final_response=AlignmentFeedback(
                     overall_assessment="Prompt needs to explicitly request detail and context",
                     specific_issues=[
-                        SemanticString(s) for s in ["Missing request for historical context", "Too brief"]
+                        SemanticString(value=s) for s in ["Missing request for historical context", "Too brief"]
                     ],
                     improvement_suggestions=[
-                        SemanticString(s)
+                        SemanticString(value=s)
                         for s in [
                             "Add 'Please provide a detailed response'",
                             "Include 'with historical context'",
@@ -197,9 +197,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.4,
                     feedback="Needs improvement",
-                    strengths=[SemanticString(s) for s in ["Clear"]],
-                    weaknesses=[SemanticString(s) for s in ["Lacks detail"]],
-                    suggested_improvements=[SemanticString(s) for s in ["Add detail"]],
+                    strengths=[SemanticString(value=s) for s in ["Clear"]],
+                    weaknesses=[SemanticString(value=s) for s in ["Lacks detail"]],
+                    suggested_improvements=[SemanticString(value=s) for s in ["Add detail"]],
                     reasoning="The prompt is too simple and doesn't request the level of detail required by the target behavior. "
                     "It lacks specific instructions about the format and structure of the expected response. "
                     "The prompt should be more explicit about requirements and provide better context for the task.",
@@ -215,9 +215,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.85,
                     feedback="Much better",
-                    strengths=[SemanticString(s) for s in ["Clear", "Detailed"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
+                    strengths=[SemanticString(value=s) for s in ["Clear", "Detailed"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
                     reasoning="The prompt now successfully incorporates principles that align with the target behavior. "
                     "The iterative refinement process has addressed all identified weaknesses and enhanced the prompt's effectiveness. "
                     "The alignment score reflects successful integration of feedback and principles.",
@@ -233,9 +233,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.85,
                     feedback="Good alignment",
-                    strengths=[SemanticString(s) for s in ["Clear", "Detailed"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
+                    strengths=[SemanticString(value=s) for s in ["Clear", "Detailed"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
                     reasoning="The final prompt aligns well with the target behavior after successful application of alignment principles. "
                     "All evaluation criteria have been met and the prompt demonstrates excellent adherence to the specified requirements. "
                     "The high alignment score confirms that the iterative refinement process has achieved its objectives.",
@@ -253,8 +253,8 @@ class TestPromptAlignmentCore:
                 consensus_achieved=True,
                 final_response=AlignmentFeedback(
                     overall_assessment="Apply principles for improvement",
-                    specific_issues=[SemanticString(s) for s in ["Too brief"]],
-                    improvement_suggestions=[SemanticString(s) for s in ["Add detail request"]],
+                    specific_issues=[SemanticString(value=s) for s in ["Too brief"]],
+                    improvement_suggestions=[SemanticString(value=s) for s in ["Add detail request"]],
                     principles_to_apply=AlignmentPrincipleList(
                         principles=[
                             AlignmentPrinciple(
@@ -304,9 +304,9 @@ class TestPromptAlignmentCore:
             final_response=EvaluationResult(
                 alignment_score=0.3,
                 feedback="Still needs work",
-                strengths=[SemanticString(s) for s in []],
-                weaknesses=[SemanticString(s) for s in ["Many issues"]],
-                suggested_improvements=[SemanticString(s) for s in ["Keep trying"]],
+                strengths=[SemanticString(value=s) for s in []],
+                weaknesses=[SemanticString(value=s) for s in ["Many issues"]],
+                suggested_improvements=[SemanticString(value=s) for s in ["Keep trying"]],
                 reasoning="The prompt continues to have issues that prevent it from aligning with the target behavior despite iterative refinement attempts. Multiple fundamental problems persist that require significant restructuring to achieve meaningful alignment with the specified requirements.",
             ),
             rounds=[],
@@ -320,8 +320,8 @@ class TestPromptAlignmentCore:
             consensus_achieved=True,
             final_response=AlignmentFeedback(
                 overall_assessment="Needs more work to achieve target alignment",
-                specific_issues=[SemanticString(s) for s in ["Still not aligned"]],
-                improvement_suggestions=[SemanticString(s) for s in ["Try again"]],
+                specific_issues=[SemanticString(value=s) for s in ["Still not aligned"]],
+                improvement_suggestions=[SemanticString(value=s) for s in ["Try again"]],
                 reasoning="The prompt requires additional refinement to address specific alignment issues and improve overall effectiveness. Multiple aspects of the current formulation fail to meet target behavior requirements, necessitating continued iterative improvements to achieve acceptable alignment levels.",
                 principles_to_apply=AlignmentPrincipleList(principles=[]),
                 confidence_score=0.5,
@@ -359,9 +359,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.85,  # Already above default threshold
                     feedback="Good alignment",
-                    strengths=[SemanticString(s) for s in ["Clear", "Detailed"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
+                    strengths=[SemanticString(value=s) for s in ["Clear", "Detailed"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
                     reasoning="The prompt already aligns well with the target behavior, exceeding the required threshold. The high initial score indicates that the prompt effectively meets the specified requirements without requiring significant refinement or additional iterations.",
                 ),
                 rounds=[],
@@ -375,9 +375,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.85,
                     feedback="Final check",
-                    strengths=[SemanticString(s) for s in ["Clear", "Detailed"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
+                    strengths=[SemanticString(value=s) for s in ["Clear", "Detailed"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
                     reasoning="Final evaluation confirms the prompt meets alignment requirements after assessment against target behavior criteria. The sustained high alignment score validates that the prompt successfully achieves the desired objectives and maintains consistency with specifications.",
                 ),
                 rounds=[],
@@ -427,9 +427,9 @@ class TestPromptAlignmentCore:
             final_response=EvaluationResult(
                 alignment_score=0.85,
                 feedback="Good alignment achieved",
-                strengths=[SemanticString(s) for s in ["Clear"]],
-                weaknesses=[SemanticString(s) for s in []],
-                suggested_improvements=[SemanticString(s) for s in []],
+                strengths=[SemanticString(value=s) for s in ["Clear"]],
+                weaknesses=[SemanticString(value=s) for s in []],
+                suggested_improvements=[SemanticString(value=s) for s in []],
                 reasoning="The prompt aligns well with the target behavior and meets the required threshold. The alignment score indicates successful adherence to specified requirements. Further refinement is not necessary as the current version effectively achieves the desired goals.",
             ),
             rounds=[],
@@ -443,8 +443,8 @@ class TestPromptAlignmentCore:
             consensus_achieved=True,
             final_response=AlignmentFeedback(
                 overall_assessment="Good prompt with proper alignment achieved",
-                specific_issues=[SemanticString(s) for s in []],
-                improvement_suggestions=[SemanticString(s) for s in []],
+                specific_issues=[SemanticString(value=s) for s in []],
+                improvement_suggestions=[SemanticString(value=s) for s in []],
                 principles_to_apply=AlignmentPrincipleList(principles=[]),
                 revised_prompt_suggestion="Improved prompt",
                 confidence_score=0.8,
@@ -503,9 +503,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.3,
                     feedback="Poor alignment with target",
-                    strengths=[SemanticString(s) for s in []],
-                    weaknesses=[SemanticString(s) for s in ["Many"]],
-                    suggested_improvements=[SemanticString(s) for s in ["Improve"]],
+                    strengths=[SemanticString(value=s) for s in []],
+                    weaknesses=[SemanticString(value=s) for s in ["Many"]],
+                    suggested_improvements=[SemanticString(value=s) for s in ["Improve"]],
                     reasoning="Initial prompt has significant alignment issues with the target behavior that require substantial refinement. The low alignment score indicates multiple areas needing improvement to meet the specified requirements and achieve effective alignment.",
                 ),
                 rounds=[],
@@ -519,9 +519,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.6,
                     feedback="Better alignment but needs more work",
-                    strengths=[SemanticString(s) for s in ["Some"]],
-                    weaknesses=[SemanticString(s) for s in ["Few"]],
-                    suggested_improvements=[SemanticString(s) for s in ["Continue"]],
+                    strengths=[SemanticString(value=s) for s in ["Some"]],
+                    weaknesses=[SemanticString(value=s) for s in ["Few"]],
+                    suggested_improvements=[SemanticString(value=s) for s in ["Continue"]],
                     reasoning="The prompt shows improvement but still needs refinement to meet target behavior requirements. The moderate alignment score indicates progress has been made, however additional iterations are necessary to achieve the desired level of alignment.",
                 ),
                 rounds=[],
@@ -535,9 +535,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.85,
                     feedback="Good alignment achieved",
-                    strengths=[SemanticString(s) for s in ["Many"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
+                    strengths=[SemanticString(value=s) for s in ["Many"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
                     reasoning="The prompt now successfully aligns with the target behavior requirements after iterative refinement. The high alignment score demonstrates effective incorporation of feedback and successful application of alignment principles throughout the process.",
                 ),
                 rounds=[],
@@ -551,9 +551,9 @@ class TestPromptAlignmentCore:
                 final_response=EvaluationResult(
                     alignment_score=0.85,
                     feedback="Final alignment achieved successfully",
-                    strengths=[SemanticString(s) for s in ["Many"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
+                    strengths=[SemanticString(value=s) for s in ["Many"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
                     reasoning="Final evaluation confirms successful alignment with target behavior after completing the iterative refinement process. The stable high score indicates that the prompt effectively meets all specified requirements and achieves the desired alignment objectives.",
                 ),
                 rounds=[],
@@ -568,8 +568,8 @@ class TestPromptAlignmentCore:
             consensus_achieved=True,
             final_response=AlignmentFeedback(
                 overall_assessment="Prompt needs significant improvements to meet requirements",
-                specific_issues=[SemanticString(s) for s in ["Issues"]],
-                improvement_suggestions=[SemanticString(s) for s in ["Suggestions"]],
+                specific_issues=[SemanticString(value=s) for s in ["Issues"]],
+                improvement_suggestions=[SemanticString(value=s) for s in ["Suggestions"]],
                 principles_to_apply=AlignmentPrincipleList(principles=[]),
                 revised_prompt_suggestion="Better prompt",
                 confidence_score=0.75,

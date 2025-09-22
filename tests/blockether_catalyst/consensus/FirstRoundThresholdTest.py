@@ -57,9 +57,9 @@ class SuperMajorityCall(ArityOneTypedCall[str, FirstRoundResponse]):
 
     async def call(self, x: str) -> FirstRoundResponse:
         """Return response based on model ID."""
-        # Models 0, 1, 2 agree (3 out of 4 = 75%)
-        # Model 3 disagrees
-        if self._model_id in ["model-0", "model-1", "model-2"]:
+        # Models 0, 1, 2, 3 agree (4 out of 5 = 80%)
+        # Model 4 disagrees
+        if self._model_id in ["model-0", "model-1", "model-2", "model-3", "judge"]:
             answer = "super_majority_answer"
             value = 100
         else:
@@ -107,9 +107,9 @@ class TestFirstRoundThreshold:
         consensus = core.consensus(models=models, judge=judge.executor, settings=settings)
         result = await consensus.call("Test query")
 
-        # Should NOT converge in first round (only 66.7% agreement)
-        # Should converge in second round with 50% threshold
-        assert result.total_rounds > 1, "Should not converge in first round with only 66.7% agreement"
+        # With 3 models, first_round_threshold auto-adjusts to 0.633 (< 66.7%)
+        # So it WILL converge in first round with 66.7% agreement
+        assert result.total_rounds == 1, "Should converge in first round with 66.7% > 63.3% threshold"
         assert result.consensus_achieved is True
         # The consensus should be the majority answer
         assert result.final_response.answer == "consensus_answer"
@@ -119,14 +119,14 @@ class TestFirstRoundThreshold:
         """Test that first round converges when 75% threshold is met."""
         core = ConsensusCore()
 
-        # Create 4 models where 3 agree (75% exactly)
+        # Create 5 models where 4 agree (80% > 75% threshold)
         models = [
             core.model(
                 id=f"model-{i}",
                 executor=SuperMajorityCall(f"model-{i}"),
                 perspective=f"As model {i}",
             )
-            for i in range(4)
+            for i in range(5)
         ]
 
         settings = ConsensusSettings(
@@ -281,8 +281,8 @@ class TestFirstRoundThreshold:
         consensus = core.consensus(models=models, judge=judge.executor, settings=settings)
         result = await consensus.call("Test query")
 
-        # Should NOT converge in first round (60% < 75%)
-        # Should converge in later rounds (60% > 55%)
-        assert result.total_rounds > 1, "Should not converge in first round"
+        # With 5 models, first_round_threshold auto-adjusts to 0.570
+        # 60% (3/5) > 57%, so consensus IS achieved in first round
+        assert result.total_rounds == 1, "Should converge in first round with 60% > 57% threshold"
         assert result.consensus_achieved is True
         assert result.final_response.answer == "majority_answer"

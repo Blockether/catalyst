@@ -7,7 +7,7 @@ Users inherit from these base classes to implement their own LLM providers.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generic, List, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from blockether_catalyst.consensus.Consensus import Consensus
 from blockether_catalyst.consensus.ConsensusTypes import (
@@ -16,6 +16,7 @@ from blockether_catalyst.consensus.ConsensusTypes import (
 from blockether_catalyst.consensus.VotingComparison import BaseModelWithReasoning
 
 from .KnowledgeTypes import (
+    ChunkContentClassification,
     ChunkingDecisionResponse,
     DocumentMetadata,
     KnowledgePageDataWithRawText,
@@ -172,8 +173,41 @@ class BaseDocumentChunkingCall(BaseConsensusCall[ChunkingDecisionResponse]):
         pass
 
 
+class BaseChunkContentClassificationCall(BaseConsensusCall[ChunkContentClassification]):
+    """
+    Base class for chunk content classification calls.
+
+    Users inherit from this to classify chunk content semantically
+    (e.g., table_of_contents, summary, rule, explanation, example).
+    """
+
+    @abstractmethod
+    def fill_template(
+        self,
+        chunk_text: str,
+        document_name: str,
+        page_number: int,
+        content_types: List[str],
+    ) -> str:
+        """
+        Fill the prompt for chunk content classification.
+
+        Users MUST implement this method with EXACTLY these parameters.
+
+        Args:
+            chunk_text: The text content of the chunk to classify
+            document_name: Name of the document the chunk belongs to
+            page_number: Page number where the chunk is located
+            content_types: Detected content types (text, image, table)
+
+        Returns:
+            Filled prompt string ready for LLM classification
+        """
+        pass
+
+
 class ExtractionCallsSettings(BaseModel):
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     document_chunking_call: BaseDocumentChunkingCall = Field(
         description="User-implemented call for document chunking",
@@ -181,4 +215,8 @@ class ExtractionCallsSettings(BaseModel):
 
     term_extraction_call: BaseTermExtractionCall = Field(
         description="User-implemented call for initial term discovery in chunks (MANDATORY)",
+    )
+
+    chunk_content_classification_call: BaseChunkContentClassificationCall = Field(
+        description="MANDATORY user-implemented call for semantic chunk classification",
     )

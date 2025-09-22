@@ -5,9 +5,14 @@ This provides a reusable framework for building interactive CLIs that refine
 prompts using the PromptAlignmentCore system.
 """
 
-import asyncio
+try:
+    import rich
+except ImportError:
+    raise ImportError(
+        "The 'rich' library is required for PromptAlignmentCLIBase. Please install it via 'pip install rich/uv add rich'."
+    )
+
 import json
-import logging
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -50,7 +55,6 @@ class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
             console: Rich console for output
             output_dir: Directory to save outputs (responses, filled prompts, etc.)
         """
-        logging.basicConfig(level=logging.INFO)
         self.prompt_name = prompt_name
         self.prompt_dir = Path(prompt_dir)
         self.console = console or Console()
@@ -72,6 +76,27 @@ class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
     @abstractmethod
     def _init_components(self):
         """Initialize LLM components and prompt aligner."""
+        pass
+
+    @abstractmethod
+    async def _test_prompt(self, prompt: str) -> TResponse:
+        """Test the prompt with actual data and return results.
+
+        Args:
+            prompt: The prompt to test
+
+        Returns:
+            Response model with test results
+        """
+        pass
+
+    @abstractmethod
+    def _display_test_results(self, results: TResponse):
+        """Display the test results in a formatted way.
+
+        Args:
+            results: The test results to display
+        """
         pass
 
     def _get_current_data(self) -> Optional[Any]:
@@ -139,6 +164,30 @@ class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
             f.write(response_data.model_dump_json(indent=2))
 
         self.console.print(f"[green]✓ Response saved to: {filepath}[/green]")
+        return filepath
+
+    def _save_text_to_file(self, text: str, prefix: str = "text") -> Path:
+        """
+        Save text content to a file.
+
+        Args:
+            text: The text to save
+            prefix: Prefix for the filename
+
+        Returns:
+            Path to the saved file
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{prefix}_{timestamp}.txt"
+        filepath = self.output_dir / filename
+
+        # Ensure output directory exists
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(filepath, "w") as f:
+            f.write(text)
+
+        self.console.print(f"[green]✓ Text saved to: {filepath}[/green]")
         return filepath
 
     def _view_saved_responses(self):
@@ -434,19 +483,20 @@ class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
         self.console.print(Columns([col1, col2]))
 
     async def _principle_based_refinement(self):
-        """PRINCIPLE-BASED REFINEMENT ONLY (Google's Guidelines Method).
+        """PRINCIPLE-BASED REFINEMENT through critique and feedback.
 
-        This follows Google's approach from their Model Alignment notebook:
-        1. Extract reusable principles/guidelines from examples
-        2. Apply principles systematically (not one-off changes)
-        3. Build knowledge base over time
+        This approach learns from critique of prompts to extract principles:
+        1. Evaluate current prompt against target behavior
+        2. Extract principles from the critique/feedback
+        3. Apply principles systematically to improve the prompt
+        4. Build knowledge base of principles over time
         """
         if not self.prompt_aligner:
             self.console.print("[red]Prompt aligner not initialized[/red]")
             return
 
-        self.console.print("\n[bold cyan]═══ PRINCIPLE-BASED REFINEMENT (Google's Method) ═══[/bold cyan]")
-        self.console.print("[dim]Extracting reusable guidelines from examples for systematic improvement[/dim]\n")
+        self.console.print("\n[bold cyan]═══ PRINCIPLE-BASED REFINEMENT (Critique Method) ═══[/bold cyan]")
+        self.console.print("[dim]Learning from critique to extract and apply reusable principles[/dim]\n")
 
         # Check current principles
         existing_principles = self.export_principles()
@@ -468,142 +518,57 @@ class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
                     self.console.print(f"  [dim]... and {len(existing_principles) - 5} more principles[/dim]")
         else:
             self.console.print("[yellow]No principles learned yet[/yellow]")
+            self.console.print("[dim]Principles will be extracted from critique during refinement[/dim]")
 
-        # STEP 1: EXTRACT PRINCIPLES FROM EXAMPLES
-        self.console.print("\n[bold]━━━ STEP 1: Extract Principles from Examples ━━━[/bold]")
-        self.console.print("[dim]Provide examples to extract reusable guidelines[/dim]\n")
+        # Get target behavior for the prompt
+        self.console.print("\n[bold]Define Target Behavior[/bold]")
+        self.console.print("[dim]Describe what the prompt should achieve[/dim]\n")
 
-        learn_more = True
-        total_learned = 0
-
-        while learn_more:
-            self.console.print("\n[cyan]Example Type:[/cyan]")
-            self.console.print("1. Good example (what works well)")
-            self.console.print("2. Bad example (what to avoid)")
-            self.console.print("3. Skip to application")
-
-            choice = Prompt.ask("Select", choices=["1", "2", "3"], default="1")
-
-            if choice == "3":
-                break
-
-            if choice == "1":
-                # Extract principles from good example
-                self.console.print("\n[green]Provide a GOOD example:[/green]")
-                good_prompt = Prompt.ask("Good prompt")
-                good_response = Prompt.ask("Ideal response it should produce")
-
-                with self.console.status("Extracting principles from good example..."):
-                    principles = await self.prompt_aligner.learn_from_success(good_prompt, good_response)
-
-                if principles:
-                    total_learned += len(principles)
-                    self.console.print(f"[green]✓ Extracted {len(principles)} principles[/green]")
-                    for p in principles[:3]:
-                        self.console.print(f"  • {p.principle}")
-
-            else:  # choice == "2"
-                # Extract principles from bad example
-                self.console.print("\n[red]Provide a BAD example:[/red]")
-                bad_prompt = Prompt.ask("Bad prompt")
-                _ = Prompt.ask("Poor response it produced")  # Context for what went wrong
-
-                # Convert bad example to good principles
-                self.console.print("\nNow describe what would make it better:")
-                ideal_response = Prompt.ask("What the response SHOULD have been")
-
-                with self.console.status("Converting negative example to positive principles..."):
-                    # Learn from the contrast between bad and ideal
-                    principles = await self.prompt_aligner.learn_from_success(bad_prompt, ideal_response)
-
-                if principles:
-                    total_learned += len(principles)
-                    self.console.print(f"[green]✓ Converted to {len(principles)} positive principles[/green]")
-                    for p in principles[:3]:
-                        self.console.print(f"  • {p.principle}")
-
-            learn_more = Confirm.ask("\nExtract principles from another example?", default=False)
-
-        # Check if we have enough principles
-        total_principles = len(existing_principles) + total_learned
-        if total_principles == 0:
-            self.console.print("\n[red]Cannot proceed without principles![/red]")
-            self.console.print("[dim]Principle-based refinement requires examples to learn from.[/dim]")
-            self.console.print("[dim]Please provide at least one good or bad example.[/dim]")
-            return
-
-        self.console.print(f"\n[green]Total principles available: {total_principles}[/green]")
-
-        # STEP 2: APPLY PRINCIPLES TO REFINE PROMPT
-        self.console.print("\n[bold]━━━ STEP 2: Apply Principles Systematically ━━━[/bold]")
-        self.console.print("[dim]Using extracted principles to refine the prompt[/dim]\n")
-
-        # Test current prompt for baseline
-        self.console.print("[cyan]Testing current prompt for baseline...[/cyan]")
-        test_results = await self._test_prompt(self.prompt_template)
-        self._display_test_results(test_results)
-
-        # Apply principle-based refinement
-        await self._apply_principles_to_prompt()
-
-    async def _apply_principles_to_prompt(self):
-        """Apply learned principles to refine the prompt (PRINCIPLE-BASED ONLY)."""
-        # Get target behavior
-        target = Prompt.ask(
-            "Describe the ideal behavior for the refined prompt",
-            default="Follow all learned principles for optimal performance",
+        target_behavior = Prompt.ask(
+            "What should the refined prompt accomplish?",
+            default="Generate accurate, detailed, and well-structured responses",
         )
 
-        # Configure principle-based alignment
+        # Configure alignment
         config = PromptConfiguration(
             initial_prompt=self.prompt_template,
-            target_behavior=target,
+            target_behavior=target_behavior,
             max_iterations=IntPrompt.ask("Max refinement iterations", default=3),
             score_threshold=0.85,
+            preserve_context=True,
         )
 
         original_prompt = self.prompt_template
 
-        # Apply principles
-        self.console.print("\n[cyan]Applying principles to refine prompt...[/cyan]")
-        self.console.print("[dim]This uses ONLY systematic principle application (no direct edits)[/dim]\n")
+        # Apply principle-based alignment
+        self.console.print("\n[cyan]Refining prompt through critique and principle extraction...[/cyan]")
+        self.console.print("[dim]The system will:[/dim]")
+        self.console.print("[dim]1. Evaluate the prompt against target behavior[/dim]")
+        self.console.print("[dim]2. Extract principles from the critique[/dim]")
+        self.console.print("[dim]3. Apply principles to improve the prompt[/dim]")
+        self.console.print("[dim]4. Repeat until optimal or max iterations reached[/dim]\n")
 
-        if not self.prompt_aligner:
-            self.console.print("[red]Prompt aligner not initialized[/red]")
-            return
-
-        with self.console.status("Refining with principles..."):
+        with self.console.status("Applying principle-based refinement..."):
             result = await self.prompt_aligner.align_prompt(config)
 
-        # Display results
+        # Display detailed results
         self._display_alignment_result(result)
 
         # Show what changed
         if result.aligned_prompt != original_prompt:
-            self.console.print("\n[bold cyan]═══ PRINCIPLE-BASED CHANGES ═══[/bold cyan]")
-
-            # Show which principles were applied
-            if result.principles_applied:
-                self.console.print("\n[green]Applied Principles:[/green]")
-                for idx, p in enumerate(result.principles_applied[:5], 1):
-                    if hasattr(p, "principle"):
-                        self.console.print(f"  {idx}. {p.principle}")
-                    else:
-                        self.console.print(f"  {idx}. {str(p)}")
-                if len(result.principles_applied) > 5:
-                    self.console.print(f"  [dim]... and {len(result.principles_applied) - 5} more[/dim]")
+            self.console.print("\n[bold cyan]═══ REFINEMENT RESULTS ═══[/bold cyan]")
 
             # Show comparison
             self.console.print("\n[yellow]Prompt Comparison:[/yellow]")
             self._compare_prompts(original_prompt, result.aligned_prompt)
 
-            # Show detailed diff
+            # Show detailed diff if requested
             if Confirm.ask("\nView detailed diff?", default=True):
                 diff_text = self._show_diff(
                     original_prompt,
                     result.aligned_prompt,
                     "Original",
-                    "Principle-Refined",
+                    "Refined",
                     context_lines=5,
                 )
                 from rich.panel import Panel
@@ -618,13 +583,17 @@ class PromptAlignmentCLIBase(ABC, Generic[TResponse]):
                 )
 
             # Accept changes
-            if Confirm.ask("\nAccept principle-based refinements?", default=True):
+            if Confirm.ask("\nAccept refined prompt?", default=True):
                 self.prompt_template = result.aligned_prompt
                 self.console.print("[green]✓ Prompt updated with principle-based improvements[/green]")
-                self.console.print(f"[dim]Score improved to: {result.final_score:.2%}[/dim]")
+                self.console.print(f"[dim]Final score: {result.final_score:.2%}[/dim]")
+
+                # Show number of principles now in database
+                current_principles = self.export_principles()
+                self.console.print(f"[dim]Total principles in knowledge base: {len(current_principles)}[/dim]")
         else:
-            self.console.print("\n[yellow]Prompt already optimal according to learned principles[/yellow]")
-            self.console.print("[dim]Learn more principles from examples to enable further refinement[/dim]")
+            self.console.print("\n[yellow]Prompt already optimal according to target behavior[/yellow]")
+            self.console.print("[dim]Consider adjusting the target behavior for further refinement[/dim]")
 
     def _manage_principles(self):
         """View and manage learned principles."""

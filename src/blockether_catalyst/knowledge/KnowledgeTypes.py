@@ -23,7 +23,7 @@ from typing import (
     Tuple,
 )
 
-from pydantic import BaseModel, Field, PrivateAttr, computed_field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, computed_field
 
 from blockether_catalyst.consensus.VotingComparison import (
     BaseModelWithReasoning,
@@ -43,9 +43,15 @@ DocumentSourceType = Literal["pdf", "docx", "txt"]
 class DocumentMetadata(BaseModel):
     """Core document metadata used during extraction."""
 
-    title: Optional[str] = Field(default=None, description="Document title")
-    author: Optional[str] = Field(default=None, description="Document author")
-    subject: Optional[str] = Field(default=None, description="Document subject")
+    title: Optional[str] = VotingField(default=None, description="Document title", comparison=ComparisonStrategy.EXACT)
+    author: Optional[str] = VotingField(
+        default=None, description="Document author", comparison=ComparisonStrategy.EXACT
+    )
+    subject: Optional[str] = VotingField(
+        default=None,
+        description="Document subject",
+        comparison=ComparisonStrategy.EXACT,
+    )
     document_path: str = Field(description="Path to the document file")
     creation_date: Optional[str] = Field(default=None, description="Document creation date")
     modification_date: Optional[str] = Field(default=None, description="Document last modification date")
@@ -74,13 +80,6 @@ class NormalizedDocumentMetadata(BaseModel):
     total_images: int = Field(default=0, description="Total number of images found in document")
     total_acronyms: int = Field(description="Total number of unique acronyms found in document")
     total_keywords: int = Field(description="Total number of unique keywords found in document")
-    
-    def __getattr__(self, name):
-        """Handle backward compatibility for missing fields."""
-        if name == 'total_images':
-            # Return 0 for old documents without this field
-            return 0
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 
 # ============================================================================
@@ -94,7 +93,11 @@ class ImageMetadata(BaseModel):
     document_name: str = Field(description="Name of the source document")
     page: int = Field(description="Page number where the image was found")
     path: str = Field(description="Path or reference to the saved image file")
-    caption: Optional[str] = Field(default=None, description="AI-generated caption describing the image")
+    caption: Optional[str] = VotingField(
+        default=None,
+        description="AI-generated caption describing the image",
+        comparison=ComparisonStrategy.SEMANTIC,
+    )
 
 
 class KnowledgeTableData(BaseModel):
@@ -186,21 +189,19 @@ class KnowledgeTableData(BaseModel):
         return "\n".join(lines)
 
     def to_markdown(self) -> str:
-        """Convert table data to Markdown format."""
-        if not self.data or not self.data[0]:
+        """Convert table data to markdown format using MarkdownGenerator.
+
+        Returns:
+            Markdown formatted table string
+        """
+        from .MarkdownGenerator import MarkdownGenerator
+
+        if not self.data or len(self.data) < 2:
             return ""
 
-        lines = []
-
-        # Create header row
-        header = "| " + " | ".join(str(cell) if cell else "" for cell in self.data[0]) + " |"
-        lines.append(header)
-
-        # Create separator row
-        separator = "| " + " | ".join("---" for _ in self.data[0]) + " |"
-        lines.append(separator)
-
-        # Add data rows
+        # Extract headers and rows
+        headers = [str(cell) if cell else "" for cell in self.data[0]]
+        rows = []
         for row in self.data[1:]:
             row_cells = []
             for i in range(len(self.data[0])):
@@ -208,9 +209,9 @@ class KnowledgeTableData(BaseModel):
                 # Escape pipe characters in cell content
                 cell = cell.replace("|", "\\|")
                 row_cells.append(cell)
-            lines.append("| " + " | ".join(row_cells) + " |")
+            rows.append(row_cells)
 
-        return "\n".join(lines)
+        return MarkdownGenerator.create_table(headers, rows)
 
 
 # ============================================================================
@@ -252,8 +253,21 @@ class KnowledgeChunk(BaseModel):
     document_name: str = Field(description="Name of the source document")
     doc_id: str = Field(description="Unique chunk identifier combining document_id, page, and chunk_index")
     index: int = Field(description="Index of the chunk")
-    text: str = Field(description="Text content of the chunk")
+    text: str = VotingField(
+        description="Text content of the chunk",
+        comparison=ComparisonStrategy.SEMANTIC,
+    )
     page: int = Field(description="Page number (1-indexed) - can be used to retrieve images/tables from page data")
+    content_types: List[str] = VotingField(
+        default_factory=list,
+        description="Types of content in this chunk: 'text', 'image', 'table'",
+        comparison=ComparisonStrategy.EXACT,
+    )
+    semantic_types: List[str] = VotingField(
+        default_factory=list,
+        description="Semantic classifications: 'table_of_contents', 'summary', 'rule', 'explanation', 'example', 'general'",
+        comparison=ComparisonStrategy.EXACT,
+    )
 
 
 class KnowledgeChunkWithTerms(KnowledgeChunk):
@@ -268,16 +282,18 @@ class KnowledgeChunkWithTerms(KnowledgeChunk):
 class ChunkOutput(BaseModel):
     """Output model for a single chunk created from a page."""
 
-    text: str = Field(
+    text: str = VotingField(
         description="Text content of the chunk",
+        comparison=ComparisonStrategy.SEMANTIC,
     )
 
 
 class ChunkingDecisionResponse(BaseModelWithReasoning):
     """Response model for intelligent chunking of document pages."""
 
-    chunks: List[ChunkOutput] = Field(
-        description="Sequence of chunks to create from the provided text, each with proper boundaries"
+    chunks: List[ChunkOutput] = VotingField(
+        description="Sequence of chunks to create from the provided text, each with proper boundaries",
+        comparison=ComparisonStrategy.EXACT,
     )
 
     @property
@@ -285,6 +301,36 @@ class ChunkingDecisionResponse(BaseModelWithReasoning):
     def total_chunks(self) -> int:
         """Get the total number of chunks created."""
         return len(self.chunks)
+
+
+class ChunkContentClassification(BaseModelWithReasoning):
+    """Classification of chunk content based on semantic analysis."""
+
+    semantic_types: List[
+        Literal[
+            "table_of_contents",
+            "summary",
+            "rule",
+            "explanation",
+            "example",
+            "reference",
+            "general",
+        ]
+    ] = VotingField(
+        min_length=1,
+        comparison=ComparisonStrategy.EXACT,
+        description="The semantic classifications of the chunk content (can be multiple, min_length=1)",
+    )
+    confidence_scores: Dict[str, float] = VotingField(
+        default_factory=dict,
+        comparison=ComparisonStrategy.IGNORE,
+        description="Confidence score for each classification (0-1)",
+    )
+    key_indicators: Dict[str, List[str]] = VotingField(
+        default_factory=dict,
+        comparison=ComparisonStrategy.IGNORE,
+        description="Key phrases or patterns that led to each classification",
+    )
 
 
 # ============================================================================
@@ -350,18 +396,17 @@ class Term(BaseModelWithReasoning):
 
     term: str = Field(description="The term text (acronym or keyword)")
     type: str = Field(description="Type of term: 'acronym' or 'keyword'")
-    occurrences: Sequence[TermOccurrence] = Field(
+    occurrences: list[TermOccurrence] = Field(
         default_factory=list,
         description="All occurrences of this term across documents",
     )
-    cooccurrences: Sequence[TermCooccurrence] = Field(
+    cooccurrences: list[TermCooccurrence] = Field(
         default_factory=list,
         description="Terms that frequently co-occur with this term",
     )
     total: int = Field(default=0, description="Total number of times this term appears")
     full_form: str = Field(description="The expanded full form (same as term for keywords)")
     meaning: str = Field(description="The extracted meaning of the term")
-    reasoning: str = Field(default="", description="Reasoning for the extraction")
 
 
 class TermWithLinks(Term):
@@ -387,9 +432,11 @@ class TermMeaningExtractionResponse(BaseModelWithReasoning):
     )
 
     meaning: str = VotingField(
-        description="The extracted meaning of the term",
+        description="The extracted meaning of the term. Maximum 1200 characters.",
         comparison=ComparisonStrategy.SEMANTIC,
-        threshold=0.7,
+        min_length=150,
+        max_length=1200,
+        threshold=0.65,
     )
 
     type: Literal["acronym", "keyword"] = VotingField(
@@ -401,8 +448,6 @@ class TermMeaningExtractionResponse(BaseModelWithReasoning):
         description="Status: 'meaningful' if a definition was extracted either from direct mention or context, 'generic' if no distinct definition, 'unknown' if undetermined",
         comparison=ComparisonStrategy.EXACT,
     )
-
-    reasoning: str = Field(default="", description="Reasoning for the extraction")
 
 
 # ============================================================================
@@ -437,9 +482,9 @@ class KnowledgeExtractionResult(KnowledgeExtractionResultBase):
 class KnowledgeExtractionResultWithChunks(KnowledgeExtractionResult):
     """Extraction result with chunks for indexing."""
 
-    chunks: Sequence[KnowledgeChunk] = Field(
+    chunks: list[KnowledgeChunk] = Field(
         default_factory=list,
-        description="Sequence of text chunks with keyword indexing",
+        description="List of text chunks with keyword indexing",
     )
     total_chunks: int = Field(default=0, description="Total number of chunks created")
 
@@ -454,7 +499,7 @@ class KnowledgeExtractionItem(BaseModel):
 class KnowledgeExtractionOutput(BaseModel):
     """Complete output from knowledge extraction process."""
 
-    pdf: Optional[Sequence[KnowledgeExtractionItem]] = Field(default=None)
+    pdf: Optional[list[KnowledgeExtractionItem]] = Field(default=None)
     # Future: Add other file types as needed
     # docx: Optional[Sequence[KnowledgeExtractionItem]] = Field(default=None)
     # txt: Optional[Sequence[KnowledgeExtractionItem]] = Field(default=None)
@@ -474,6 +519,210 @@ class KnowledgeExtractionOutputWithChunks(KnowledgeExtractionItem):
 # ============================================================================
 # Search Types
 # ============================================================================
+
+
+class TypedPydanticModel(BaseModel):
+    """Base model with markdown rendering capability."""
+
+    def markdown(self) -> str:
+        """
+        Generate a markdown representation of the model.
+
+        Returns:
+            Markdown formatted string of the model data
+        """
+        lines = []
+        model_name = self.__class__.__name__
+        lines.append(f"## {model_name}")
+
+        # Iterate through fields and format them
+        for field_name, field_value in self.model_dump(exclude_none=True).items():
+            if field_value is None or (isinstance(field_value, (list, dict, set)) and not field_value):
+                continue
+
+            # Format field name
+            formatted_name = field_name.replace("_", " ").title()
+
+            if isinstance(field_value, list):
+                lines.append(f"\n### {formatted_name}")
+                for item in field_value:
+                    if hasattr(item, "markdown"):
+                        lines.append(item.markdown())
+                    else:
+                        lines.append(f"- {item}")
+            elif isinstance(field_value, dict):
+                lines.append(f"\n### {formatted_name}")
+                for key, value in field_value.items():
+                    lines.append(f"- **{key}**: {value}")
+            else:
+                lines.append(f"**{formatted_name}**: {field_value}")
+
+        return "\n".join(lines)
+
+
+class TermInfo(TypedPydanticModel):
+    """Information about a term."""
+
+    term: str = Field(description="The term text")
+    meaning: Optional[str] = Field(default=None, description="Meaning of the term")
+    term_type: Optional[str] = Field(default=None, description="Type of term (e.g., acronym, keyword)")
+    link_score: Optional[float] = Field(default=None, description="Score of the link to this term")
+    total_times_occurred_in_knowledgebase: Optional[int] = Field(default=None, description="Total occurrences")
+    linked_terms: List["TermInfo"] = Field(default_factory=list, description="Linked terms")
+
+    def markdown(self) -> str:
+        """Generate markdown for a term."""
+        lines = []
+
+        # Main term with type
+        if self.term_type:
+            lines.append(f"- **{self.term}** ({self.term_type})")
+        else:
+            lines.append(f"- **{self.term}**")
+
+        # Add meaning if present
+        if self.meaning:
+            meaning_preview = self.meaning[:150] + "..." if len(self.meaning) > 150 else self.meaning
+            lines.append(f"  - Meaning: {meaning_preview}")
+
+        # Add occurrences if present
+        if self.total_times_occurred_in_knowledgebase:
+            lines.append(f"  - Occurrences: {self.total_times_occurred_in_knowledgebase}")
+
+        # Add linked terms if present
+        if self.linked_terms:
+            lines.append("  - Related:")
+            for linked_term in self.linked_terms[:3]:  # Limit to 3
+                lines.append(f"    - {linked_term.term}")
+
+        return "\n".join(lines)
+
+
+class ImageInfo(TypedPydanticModel):
+    """Information about an image."""
+
+    caption: Optional[str] = Field(default=None, description="Image caption")
+    href: str = Field(description="URL to the image")
+    page: Optional[int] = Field(default=None, description="Page number")
+    document_name: Optional[str] = Field(default=None, description="Document containing the image")
+
+    def markdown(self) -> str:
+        """Generate markdown for an image."""
+        caption_text = self.caption or "Image"
+        if self.document_name and self.page is not None:
+            return f"\n![{caption_text} - {self.document_name} - (Page {self.page})]({self.href})\n<center>{caption_text} - {self.document_name} - (Page {self.page})</center>\n"
+        elif self.page is not None:
+            return f"\n![{caption_text} - (Page {self.page})]({self.href})\n<center>{caption_text} - (Page {self.page})</center>\n"
+        else:
+            return f"\n![{caption_text}]({self.href})\n<center>{caption_text}</center>\n"
+
+
+class TableInfo(TypedPydanticModel):
+    """Information about a table."""
+
+    markdown_content: str = Field(description="Table content in markdown format")
+    page: Optional[int] = Field(default=None, description="Page number")
+
+    def markdown(self) -> str:
+        """Generate markdown for a table."""
+        lines = []
+        if self.page is not None:
+            lines.append(f"**Table (Page {self.page})**")
+        lines.append(self.markdown_content)
+        return "\n".join(lines)
+
+
+class NormalizedSearchResult(TypedPydanticModel):
+    """Normalized search result ready for consumption."""
+
+    # Core fields
+    score: float = Field(description="Relevance score")
+    content: str = Field(description="The main text content")
+    document_name: str = Field(description="Name of the document")
+    page: Optional[int] = Field(default=None, description="Page number")
+
+    # Metadata
+    author: Optional[str] = Field(default=None, description="Document author")
+    publication_date: Optional[str] = Field(default=None, description="Publication date")
+    modified_date: Optional[str] = Field(default=None, description="Modification date")
+    href: Optional[str] = Field(default=None, description="Link to document")
+
+    # Extracted content
+    images: List[ImageInfo] = Field(default_factory=list, description="Images in the result")
+    tables: List[TableInfo] = Field(default_factory=list, description="Tables in the result")
+    primary_terms: List[TermInfo] = Field(default_factory=list, description="Primary terms")
+    related_terms: List[TermInfo] = Field(default_factory=list, description="Related terms")
+
+    def markdown(self) -> str:
+        """Generate markdown representation of the search result."""
+        lines = []
+
+        # Document header with metadata
+        lines.append(
+            f"## THIS IS PART OF {self.document_name} on page {self.page}, RELEVANCE of this excerpt: {self.score:.2%}"
+        )
+
+        # Metadata section
+        metadata_parts = []
+        if self.author:
+            metadata_parts.append(f"Author: {self.author}")
+        if self.publication_date:
+            metadata_parts.append(f"Published: {self.publication_date}")
+
+        if metadata_parts:
+            lines.append("")
+            lines.append("### Metadata:")
+            lines.append(f"*{' | '.join(metadata_parts)}*")
+            lines.append("")
+
+        # Document link if available
+        if self.href:
+            lines.append(f"[View Document]({self.href})")
+            lines.append("")
+
+        # Main content
+        lines.append("### Content")
+        lines.append(self.content)
+        lines.append("")
+
+        # Primary terms section
+        if self.primary_terms:
+            lines.append("### 🔑 Key Terms")
+            for term in self.primary_terms[:4]:
+                lines.append(term.markdown())
+            lines.append("")
+
+        # Related terms section
+        if self.related_terms:
+            lines.append("### 🔗 Related Terms")
+            for term in self.related_terms[:5]:
+                term_line = f"`- {term.term} (type: {term.term_type or 'unknown'})`"
+                if term.meaning:
+                    term_line += f", meaning: {term.meaning}"
+                lines.append(term_line)
+            lines.append("")
+
+        # Images section
+        if self.images:
+            lines.append("### 🖼️ Images")
+            for img in self.images[:3]:  # Limit to 3 images
+                lines.append(img.markdown())
+            lines.append("")
+
+        # Tables section
+        if self.tables:
+            lines.append("### 📊 Tables")
+            for idx, table in enumerate(self.tables[:2], 1):  # Limit to 2 tables
+                lines.append(f"**Table {idx}**")
+                lines.append(table.markdown())
+                lines.append("")
+
+        lines.append("---")
+        return "\n".join(lines)
+
+
+# Update imports for forward references
+TermInfo.model_rebuild()
 
 
 class SearchResultMetadata(BaseModel):
@@ -549,11 +798,11 @@ class KnowledgeSearchResult(BaseModel):
 class RawExtractionData(BaseModel):
     """Raw extraction data used to build LinkedKnowledge objects."""
 
-    results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks] = Field(
-        description="Sequence of document results with their chunks"
+    results_with_chunks: list[KnowledgeExtractionResultWithChunks] = Field(
+        description="List of document results with their chunks"
     )
     terms: Dict[str, TermWithLinks] = Field(description="Dictionary of all validated terms with links")
-    document_to_chunks_index: Dict[str, Sequence[KnowledgeChunk]] = Field(
+    document_to_chunks_index: Dict[str, list[KnowledgeChunk]] = Field(
         description="Index mapping document IDs to their chunks for efficient lookup"
     )
 
@@ -596,22 +845,170 @@ class LinkedKnowledge(BaseModel):
     total_chunks: int = Field(description="Total count of chunks across all documents")
     total_images: Optional[int] = Field(default=0, description="Total count of images across all documents")
     total_tables: Optional[int] = Field(default=0, description="Total count of tables across all documents")
-    
-    def __getattr__(self, name):
-        """Handle backward compatibility for missing fields."""
-        if name == 'total_images':
-            # Calculate and cache the value
-            value = sum(getattr(doc, 'total_images', 0) for doc in self.documents.values())
-            # Set it so we don't calculate again
-            object.__setattr__(self, 'total_images', value)
-            return value
-        elif name == 'total_tables':
-            # Calculate and cache the value
-            value = sum(getattr(doc, 'total_tables', 0) for doc in self.documents.values())
-            # Set it so we don't calculate again
-            object.__setattr__(self, 'total_tables', value)
-            return value
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    # Processing metadata
+    extraction_timestamp: Optional[str] = Field(default=None, description="Timestamp when extraction was completed")
+    processing_duration: Optional[str] = Field(default=None, description="Total processing duration for the extraction")
+
+    def get_extraction_details(self, base_url: str = "") -> Dict[str, Any]:
+        """Get comprehensive extraction details in a structured format.
+
+        Args:
+            base_url: Optional base URL for document hrefs
+
+        Returns:
+            Dictionary containing all extraction details
+        """
+        from urllib.parse import quote
+
+        return {
+            "terms_count": len(self.terms),
+            "documents_count": len(self.documents),
+            "all_keywords_count": self.total_keywords,
+            "all_acronyms_count": self.total_acronyms,
+            "all_images_count": self.total_images,
+            "all_tables_count": self.total_tables,
+            "all_chunks_count": self.total_chunks,
+            "documents": [
+                {
+                    "document_filename": doc.document_filename,
+                    "document_author": doc.author,
+                    "document_title": doc.title,
+                    "document_pages": doc.total_pages,
+                    "document_chunks": doc.total_chunks,
+                    "document_images": doc.total_images,
+                    "document_tables": doc.total_tables,
+                    "document_terms": doc.total_terms,
+                    "document_publication_date": doc.publication_date,
+                    "document_href": (
+                        f"{base_url}/{quote(doc.document_path, safe='/')}" if base_url else doc.document_path
+                    ),
+                }
+                for doc in self.documents.values()
+                if doc
+            ],
+        }
+
+    def get_extraction_summary(self, detailed: bool = False, base_url: str = "") -> str:
+        """Get a formatted markdown summary of the extraction using MarkdownGenerator.
+
+        Args:
+            detailed: If True, include document-level details and top terms
+            base_url: Base URL for document links (optional)
+
+        Returns:
+            Formatted markdown summary
+        """
+        from .MarkdownGenerator import MarkdownGenerator
+
+        # Use the comprehensive report generator for detailed view
+        if detailed:
+            return MarkdownGenerator.create_extraction_report(linked_knowledge=self, include_all_sections=True)
+
+        # For non-detailed, create a simpler summary using MarkdownGenerator
+        from urllib.parse import quote
+
+        lines = []
+        lines.append("# 📚 Knowledge Base Summary")
+        lines.append("")
+
+        # Overall statistics section using MarkdownGenerator
+        stats = {
+            "Total Documents": len(self.documents),
+            "Total Chunks": self.total_chunks,
+            "Total Terms": len(self.terms),
+            "Keywords": self.total_keywords,
+            "Acronyms": self.total_acronyms,
+            "Total Images": self.total_images,
+            "Total Tables": self.total_tables,
+        }
+
+        lines.append(MarkdownGenerator.create_statistics_card("📊 Overall Statistics", stats))
+        lines.append("")
+
+        # Content density metrics
+        if self.documents:
+            avg_chunks_per_doc = self.total_chunks / len(self.documents)
+            avg_terms_per_doc = len(self.terms) / len(self.documents)
+            total_pages = sum(doc.total_pages for doc in self.documents.values())
+            avg_pages_per_doc = total_pages / len(self.documents) if self.documents else 0
+
+            content_stats = {
+                "Average chunks per document": f"{avg_chunks_per_doc:.1f}",
+                "Average terms per document": f"{avg_terms_per_doc:.1f}",
+                "Average pages per document": f"{avg_pages_per_doc:.1f}",
+                "Total pages across all documents": f"{total_pages:,}",
+            }
+
+            lines.append(MarkdownGenerator.create_statistics_card("📈 Content Metrics", content_stats))
+            lines.append("")
+
+        # Documents table using MarkdownGenerator
+        if self.documents:
+            lines.append("## 📄 Document Details")
+            lines.append("")
+
+            headers = [
+                "Document",
+                "Title",
+                "Author",
+                "Published",
+                "Pages",
+                "Chunks",
+                "Keywords",
+                "Acronyms",
+                "Images",
+                "Tables",
+            ]
+            rows = []
+
+            for doc in sorted(self.documents.values(), key=lambda d: d.document_filename):
+                # Create link if base_url provided
+                if base_url:
+                    doc_link = f"[{doc.document_filename}]({base_url}/{quote(doc.document_path, safe='/')})"
+                else:
+                    doc_link = doc.document_filename
+
+                # Handle N/A values
+                title = doc.title if doc.title and doc.title != "N/A" else "-"
+                author = doc.author if doc.author and doc.author != "N/A" else "-"
+                pub_date = doc.publication_date if doc.publication_date and doc.publication_date != "N/A" else "-"
+
+                rows.append(
+                    [
+                        doc_link,
+                        title,
+                        author,
+                        pub_date,
+                        str(doc.total_pages),
+                        str(doc.total_chunks),
+                        str(doc.total_keywords),
+                        str(doc.total_acronyms),
+                        str(doc.total_images),
+                        str(doc.total_tables),
+                    ]
+                )
+
+            lines.append(MarkdownGenerator.create_table(headers, rows))
+            lines.append("")
+
+        # Processing metadata if available
+        if self.extraction_timestamp or self.processing_duration:
+            lines.append("## ⏱️ Processing Information")
+            lines.append("")
+            processing_info = []
+            if self.extraction_timestamp:
+                processing_info.append(f"**Extraction completed:** {self.extraction_timestamp}")
+            if self.processing_duration:
+                processing_info.append(f"**Processing duration:** {self.processing_duration}")
+            lines.extend([f"- {info}" for info in processing_info])
+            lines.append("")
+
+        lines.append("---")
+        lines.append("")
+        lines.append("*Generated by Catalyst Knowledge Extraction System*")
+
+        return "\n".join(lines)
 
     @staticmethod
     def _normalize_term(term: str) -> str:
@@ -682,7 +1079,7 @@ class LinkedKnowledge(BaseModel):
     def _build_chunks_with_terms(
         cls,
         terms: Dict[str, TermWithLinks],
-        document_chunks: Dict[str, Sequence[KnowledgeChunk]],
+        document_chunks: Dict[str, list[KnowledgeChunk]],
     ) -> Dict[str, KnowledgeChunkWithTerms]:
         """Build flattened chunks structure with term metadata."""
         chunks_dict: Dict[str, KnowledgeChunkWithTerms] = {}
@@ -825,7 +1222,7 @@ class LinkedKnowledge(BaseModel):
 class KnowledgeProcessorSettings(BaseModel):
     """Unified settings for knowledge processing (PDF, DOCX, TXT, etc.)."""
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     pdf_settings: PDFKnowledgeProcessorSettings = Field(
         default_factory=lambda: PDFKnowledgeProcessorSettings(),

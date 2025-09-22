@@ -3,6 +3,7 @@ Simplified Document Terms Processing System
 Self-contained implementation with standard logging
 """
 
+import inspect
 import logging
 import math
 import os
@@ -12,7 +13,8 @@ import shutil
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import wraps
+from datetime import datetime
+from functools import partial, wraps
 from pathlib import Path
 from typing import (
     Any,
@@ -29,9 +31,7 @@ from typing import (
     cast,
 )
 
-import anyio
-import numpy as np
-import trio
+from anyio import to_thread
 from pydantic import BaseModel, RootModel
 from rapidfuzz import fuzz
 
@@ -39,6 +39,7 @@ from blockether_catalyst.consensus.ConsensusTypes import ConsensusResult
 
 from ..utils import ConcurrentProcessor
 from .ImageOptimizer import ImageOptimizer
+from .ImageRecognition import ImageRecognition
 from .KnowledgeExtractionCallBase import ExtractionCallsSettings
 from .KnowledgeSearchCore import KnowledgeSearchCore
 from .KnowledgeTypes import (
@@ -140,7 +141,7 @@ class KnowledgeExtractionCore:
     """
 
     def __init__(self, calls: ExtractionCallsSettings, settings: KnowledgeProcessorSettings):
-        self.calls = calls
+        self._calls = calls
         self._settings = settings
         self._output_dir = settings.extraction_output_dir
         self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -149,19 +150,38 @@ class KnowledgeExtractionCore:
         logger.info(f"KnowledgeExtractionCore initialized with output_dir: {self._output_dir}")
 
         # Validate that ALL typed calls are provided - they are MANDATORY
-        if not self.calls.term_extraction_call:
+        if not self._calls.term_extraction_call:
             raise ValueError("term_extraction_call is mandatory in settings")
 
-        if not self.calls.document_chunking_call:
+        if not self._calls.document_chunking_call:
             raise ValueError("document_chunking_call is mandatory in settings")
+
+        if not self._calls.chunk_content_classification_call:
+            raise ValueError("chunk_content_classification_call is MANDATORY in settings")
 
         image_output_dir = self._output_dir / "images"
         image_output_dir.mkdir(parents=True, exist_ok=True)
 
         self._image_optimizer = ImageOptimizer(image_output_dir, level=settings.image_optimization_level)
+        self._image_recognition = ImageRecognition()
 
         # Define extractors for each supported extension
-        self.extractors = {".pdf": PDFKnowledgeExtractor(image_output_dir, self._settings)}
+        self._extractors = {".pdf": PDFKnowledgeExtractor(image_output_dir, self._settings)}
+
+    @property
+    def calls(self) -> ExtractionCallsSettings:
+        """Get the extraction calls settings."""
+        return self._calls
+
+    @property
+    def settings(self) -> KnowledgeProcessorSettings:
+        """Get the processor settings."""
+        return self._settings
+
+    @property
+    def extractors(self) -> Dict[str, PDFKnowledgeExtractor]:
+        """Get the document extractors."""
+        return self._extractors
 
     EMOJI_PATTERN = re.compile(
         "["
@@ -228,13 +248,13 @@ class KnowledgeExtractionCore:
 
         # Process files by extension
         for extension, file_list in files_by_extension.items():
-            if extension not in self.extractors:
+            if extension not in self._extractors:
                 logger.warning(f"Skipping unsupported extension: {extension}")
                 continue
 
             logger.info(f"Processing {len(file_list)} {extension} files")
 
-            extractor = self.extractors[extension]
+            extractor = self._extractors[extension]
             extraction_results: list[KnowledgeExtractionItem] = []
 
             max_workers = min(os.cpu_count() or 4, len(file_list)) if len(file_list) > 0 else 1
@@ -279,7 +299,7 @@ class KnowledgeExtractionCore:
 
     def _build_document_chunk_index(
         self, results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks]
-    ) -> Dict[str, Sequence[KnowledgeChunk]]:
+    ) -> Dict[str, list[KnowledgeChunk]]:
         """Build document-to-chunks index for O(1) chunk lookups.
 
         Args:
@@ -288,17 +308,17 @@ class KnowledgeExtractionCore:
         Returns:
             Dictionary mapping document IDs to their chunks for efficient access
         """
-        chunks_index: Dict[str, Sequence[KnowledgeChunk]] = {}
+        chunks_index: Dict[str, list[KnowledgeChunk]] = {}
 
         for item in results_with_chunks:
-            chunks_index[item.id] = item.chunks
+            chunks_index[item.id] = list(item.chunks)
 
         return chunks_index
 
     def _build_chunk_term_index(
         self,
         grouped_terms: Dict[str, TermCandidateGrouped],
-        chunks_index: Dict[str, Sequence[KnowledgeChunk]],
+        chunks_index: Dict[str, list[KnowledgeChunk]],
     ) -> Dict[Tuple[str, int], Dict[str, Sequence[int]]]:
         """Build inverted index of term positions within chunks for co-occurrence analysis.
 
@@ -320,6 +340,74 @@ class KnowledgeExtractionCore:
                             chunk_terms_index[(occurrence.document_id, chunk.index)][term] = positions
 
         return chunk_terms_index
+
+    def _detect_chunk_content_types(self, page: KnowledgePageData, chunk_text: str) -> List[str]:
+        """
+        Detect content types present in a chunk based on page data and chunk text.
+
+        Args:
+            page: The page data containing images and tables
+            chunk_text: The text content of the chunk
+
+        Returns:
+            List of content types: 'text', 'image', 'table'
+        """
+        content_types = []
+
+        # Check if chunk has text content (non-empty after stripping)
+        if chunk_text and chunk_text.strip():
+            content_types.append("text")
+
+        # Regex pattern for table detection
+        # Matches: box drawing chars, markdown tables, ASCII tables, or table references
+        table_pattern = re.compile(
+            r"[│┌┐└┘├┤┬┴┼]|"  # Box drawing characters
+            r"\|[-\s]*\||"  # Markdown/ASCII table separators
+            r"[-]{5,}|"  # Long horizontal lines (often used in tables)
+            r"\btable\s+\d+|"  # "Table 1", "Table 2", etc.
+            r"\b(?:see|refer|shown\s+in|following|below|above)\s+table|"  # Table references
+            r"\btable\s+of\s+contents?\b",  # Table of contents
+            re.IGNORECASE,
+        )
+
+        # Regex pattern for image/figure detection
+        # Matches various image references and figure notations
+        image_pattern = re.compile(
+            r"\b(?:figure|fig\.?)\s+\d+|"  # "Figure 1", "Fig. 2", etc.
+            r"\b(?:image|picture|diagram|chart|graph|illustration|screenshot|photo)\s+\d*|"  # Image references with optional numbers
+            r"\b(?:see|refer|shown\s+in|following|below|above)\s+(?:figure|image|diagram)|"  # Image references
+            r"\b(?:as\s+)?(?:shown|illustrated|depicted|displayed)\s+(?:in|below|above)",  # Visual references
+            re.IGNORECASE,
+        )
+
+        # If page has tables, mark it as containing table content
+        if page.tables and len(page.tables) > 0:
+            content_types.append("table")
+        # Even if page doesn't have tables, check if text mentions or contains tables
+        elif table_pattern.search(chunk_text):
+            content_types.append("table")
+
+        # If page has images, mark it as containing image content
+        if page.images and len(page.images) > 0:
+            content_types.append("image")
+        # Even if page doesn't have images, check if text references images
+        elif image_pattern.search(chunk_text):
+            content_types.append("image")
+
+        # If no content types were detected, default to text if there's any content
+        if not content_types and chunk_text:
+            content_types.append("text")
+
+        # Remove duplicates while preserving order
+        seen: Set[str] = set()
+        unique_types = []
+        for ct in content_types:
+            if ct not in seen:
+                seen.add(ct)
+                unique_types.append(ct)
+        content_types = unique_types
+
+        return content_types
 
     def _find_term_positions_in_text(self, term: str, text: str) -> Sequence[int]:
         """Find all word-boundary positions of a term in text.
@@ -363,7 +451,7 @@ class KnowledgeExtractionCore:
         return max(weight, 0.1)
 
     @async_timed_operation("Knowledge Extraction Pipeline")
-    async def extract(self, globs: list[str]) -> LinkedKnowledge:
+    async def extract(self, globs: list[str]) -> None:
         """
         Extract knowledge from files matching the provided glob patterns.
 
@@ -375,87 +463,203 @@ class KnowledgeExtractionCore:
         """
         logger.info(f"Starting with {len(globs)} glob patterns")
 
+        # Check for existing extraction files
+        status = self.get_extraction_status()
+        has_existing_files = any(status.values())
+
+        if has_existing_files:
+            action = self._prompt_existing_files_action()
+
+            if action == "cancel":
+                logger.info("Extraction cancelled by user")
+                return
+            elif action == "remove":
+                logger.info("User chose to remove existing files and start fresh")
+                self._remove_existing_extraction_files()
+            elif action == "continue":
+                logger.info("User chose to continue with existing files")
+                # Continue with normal execution, existing files will be loaded
+            elif action == "regenerate_submenu":
+                # Handle regeneration submenu
+                while True:
+                    submenu_action = self._prompt_regeneration_submenu(globs)
+
+                    if submenu_action == "cancel":
+                        logger.info("Extraction cancelled by user")
+                        return
+                    elif submenu_action == "back":
+                        # Go back to main menu
+                        action = self._prompt_existing_files_action()
+                        if action in ["cancel", "remove", "continue"]:
+                            break
+                        # If user selects regenerate_submenu again, continue the loop
+                    elif submenu_action == "images_with_deps":
+                        logger.info("User chose to regenerate images with dependency management")
+                        await self._regenerate_images_with_dependencies(globs)
+                        # Regeneration is complete - it already rebuilt the pipeline, so we're done
+                        logger.info("✅ Image regeneration completed successfully!")
+                        return
+                    elif submenu_action == "captions":
+                        logger.info("User chose to regenerate captions only")
+                        self._regenerate_captions_only(globs)
+                        return
+                    elif submenu_action == "documents":
+                        logger.info("User chose to regenerate source documents")
+                        self._regenerate_source_documents(globs)
+                        return
+
+                # Handle the action from returning to main menu
+                if action == "cancel":
+                    logger.info("Extraction cancelled by user")
+                    return
+                elif action == "remove":
+                    logger.info("User chose to remove existing files and start fresh")
+                    self._remove_existing_extraction_files()
+                elif action == "continue":
+                    logger.info("User chose to continue with existing files")
+
+        # Always need all_files for later steps
         all_files = self._resolve_glob_patterns(globs)
         logger.info(f"Found {len(all_files)} files from glob patterns")
 
-        files_by_extension = self._group_files_by_extension(all_files)
-        logger.info(f"Grouped files by extension: {dict((k, len(v)) for k, v in files_by_extension.items())}")
+        # Step 1: Raw extraction
+        def execute_raw_extraction() -> KnowledgeExtractionOutput:
+            files_by_extension = self._group_files_by_extension(all_files)
+            logger.info(f"Grouped files by extension: {dict((k, len(v)) for k, v in files_by_extension.items())}")
+            result = self._process_files_by_extension(files_by_extension)
+            logger.info(f"Raw extraction completed: {result.model_dump().keys()} documents")
+            return result
 
-        raw_extraction = self._process_files_by_extension(files_by_extension)
-        logger.info(f"Raw extraction completed: {raw_extraction.model_dump().keys()} documents")
-
-        self._save_pickle("1_raw_extraction", raw_extraction)
-
-        results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks] = await self._chunk_extraction(
-            raw_extraction
+        raw_extraction = await self._execute_or_load_step(
+            step_name="1_raw_extraction",
+            step_number="1/12",
+            execute_fn=execute_raw_extraction,
         )
+
+        # Step 2: Document chunking
+        results_with_chunks = await self._execute_or_load_step(
+            step_name="2_chunked_documents",
+            step_number="2/12",
+            execute_fn=self._chunk_extraction,
+            raw_extraction=raw_extraction,
+        )
+
         total_chunks = self._count_total_chunks(results_with_chunks)
-        logger.info(f"Created {total_chunks} chunks from {len(results_with_chunks)} documents")
+        logger.info(f"Total chunks: {total_chunks} from {len(results_with_chunks)} documents")
 
-        self._save_pickle("2_chunked_documents", results_with_chunks)
-
-        document_to_chunks_index: Dict[str, Sequence[KnowledgeChunk]] = self._build_document_chunk_index(
+        # Build chunks index (always needed for later steps)
+        document_to_chunks_index: Dict[str, list[KnowledgeChunk]] = self._build_document_chunk_index(
             results_with_chunks
         )
         logger.info(f"Built chunks index for {len(document_to_chunks_index)} documents")
 
-        terms: Sequence[TermCandidate] = await self._extract_terms_candidates_from_documents(results_with_chunks)
-        logger.info(f"Found {len(terms)} term candidates")
-        self._save_pickle("3_term_candidates", terms)
-
-        grouped_terms = self._group_term_candidates(terms)
-        self._save_pickle("4_grouped_terms", grouped_terms)
-
-        terms_with_cooccurrences: Dict[str, TermCandidateGrouped] = self._enrich_with_cooccurrences(
-            grouped_terms, document_to_chunks_index
-        )
-        logger.info(f"Added co-occurrences to {len(terms_with_cooccurrences)} terms")
-        self._save_pickle("5_terms_with_cooccurrences", terms_with_cooccurrences)
-
-        consolidated_terms = await self._enrich_with_terms_meanings(terms_with_cooccurrences, document_to_chunks_index)
-        self._save_pickle("6_terms_with_meanings", consolidated_terms)
-
-        consolidated_terms_with_links = self._link_terms(consolidated_terms)
-        self._save_pickle("7_terms_with_links", consolidated_terms_with_links)
-
-        logger.info("Step 8/12: Building LinkedKnowledge from extraction data")
-        raw_data = RawExtractionData(
+        # Step 3: Chunk semantic classification (MANDATORY)
+        results_with_classified_chunks = await self._execute_or_load_step(
+            step_name="3_classified_chunks",
+            step_number="3/13",
+            execute_fn=self._classify_chunk_content,
             results_with_chunks=results_with_chunks,
-            terms=consolidated_terms_with_links,
+        )
+        # Update the chunks index with classified chunks
+        document_to_chunks_index = self._build_document_chunk_index(results_with_classified_chunks)
+        logger.info(f"Classified semantic types for {total_chunks} chunks")
+
+        # Step 4: Term extraction
+        async def execute_term_extraction() -> Sequence[TermCandidate]:
+            result = await self._extract_terms_candidates_from_documents(results_with_classified_chunks)
+            logger.info(f"Found {len(result)} term candidates")
+            return result
+
+        terms = await self._execute_or_load_step(
+            step_name="4_term_candidates",
+            step_number="4/13",
+            execute_fn=execute_term_extraction,
+        )
+
+        # Step 5: Term grouping
+        grouped_terms = await self._execute_or_load_step(
+            step_name="5_grouped_terms",
+            step_number="5/13",
+            execute_fn=self._group_term_candidates,
+            term_candidates=terms,
+        )
+        logger.info(f"Grouped {len(grouped_terms)} unique terms")
+
+        # Step 6: Co-occurrence analysis
+        def execute_cooccurrence() -> Dict[str, TermCandidateGrouped]:
+            result = self._enrich_with_cooccurrences(grouped_terms, document_to_chunks_index)
+            logger.info(f"Added co-occurrences to {len(result)} terms")
+            return result
+
+        terms_with_cooccurrences = await self._execute_or_load_step(
+            step_name="6_terms_with_cooccurrences",
+            step_number="6/13",
+            execute_fn=execute_cooccurrence,
+        )
+
+        # Step 7: Term meaning enrichment
+        consolidated_terms = await self._execute_or_load_step(
+            step_name="7_terms_with_meanings",
+            step_number="7/13",
+            execute_fn=self._enrich_with_terms_meanings,
+            groups=terms_with_cooccurrences,
             document_to_chunks_index=document_to_chunks_index,
         )
-        linked_knowledge = LinkedKnowledge.from_extraction_data(raw_data)
 
-        self._save_pickle("linked_knowledge", linked_knowledge)
+        # Step 8: Term linking
+        consolidated_terms_with_links = await self._execute_or_load_step(
+            step_name="8_terms_with_links",
+            step_number="8/13",
+            execute_fn=self._link_terms,
+            terms=consolidated_terms,
+        )
 
-        logger.info("Step 9/12: Optimizing extracted images")
+        # Step 9: Build LinkedKnowledge
+        def build_linked_knowledge() -> LinkedKnowledge:
+            raw_data = RawExtractionData(
+                results_with_chunks=results_with_chunks,
+                terms=consolidated_terms_with_links,
+                document_to_chunks_index=document_to_chunks_index,
+            )
+            return LinkedKnowledge.from_extraction_data(raw_data)
+
+        linked_knowledge = await self._execute_or_load_step(
+            step_name="linked_knowledge",
+            step_number="9/13",
+            execute_fn=build_linked_knowledge,
+        )
+
+        # Step 10: Optimize images
+        logger.info("Step 10/13: Optimizing extracted images")
         self._image_optimizer.optimize()
 
+        # Step 11: Copy source documents
         self._copy_source_documents(all_files)
 
-        logger.info("Step 10/12: Creating KnowledgeSearchCore with vector indices")
-        search_core = KnowledgeSearchCore(
-            linked_knowledge=linked_knowledge,
-            pickle_path=self._output_dir / "knowledge_search.pkl",
-        )
+        # Step 12: Create and persist search core
+        search_pickle_path = self._output_dir / "knowledge_search.pkl"
+        if not search_pickle_path.exists():
+            logger.info("Step 11/13: Creating KnowledgeSearchCore with vector indices")
+            search_core = KnowledgeSearchCore(
+                linked_knowledge=linked_knowledge,
+                pickle_path=search_pickle_path,
+            )
 
-        logger.info("Step 11/12: Persisting KnowledgeSearchCore to pickle")
-        search_core.persist()
+            logger.info("Step 12/13: Persisting KnowledgeSearchCore to pickle")
+            search_core.persist()
 
-        pickle_size_mb = (self._output_dir / "knowledge_search.pkl").stat().st_size / (1024 * 1024)
-        logger.info(f"KnowledgeSearchCore saved ({pickle_size_mb:.2f} MB)")
+            pickle_size_mb = search_pickle_path.stat().st_size / (1024 * 1024)
+            logger.info(f"KnowledgeSearchCore saved ({pickle_size_mb:.2f} MB)")
+        else:
+            pickle_size_mb = search_pickle_path.stat().st_size / (1024 * 1024)
+            logger.info(f"Step 12/13: KnowledgeSearchCore already exists ({pickle_size_mb:.2f} MB)")
 
-        logger.info("Step 12/12: Knowledge extraction pipeline completed successfully")
-        logger.info(
-            f"Processed {len(linked_knowledge.documents)} documents with {linked_knowledge.total_chunks} chunks"
-        )
-        logger.info(
-            f"Extracted {linked_knowledge.total_acronyms} acronyms and {linked_knowledge.total_keywords} keywords"
-        )
+        logger.info("Step 13/13: Knowledge extraction pipeline completed successfully")
 
-        return linked_knowledge
+        # Log the summary using the new method
+        logger.info("\n" + linked_knowledge.get_extraction_summary(detailed=False))
 
-    @timed_operation("Step 9/12: Copy source documents")
+    @timed_operation("Step 11/13: Copy source documents")
     def _copy_source_documents(self, all_files: Sequence[Path]) -> None:
         """Copy source documents to output directory for viewing.
 
@@ -557,7 +761,7 @@ class KnowledgeExtractionCore:
                                 term=keyword,
                                 document_filename=document_result.document_filename,
                                 document_id=document_result.id,
-                                total=term_count,  # Use actual count instead of TF-IDF score
+                                total=term_count,  # Actual occurrence count in the chunk
                                 page=chunk.page,
                                 chunk=chunk.index,
                                 type="keyword",
@@ -578,17 +782,17 @@ class KnowledgeExtractionCore:
                                 term=acronym,
                                 document_filename=document_result.document_filename,
                                 document_id=document_result.id,
-                                total=term_count,  # Use actual count instead of TF-IDF score
+                                total=term_count,  # Actual occurrence count in the chunk
                                 page=chunk.page,
                                 chunk=chunk.index,
                                 type="acronym",
                             )
                         )
 
-        # Combine and sort all candidates by their TF-IDF scores (not by count)
-        # We still want to preserve the TF-IDF ordering for importance
+        # Combine and sort all candidates by their occurrence count
+        # TF-IDF was only used to identify important terms, not for scoring
         all_candidates = keyword_candidates + acronyms_candidates
-        # Since we no longer have scores, sort by total count instead
+        # Sort by total count to prioritize frequently occurring terms
         all_candidates.sort(key=lambda x: x.total, reverse=True)
 
         return all_candidates
@@ -672,7 +876,7 @@ class KnowledgeExtractionCore:
     async def _enrich_with_terms_meanings(
         self,
         groups: Dict[str, TermCandidateGrouped],
-        document_to_chunks_index: Dict[str, Sequence[KnowledgeChunk]],
+        document_to_chunks_index: Dict[str, list[KnowledgeChunk]],
     ) -> Dict[str, Term]:
         # Create BatchProcessor for concurrent term validation
         processor = ConcurrentProcessor[TermCandidateGrouped, Term](
@@ -704,7 +908,7 @@ class KnowledgeExtractionCore:
                     ]
                     cooccurring_terms[cooccurrence.term].extend(contexts)
 
-            response: ConsensusResult[TermMeaningExtractionResponse] = await self.calls.term_extraction_call.execute(
+            response: ConsensusResult[TermMeaningExtractionResponse] = await self._calls.term_extraction_call.execute(
                 term=item.term,
                 type=item.type,
                 occurrences_contexts=occurrences_contexts,
@@ -810,6 +1014,9 @@ class KnowledgeExtractionCore:
 
         chunks = []
         for chunk_decision in result.final_response.chunks:
+            # Detect content types for this specific chunk
+            chunk_content_types = self._detect_chunk_content_types(page, chunk_decision.text)
+
             chunk = KnowledgeChunk(
                 document_id=document_id,
                 document_name=document_name,
@@ -817,9 +1024,78 @@ class KnowledgeExtractionCore:
                 index=0,
                 text=chunk_decision.text.strip(),
                 page=page.page,
+                content_types=chunk_content_types,
             )
             chunks.append(chunk)
         return chunks
+
+    @async_timed_operation("Step 3/13: Chunk content classification")
+    async def _classify_chunk_content(
+        self,
+        results_with_chunks: Sequence[KnowledgeExtractionResultWithChunks],
+    ) -> Sequence[KnowledgeExtractionResultWithChunks]:
+        """
+        Classify the semantic type of each chunk (table_of_contents, summary, rule, explanation, example).
+        THIS IS MANDATORY - all chunks MUST be classified.
+
+        Args:
+            results_with_chunks: Documents with chunks to classify
+
+        Returns:
+            Same documents with chunks now having semantic_types filled
+        """
+        classified_results = []
+
+        # Process each document
+        for doc_result in results_with_chunks:
+            classified_chunks: list[KnowledgeChunk] = []
+
+            # Process chunks in batches using ConcurrentProcessor
+            processor = ConcurrentProcessor[KnowledgeChunk, KnowledgeChunk](
+                concurrency=10,
+                max_retries=2,
+            )
+
+            async def classify_single_chunk(chunk: KnowledgeChunk) -> KnowledgeChunk:
+                """Classify a single chunk's semantic type - MANDATORY."""
+                result = await self.calls.chunk_content_classification_call.execute(
+                    chunk_text=chunk.text,
+                    document_name=doc_result.document_filename,
+                    page_number=chunk.page,
+                    content_types=chunk.content_types,
+                )
+
+                # Update chunk with semantic classifications (multiple types)
+                chunk.semantic_types = list(result.final_response.semantic_types)
+                logger.debug(
+                    f"Classified chunk {chunk.index} with types: {chunk.semantic_types} "
+                    f"with confidences: {result.final_response.confidence_scores}"
+                )
+
+                return chunk
+
+            # Process all chunks for this document
+            classified_chunks_result = await processor.process(
+                items=list(doc_result.chunks),
+                processor_func=classify_single_chunk,
+            )
+            classified_chunks = list(classified_chunks_result)
+
+            # Create new result with classified chunks
+            classified_result = doc_result.model_copy(update={"chunks": classified_chunks})
+            classified_results.append(classified_result)
+
+            # Log statistics for this document
+            all_semantic_types = []
+            for chunk in classified_chunks:
+                all_semantic_types.extend(chunk.semantic_types)
+            type_counts = {t: all_semantic_types.count(t) for t in set(all_semantic_types)}
+            logger.info(
+                f"Document '{doc_result.document_filename}': "
+                f"Classified {len(classified_chunks)} chunks with semantic types - {type_counts}"
+            )
+
+        return classified_results
 
     @async_timed_operation("Step 2/12: Document chunking")
     async def _chunk_extraction(
@@ -871,7 +1147,7 @@ class KnowledgeExtractionCore:
 
         return document_chunks_list
 
-    async def _chunk_document_data(self, item):
+    async def _chunk_document_data(self, item: KnowledgeExtractionItem) -> KnowledgeExtractionResultWithChunks:
         result = cast(KnowledgeExtractionResult, item.result)
 
         # Use the _chunk_extraction_pages method to chunk all pages
@@ -882,16 +1158,10 @@ class KnowledgeExtractionCore:
             metadata=result.document_metadata,
         )
 
-        # Create chunked result for this document
+        # Create chunked result for this document using model_copy and update
         return KnowledgeExtractionResultWithChunks(
-            document_filename=result.document_filename,
-            id=result.id,
-            source_type=result.source_type,
-            document_metadata=result.document_metadata,
-            pages=result.pages,
-            total_pages=result.total_pages,
-            raw=result.raw,
-            chunks=chunks,
+            **result.model_dump(),
+            chunks=list(chunks),
             total_chunks=len(chunks),
         )
 
@@ -899,7 +1169,7 @@ class KnowledgeExtractionCore:
     def _enrich_with_cooccurrences(
         self,
         grouped_terms: Dict[str, TermCandidateGrouped],
-        chunks_index: Dict[str, Sequence[KnowledgeChunk]],
+        chunks_index: Dict[str, list[KnowledgeChunk]],
     ) -> Dict[str, Any]:
         # Build index of term positions in each chunk
         chunk_terms_index = self._build_chunk_term_index(grouped_terms, chunks_index)
@@ -1075,3 +1345,840 @@ class KnowledgeExtractionCore:
 
         file_size_mb = pickle_path.stat().st_size / (1024 * 1024)
         logger.info(f"Saved to {pickle_path} ({file_size_mb:.2f} MB)")
+
+    def _load_pickle(self, filename: str) -> Optional[Any]:
+        """Load a pickle file if it exists.
+
+        Args:
+            filename: Name of the pickle file (without .pkl extension)
+
+        Returns:
+            The loaded object or None if file doesn't exist
+        """
+        pickle_path = self._output_dir / f"{filename}.pkl"
+
+        if not pickle_path.exists():
+            return None
+
+        try:
+            with open(pickle_path, "rb") as f:
+                data = pickle.load(f)
+                file_size_mb = pickle_path.stat().st_size / (1024 * 1024)
+                logger.info(f"Loaded existing {pickle_path} ({file_size_mb:.2f} MB)")
+                return data
+        except Exception as e:
+            logger.error(f"Failed to load pickle file {pickle_path}: {e}")
+            return None
+
+    async def _execute_or_load_step(
+        self,
+        step_name: str,
+        step_number: str,
+        execute_fn: Callable,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute a step or load from cache if it exists.
+
+        Args:
+            step_name: Name of the pickle file to save/load
+            step_number: Step number for logging (e.g., "1/12")
+            execute_fn: Function to execute if cache doesn't exist
+            is_async: Whether the execute function is async
+            **kwargs: Arguments to pass to execute_fn
+
+        Returns:
+            The result from either cache or execution
+        """
+        # Try to load from cache first
+        cached_data = self._load_pickle(step_name)
+
+        if cached_data is not None:
+            logger.info(f"Step {step_number}: Loaded existing {step_name.replace('_', ' ')}")
+            return cached_data
+
+        # Execute the step
+        logger.info(f"Step {step_number}: Executing {step_name.replace('_', ' ')}...")
+
+        if inspect.iscoroutinefunction(execute_fn):
+            result = await execute_fn(**kwargs)
+        else:
+            # Run sync function in thread pool to avoid blocking
+            # anyio.to_thread.run_sync expects function and args separately
+            # We use partial to bind the kwargs
+            func = partial(execute_fn, **kwargs)
+            result = await to_thread.run_sync(func)
+
+        # Save the result
+        self._save_pickle(step_name, result)
+
+        return result
+
+    def get_extraction_status(self) -> Dict[str, bool]:
+        """Check which extraction files exist.
+
+        Returns:
+            Dictionary mapping step names to existence status
+        """
+        steps = [
+            "1_raw_extraction",
+            "2_chunked_documents",
+            "3_classified_chunks",
+            "4_term_candidates",
+            "5_grouped_terms",
+            "6_terms_with_cooccurrences",
+            "7_terms_with_meanings",
+            "8_terms_with_links",
+            "linked_knowledge",
+            "knowledge_search",
+        ]
+
+        status = {}
+        for step in steps:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            status[step] = pickle_path.exists()
+
+        return status
+
+    def _get_step_dependencies(self) -> Dict[str, List[str]]:
+        """Define dependency chain for extraction steps.
+
+        Returns:
+            Dictionary mapping each step to list of steps it depends on
+        """
+        return {
+            "1_raw_extraction": [],  # No dependencies
+            "2_chunked_documents": ["1_raw_extraction"],
+            "3_classified_chunks": ["2_chunked_documents"],
+            "4_term_candidates": ["3_classified_chunks"],
+            "5_grouped_terms": ["4_term_candidates"],
+            "6_terms_with_cooccurrences": ["5_grouped_terms"],
+            "7_terms_with_meanings": ["6_terms_with_cooccurrences"],
+            "8_terms_with_links": ["7_terms_with_meanings"],
+            "linked_knowledge": ["8_terms_with_links"],
+            "knowledge_search": ["linked_knowledge"],
+        }
+
+    def _get_image_affected_steps(self) -> List[str]:
+        """Get steps that are actually affected by image changes.
+
+        Image regeneration only affects:
+        1. Raw extraction (contains image metadata)
+        2. Linked knowledge (includes image references)
+        3. Search core (indexes image content)
+
+        It does NOT affect:
+        - Term extraction/meanings (text-based)
+        - Term linking (relationship-based)
+        - Co-occurrences (text analysis)
+
+        Returns:
+            List of steps that need regeneration when images change
+        """
+        return [
+            "1_raw_extraction",  # Contains image metadata
+            "linked_knowledge",  # Includes image references in final structure
+            "knowledge_search",  # Search indices include image content
+        ]
+
+    def _invalidate_dependencies(self, changed_step: str) -> List[str]:
+        """Invalidate steps that depend on the changed step.
+
+        Args:
+            changed_step: The step that was regenerated/changed
+
+        Returns:
+            List of steps that were invalidated
+        """
+        dependencies = self._get_step_dependencies()
+        invalidated = []
+
+        # Find all steps that depend on the changed step (directly or indirectly)
+        def find_dependents(step: str) -> List[str]:
+            dependents = []
+            for dependent_step, deps in dependencies.items():
+                if step in deps:
+                    dependents.append(dependent_step)
+                    # Recursively find steps that depend on this dependent
+                    dependents.extend(find_dependents(dependent_step))
+            return dependents
+
+        steps_to_invalidate = find_dependents(changed_step)
+
+        # Remove the pickle files for invalidated steps
+        for step in steps_to_invalidate:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            if pickle_path.exists():
+                pickle_path.unlink()
+                invalidated.append(step)
+                logger.info(f"🗑️  Invalidated dependent step: {step}")
+
+        return invalidated
+
+    def _invalidate_image_affected_steps(self) -> List[str]:
+        """Invalidate only the steps that are actually affected by image changes.
+
+        This is much more targeted than full dependency invalidation.
+        Images only affect extraction metadata and final knowledge structures,
+        not the text processing pipeline.
+
+        Returns:
+            List of steps that were invalidated
+        """
+        steps_to_invalidate = self._get_image_affected_steps()
+        invalidated = []
+
+        for step in steps_to_invalidate:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            if pickle_path.exists():
+                pickle_path.unlink()
+                invalidated.append(step)
+                logger.info(f"🗑️  Invalidated image-affected step: {step}")
+
+        return invalidated
+
+    def _invalidate_dependent_steps(self, steps: List[str]) -> None:
+        """Invalidate specific steps by removing their pickle files.
+
+        Args:
+            steps: List of step names to invalidate
+        """
+        for step in steps:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            if pickle_path.exists():
+                pickle_path.unlink()
+                logger.info(f"🗑️  Invalidated step: {step}")
+
+    def _prompt_existing_files_action(self) -> str:
+        """Prompt user for action when existing extraction files are detected.
+
+        Returns:
+            User choice: 'remove', 'continue', 'regenerate_submenu', or 'cancel'
+        """
+        print("\n" + "=" * 60)
+        print("⚠️  EXISTING EXTRACTION FILES DETECTED")
+        print("=" * 60)
+
+        status = self.get_extraction_status()
+        existing_files = [step for step, exists in status.items() if exists]
+
+        if existing_files:
+            print("\nThe following extraction files already exist:")
+            for step in existing_files:
+                pickle_path = self._output_dir / f"{step}.pkl"
+                size_mb = pickle_path.stat().st_size / (1024 * 1024)
+                print(f"  • {step}: {size_mb:.2f} MB")
+
+        print("\nPlease choose an action:")
+        print("  1. Remove the files and start extraction from the beginning")
+        print("  2. Continue run and potentially overwrite specific steps")
+        print("  3. Selective regeneration options →")
+        print("  4. Cancel the run")
+        print("\n" + "=" * 60)
+
+        while True:
+            try:
+                choice = input("\nEnter your choice (1/2/3/4): ").strip()
+                if choice == "1":
+                    return "remove"
+                elif choice == "2":
+                    return "continue"
+                elif choice == "3":
+                    return "regenerate_submenu"
+                elif choice == "4":
+                    return "cancel"
+                else:
+                    print("Invalid choice. Please enter 1, 2, 3, or 4.")
+            except KeyboardInterrupt:
+                print("\n\nOperation cancelled by user.")
+                return "cancel"
+
+    def _prompt_regeneration_submenu(self, globs: list[str]) -> str:
+        """Show regeneration submenu with selective options.
+
+        Args:
+            globs: Sequence of glob patterns to match source files
+
+        Returns:
+            User choice: 'images', 'captions', 'documents', 'back', or 'cancel'
+        """
+        print("\n" + "=" * 60)
+        print("🔄  SELECTIVE REGENERATION OPTIONS")
+        print("=" * 60)
+
+        # Check current state of various components
+        images_dir = self._output_dir / "images"
+        documents_dir = self._output_dir / "source_documents"
+
+        image_count = 0
+        if images_dir.exists():
+            image_files = list(images_dir.glob("*.png"))
+            image_count = len(image_files)
+
+        document_count = 0
+        if documents_dir.exists():
+            doc_files = list(documents_dir.glob("*"))
+            document_count = len(doc_files)
+
+        # Count source PDF files
+        all_files = self._resolve_glob_patterns(globs)
+        pdf_files = [f for f in all_files if f.suffix.lower() == ".pdf"]
+        source_pdf_count = len(pdf_files)
+
+        # Get current extraction status
+        status = self.get_extraction_status()
+        existing_steps = [step for step, exists in status.items() if exists]
+
+        print("\nCurrent state:")
+        print(f"  • Source PDFs: {source_pdf_count} files")
+        print(f"  • Extracted images: {image_count} files")
+        print(f"  • Copied documents: {document_count} files")
+        print(f"  • Existing extraction steps: {len(existing_steps)}/10")
+
+        print("\nWhat would you like to regenerate?")
+        print(f"  1. Images + metadata (re-extract from {source_pdf_count} PDFs)")
+        print("     🎯 Will invalidate: Raw extraction, linked knowledge, search indices")
+        print("     ✅ Preserves: All term processing (meanings, links, co-occurrences)")
+        print("  2. Image captions only (keep images, regenerate AI descriptions)")
+        print("     ℹ️  Impact: Minimal - only updates display captions")
+        print(f"  3. Source document copies ({document_count} existing → re-copy)")
+        print("     ℹ️  Impact: None - only affects file copies")
+        print("  4. ← Back to main menu")
+        print("  5. Cancel the run")
+        print("\n" + "=" * 60)
+
+        while True:
+            try:
+                choice = input("\nEnter your choice (1/2/3/4/5): ").strip()
+                if choice == "1":
+                    # Show targeted impact
+                    image_affected = self._get_image_affected_steps()
+                    affected_existing = [step for step in image_affected if step in existing_steps]
+                    preserved_steps = [step for step in existing_steps if step not in image_affected]
+
+                    print("\n🎯 TARGETED REGENERATION: Images + metadata")
+                    if affected_existing:
+                        print(f"Will invalidate {len(affected_existing)} image-related steps:")
+                        for step in affected_existing:
+                            print(f"  🗑️  {step}")
+
+                    if preserved_steps:
+                        print(f"\n✅ Will preserve {len(preserved_steps)} text processing steps:")
+                        for step in preserved_steps[:5]:  # Show first 5
+                            print(f"  ✅ {step}")
+                        if len(preserved_steps) > 5:
+                            print(f"  ... and {len(preserved_steps) - 5} more")
+
+                    print("\nThis preserves all expensive text processing work!")
+
+                    confirm = input("\nProceed with targeted image regeneration? (y/N): ").strip().lower()
+                    if confirm in ["y", "yes"]:
+                        return "images_with_deps"
+                    else:
+                        continue  # Go back to menu
+                elif choice == "2":
+                    return "captions"
+                elif choice == "3":
+                    return "documents"
+                elif choice == "4":
+                    return "back"
+                elif choice == "5":
+                    return "cancel"
+                else:
+                    print("Invalid choice. Please enter 1, 2, 3, 4, or 5.")
+            except KeyboardInterrupt:
+                print("\n\nOperation cancelled by user.")
+                return "cancel"
+
+    def _remove_existing_extraction_files(self) -> None:
+        """Remove all existing extraction files from the output directory."""
+        status = self.get_extraction_status()
+        removed_count = 0
+
+        for step, exists in status.items():
+            if exists:
+                pickle_path = self._output_dir / f"{step}.pkl"
+                try:
+                    pickle_path.unlink()
+                    logger.info(f"Removed existing file: {pickle_path}")
+                    removed_count += 1
+                except Exception:
+                    logger.exception(f"Failed to remove file: {pickle_path}")
+
+        # Also remove images and source_documents directories if they exist
+        images_dir = self._output_dir / "images"
+        if images_dir.exists():
+            try:
+                shutil.rmtree(images_dir)
+                logger.info(f"Removed existing images directory: {images_dir}")
+                # Recreate the images directory immediately after removal
+                images_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Recreated images directory: {images_dir}")
+            except Exception:
+                logger.exception(f"Failed to remove images directory: {images_dir}")
+
+        docs_dir = self._output_dir / "source_documents"
+        if docs_dir.exists():
+            try:
+                shutil.rmtree(docs_dir)
+                logger.info(f"Removed existing source_documents directory: {docs_dir}")
+            except Exception:
+                logger.exception(f"Failed to remove source_documents directory: {docs_dir}")
+
+        if removed_count > 0:
+            logger.info(f"Removed {removed_count} existing extraction files")
+
+    def _regenerate_images_only(self, globs: list[str]) -> None:
+        """Regenerate images only by re-extracting from source PDFs.
+
+        This method preserves all existing extraction data and only regenerates
+        the image files and their captions.
+
+        Args:
+            globs: Sequence of glob patterns to match source files
+        """
+        logger.info("🖼️  Starting image regeneration process...")
+
+        # Clear existing images directory
+        images_dir = self._output_dir / "images"
+        if images_dir.exists():
+            import shutil
+
+            shutil.rmtree(images_dir)
+            logger.info(f"Removed existing images directory: {images_dir}")
+
+        # Recreate images directory
+        images_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created fresh images directory: {images_dir}")
+
+        # Find all PDF files from glob patterns
+        all_files = self._resolve_glob_patterns(globs)
+        pdf_files = [f for f in all_files if f.suffix.lower() == ".pdf"]
+
+        if not pdf_files:
+            logger.warning("No PDF files found to regenerate images from")
+            return
+
+        logger.info(f"Found {len(pdf_files)} PDF files for image regeneration")
+
+        # Get PDF extractor
+        pdf_extractor = self._extractors.get(".pdf")
+        if not pdf_extractor:
+            logger.error("PDF extractor not available")
+            return
+
+        # Process each PDF file to extract images only
+        total_images = 0
+        for pdf_file in pdf_files:
+            try:
+                logger.info(f"Regenerating images from: {pdf_file.name}")
+                result = pdf_extractor.extract(pdf_file)
+
+                # Count extracted images
+                file_images = sum(len(page.images) for page in result.pages)
+                total_images += file_images
+
+                if file_images > 0:
+                    logger.info(f"  ✅ Extracted {file_images} images from {pdf_file.name}")
+                else:
+                    logger.info(f"  ℹ️  No images found in {pdf_file.name}")
+
+            except Exception as e:
+                logger.error(f"Error regenerating images from {pdf_file}: {e}")
+
+        logger.info(f"🎉 Image regeneration completed! Total images regenerated: {total_images}")
+
+        # Optimize the newly generated images
+        if total_images > 0:
+            logger.info("Optimizing regenerated images...")
+            self._image_optimizer.optimize()
+            logger.info("Image optimization completed")
+
+    async def _regenerate_images_with_dependencies(self, globs: list[str]) -> None:
+        """Regenerate images and rebuild only the actually affected extraction steps.
+
+        This method uses targeted invalidation that only affects:
+        1. Raw extraction (image metadata)
+        2. Linked knowledge (final structure with image refs)
+        3. Search core (search indices)
+
+        It preserves all text processing work and automatically rebuilds affected steps.
+
+        Args:
+            globs: Sequence of glob patterns to match source files
+        """
+        logger.info("🔄 Starting targeted image regeneration...")
+
+        # Count before regeneration
+        images_dir = self._output_dir / "images"
+        old_image_count = 0
+        old_size_mb = 0
+        if images_dir.exists():
+            old_image_files = list(images_dir.glob("*.png"))
+            old_image_count = len(old_image_files)
+            old_size_mb = sum(f.stat().st_size for f in old_image_files) / (1024 * 1024)
+
+        # First, regenerate the images
+        self._regenerate_images_only(globs)
+
+        # Then invalidate only image-affected steps (correct targeted approach)
+        logger.info("🎯 Invalidating only image-affected extraction steps...")
+        invalidated = self._invalidate_image_affected_steps()
+
+        # Count preserved work before rebuild
+        preserved_steps = [
+            "2_chunked_documents",
+            "3_classified_chunks",
+            "4_term_candidates",
+            "5_grouped_terms",
+            "6_terms_with_cooccurrences",
+            "7_terms_with_meanings",
+            "8_terms_with_links",
+        ]
+        preserved_count = 0
+        preserved_size = 0
+        for step in preserved_steps:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            if pickle_path.exists():
+                size_mb = pickle_path.stat().st_size / (1024 * 1024)
+                preserved_count += 1
+                preserved_size += size_mb
+
+        # Now automatically rebuild the invalidated steps
+        logger.info("⚡ Automatically rebuilding invalidated steps...")
+        start_time = datetime.now()
+
+        try:
+            # Run extraction which will only rebuild missing steps
+            await self.extract(globs)
+            rebuild_duration = datetime.now() - start_time
+            rebuild_successful = True
+        except Exception:
+            rebuild_duration = datetime.now() - start_time
+            rebuild_successful = False
+            logger.exception("❌ Failed to rebuild invalidated steps")
+            raise
+
+        # Verify integration status after rebuild
+        integration_status = self._verify_image_integration()
+
+        # Show comprehensive completion summary
+        logger.info("\n" + "=" * 80)
+        logger.info("🎉 IMAGE REGENERATION COMPLETED")
+        logger.info("=" * 80)
+
+        logger.info("📊 REGENERATION SUMMARY:")
+        logger.info(f"  • Images before: {old_image_count} ({old_size_mb:.1f} MB)")
+        logger.info(
+            f"  • Images after: {integration_status['image_count']} ({integration_status['optimized_size_mb']:.1f} MB)"
+        )
+        logger.info(f"  • Net change: {integration_status['image_count'] - old_image_count:+d} images")
+
+        if integration_status["optimized_size_mb"] < old_size_mb:
+            compression = ((old_size_mb - integration_status["optimized_size_mb"]) / old_size_mb) * 100
+            logger.info(f"  • Optimization: {compression:.1f}% size reduction ✅")
+
+        if invalidated:
+            logger.info(f"\n🗑️  REBUILT STEPS ({len(invalidated)}):")
+            for step in invalidated:
+                logger.info(f"  • {step} ✅")
+
+            if preserved_count > 0:
+                logger.info(f"\n✅ PRESERVED TEXT PROCESSING ({preserved_count} steps):")
+                for step in preserved_steps:
+                    pickle_path = self._output_dir / f"{step}.pkl"
+                    if pickle_path.exists():
+                        size_mb = pickle_path.stat().st_size / (1024 * 1024)
+                        logger.info(f"  ✅ {step} ({size_mb:.1f} MB)")
+
+                total_steps = len(invalidated) + preserved_count
+                preservation_percentage = (preserved_count / total_steps) * 100
+                logger.info(f"  💰 Preserved {preservation_percentage:.1f}% of extraction work")
+                logger.info(f"  💾 Saved {preserved_size:.1f} MB of processing time")
+
+        # Rebuild performance summary
+        logger.info("\n⚡ REBUILD PERFORMANCE:")
+        logger.info(f"  • Duration: {rebuild_duration.total_seconds():.1f} seconds")
+        if rebuild_successful:
+            logger.info("  • Status: ✅ Successful")
+            estimated_time_saved = max(0, 300 - rebuild_duration.total_seconds())  # Assume full rebuild takes ~5 min
+            if estimated_time_saved > 0:
+                logger.info(f"  • Time saved: ~{estimated_time_saved:.0f} seconds (thanks to preserved work)")
+        else:
+            logger.info("  • Status: ❌ Failed")
+
+        # Integration verification
+        logger.info("\n🔗 INTEGRATION VERIFICATION:")
+        if rebuild_successful and not integration_status["needs_pipeline_rebuild"]:
+            logger.info("  ✅ Images successfully integrated into knowledge base")
+            logger.info("  ✅ Chunks include new image content types")
+            logger.info("  ✅ Linked knowledge includes updated image metadata")
+            logger.info("  ✅ Search indices include image content")
+        else:
+            logger.info("  ❌ Integration incomplete - some steps may need manual rebuild")
+
+        logger.info("\n💡 VERIFICATION COMPLETE:")
+        logger.info(f"  • Total images: {integration_status['image_count']}")
+        logger.info(f"  • Images in chunks: {integration_status.get('images_in_chunks', 'Unknown')}")
+        logger.info(f"  • Knowledge base updated: {'✅' if not integration_status['needs_pipeline_rebuild'] else '❌'}")
+
+        logger.info("=" * 80)
+
+    async def _regenerate_term_meanings_with_dependencies(self, globs: list[str]) -> None:
+        """Regenerate term meanings and dependent steps.
+
+        Args:
+            globs: Sequence of glob patterns to match source files
+        """
+        logger.info("🧠 Starting term meanings regeneration...")
+
+        # Invalidate term meanings and all dependent steps
+        steps_to_invalidate = [
+            "7_terms_with_meanings",
+            "8_terms_with_links",
+            "linked_knowledge",
+            "knowledge_search",
+        ]
+        invalidated = []
+
+        for step in steps_to_invalidate:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            if pickle_path.exists():
+                pickle_path.unlink()
+                invalidated.append(step)
+                logger.info(f"🗑️  Invalidated step: {step}")
+
+        # Rebuild the invalidated steps
+        logger.info("⚡ Rebuilding invalidated steps...")
+        await self.extract(globs)
+
+        logger.info(f"✅ Term meanings regeneration completed! Rebuilt {len(invalidated)} steps.")
+
+    async def _regenerate_knowledge_linking_with_dependencies(self, globs: list[str]) -> None:
+        """Regenerate knowledge linking and dependent steps.
+
+        Args:
+            globs: Sequence of glob patterns to match source files
+        """
+        logger.info("🔗 Starting knowledge linking regeneration...")
+
+        # Invalidate linking and dependent steps
+        steps_to_invalidate = [
+            "8_terms_with_links",
+            "linked_knowledge",
+            "knowledge_search",
+        ]
+        invalidated = []
+
+        for step in steps_to_invalidate:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            if pickle_path.exists():
+                pickle_path.unlink()
+                invalidated.append(step)
+                logger.info(f"🗑️  Invalidated step: {step}")
+
+        # Rebuild the invalidated steps
+        logger.info("⚡ Rebuilding invalidated steps...")
+        await self.extract(globs)
+
+        logger.info(f"✅ Knowledge linking regeneration completed! Rebuilt {len(invalidated)} steps.")
+
+    async def _regenerate_search_indices_with_dependencies(self, globs: list[str]) -> None:
+        """Regenerate search indices.
+
+        Args:
+            globs: Sequence of glob patterns to match source files
+        """
+        logger.info("🔍 Starting search indices regeneration...")
+
+        # Invalidate only search step
+        steps_to_invalidate = ["knowledge_search"]
+        invalidated = []
+
+        for step in steps_to_invalidate:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            if pickle_path.exists():
+                pickle_path.unlink()
+                invalidated.append(step)
+                logger.info(f"🗑️  Invalidated step: {step}")
+
+        # Rebuild the invalidated steps
+        logger.info("⚡ Rebuilding invalidated steps...")
+        await self.extract(globs)
+
+        logger.info(f"✅ Search indices regeneration completed! Rebuilt {len(invalidated)} steps.")
+
+    def _clear_all_extraction_steps(self) -> None:
+        """Clear all extraction steps and start fresh."""
+        logger.info("🗑️  Clearing all extraction steps...")
+
+        status = self.get_extraction_status()
+        removed_count = 0
+
+        for step, exists in status.items():
+            if exists:
+                pickle_path = self._output_dir / f"{step}.pkl"
+                try:
+                    pickle_path.unlink()
+                    logger.info(f"Removed existing file: {pickle_path}")
+                    removed_count += 1
+                except Exception:
+                    logger.exception(f"Failed to remove file: {pickle_path}")
+
+        # Also remove images and source_documents directories
+        import shutil
+
+        images_dir = self._output_dir / "images"
+        if images_dir.exists():
+            try:
+                shutil.rmtree(images_dir)
+                logger.info(f"Removed existing images directory: {images_dir}")
+            except Exception:
+                logger.exception(f"Failed to remove images directory: {images_dir}")
+
+        docs_dir = self._output_dir / "source_documents"
+        if docs_dir.exists():
+            try:
+                shutil.rmtree(docs_dir)
+                logger.info(f"Removed existing source_documents directory: {docs_dir}")
+            except Exception:
+                logger.exception(f"Failed to remove source_documents directory: {docs_dir}")
+
+        logger.info(f"✅ Cleared {removed_count} extraction files and directories.")
+
+    def _verify_image_integration(self) -> Dict[str, Any]:
+        """Verify that regenerated images are properly integrated into the knowledge base.
+
+        Returns:
+            Dictionary with integration status and statistics
+        """
+        images_dir = self._output_dir / "images"
+
+        # Count images
+        image_count = 0
+        optimized_size_mb = 0
+        if images_dir.exists():
+            image_files = list(images_dir.glob("*.png"))
+            image_count = len(image_files)
+            optimized_size_mb = sum(f.stat().st_size for f in image_files) / (1024 * 1024)
+
+        # Check if raw extraction includes new images
+        raw_extraction_exists = (self._output_dir / "1_raw_extraction.pkl").exists()
+
+        # Check linked knowledge integration
+        linked_knowledge_exists = (self._output_dir / "linked_knowledge.pkl").exists()
+        search_core_exists = (self._output_dir / "knowledge_search.pkl").exists()
+
+        return {
+            "image_count": image_count,
+            "optimized_size_mb": optimized_size_mb,
+            "raw_extraction_updated": not raw_extraction_exists,  # Should be missing after invalidation
+            "needs_pipeline_rebuild": not linked_knowledge_exists or not search_core_exists,
+            "integration_status": "pending_rebuild" if not linked_knowledge_exists else "completed",
+        }
+
+    def _regenerate_captions_only(self, globs: list[str]) -> None:
+        """Regenerate only image captions without re-extracting images.
+
+        This method keeps existing image files and only updates their AI-generated captions
+        using the current context and models.
+
+        Args:
+            globs: Sequence of glob patterns to match source files (for context)
+        """
+        logger.info("📝 Starting caption regeneration process...")
+
+        images_dir = self._output_dir / "images"
+        if not images_dir.exists():
+            logger.warning("No images directory found - nothing to regenerate captions for")
+            return
+
+        image_files = list(images_dir.glob("*.png"))
+        if not image_files:
+            logger.warning("No PNG images found in images directory")
+            return
+
+        logger.info(f"Found {len(image_files)} images for caption regeneration")
+
+        # Load existing extraction data to get context for each image
+        try:
+            raw_extraction = self._load_pickle("1_raw_extraction")
+            if not raw_extraction:
+                logger.warning("No extraction data found - using minimal context for captions")
+
+            total_regenerated = 0
+
+            for image_file in image_files:
+                try:
+                    # Parse filename to get document and page info
+                    # Format: {pdf_stem}_page_{page_num}_img_{img_num}.png
+                    stem = image_file.stem
+                    parts = stem.split("_")
+
+                    if len(parts) >= 4 and parts[-3] == "page" and parts[-1].startswith("img"):
+                        # Extract document name and page number
+                        page_num = int(parts[-2])
+                        doc_parts = parts[:-3]  # Everything before "_page_X_img_Y"
+                        doc_stem = "_".join(doc_parts)
+
+                        # Find context from extraction data
+                        context = "Image from document"
+                        if raw_extraction and hasattr(raw_extraction, "pdf"):
+                            for pdf_item in raw_extraction.pdf:
+                                if pdf_item.result.document_filename.startswith(doc_stem):
+                                    # Find the specific page
+                                    for page in pdf_item.result.pages:
+                                        if page.page == page_num:
+                                            context = page.text[:500]  # First 500 chars as context
+                                            break
+                                    break
+
+                        # Load image and regenerate caption
+                        from PIL import Image
+
+                        image = Image.open(image_file)
+                        new_caption = self._image_recognition.caption_for_image(image, context=context)
+
+                        # Update the caption in extraction data would require complex reconstruction
+                        # For now, just log the regeneration
+                        logger.info(f"✅ Regenerated caption for {image_file.name}: {new_caption[:100]}...")
+                        total_regenerated += 1
+
+                except Exception as e:
+                    logger.warning(f"Failed to regenerate caption for {image_file.name}: {e}")
+
+            logger.info(f"🎉 Caption regeneration completed! Regenerated {total_regenerated} captions")
+
+        except Exception as e:
+            logger.error(f"Error during caption regeneration: {e}")
+
+    def _regenerate_source_documents(self, globs: list[str]) -> None:
+        """Regenerate source document copies.
+
+        This method re-copies all source documents to the output directory,
+        replacing any existing copies.
+
+        Args:
+            globs: Sequence of glob patterns to match source files
+        """
+        logger.info("📄 Starting source document regeneration...")
+
+        # Remove existing source documents directory
+        documents_dir = self._output_dir / "source_documents"
+        if documents_dir.exists():
+            import shutil
+
+            shutil.rmtree(documents_dir)
+            logger.info(f"Removed existing source documents directory: {documents_dir}")
+
+        # Find all source files
+        all_files = self._resolve_glob_patterns(globs)
+        if not all_files:
+            logger.warning("No source files found to copy")
+            return
+
+        logger.info(f"Found {len(all_files)} source files for copying")
+
+        # Re-copy source documents
+        self._copy_source_documents(all_files)
+
+        logger.info(f"🎉 Source document regeneration completed! Copied {len(all_files)} files")

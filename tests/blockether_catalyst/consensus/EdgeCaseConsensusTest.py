@@ -305,6 +305,11 @@ class TestEdgeCaseConsensus:
                 executor=ExceptionThrowingCall(ValueError("Invalid input")),
                 perspective="Model with value error",
             ),
+            ConsensusCore.model(
+                id="success_3",
+                executor=SuccessfulCall(self.DEFAULT_ANSWER),
+                perspective="Third successful model",
+            ),
         ]
 
         consensus = ConsensusCore.consensus(
@@ -324,8 +329,8 @@ class TestEdgeCaseConsensus:
         # Expected to succeed: success_1, success_2
         # Expected to fail: exception_model, value_error_model
         successful_responses = len(result.rounds[-1].responses)
-        # Should get exactly 2 successful responses
-        assert successful_responses == 2
+        # Should get exactly 3 successful responses (we have 3 successful models)
+        assert successful_responses == 3
 
     @pytest.mark.anyio
     async def test_minimum_models_consensus(self) -> None:

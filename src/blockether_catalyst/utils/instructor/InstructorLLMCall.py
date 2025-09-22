@@ -6,7 +6,7 @@ that uses the Instructor library to make structured LLM calls to a local API.
 """
 
 import os
-from typing import Any, Optional, Type, TypeVar
+from typing import Optional, Type, TypeVar
 
 import instructor
 from openai import AsyncOpenAI
@@ -53,7 +53,8 @@ class InstructorLLMCall(ArityOneTypedCall[str, T]):
             AsyncOpenAI(
                 base_url=actual_base_url,
                 api_key=actual_api_key,
-            )
+            ),
+            mode=instructor.Mode.JSON,
         )
         self.response_model = response_model
         self.model = model
@@ -78,6 +79,7 @@ class InstructorLLMCall(ArityOneTypedCall[str, T]):
             messages=[{"role": "user", "content": x}],
             response_model=self.response_model,
             temperature=self.temperature,
+            max_retries=5,
         )
 
         return response  # type: ignore[no-any-return]

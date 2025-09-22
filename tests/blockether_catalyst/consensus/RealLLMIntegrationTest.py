@@ -533,6 +533,15 @@ class TestRealLLMConsensus:
                 ),
                 perspective="Provide comprehensive analysis",
             ),
+            ConsensusCore.model(
+                id="reliable3",
+                executor=InstructorLLMCall(
+                    response_model=AnalysisResponse,
+                    model="gpt-4o",
+                    temperature=0.3,
+                ),
+                perspective="Provide detailed analysis",
+            ),
         ]
 
         judge = InstructorLLMCall(
@@ -713,3 +722,245 @@ class TestRealLLMConsensus:
         assert len(result.final_response.key_points) >= 2
         assert "renewable" in result.final_response.summary.lower() or "energy" in result.final_response.summary.lower()
         assert result.total_rounds >= 1
+
+    @pytest.mark.anyio
+    async def test_consensus_bug_reasoning_field_ignored(self) -> None:
+        """Test bug where consensus fails despite all models agreeing on voting fields.
+
+        This reproduces the issue where:
+        - All 3 models agree on ALL voting fields
+        - Only the 'reasoning' field differs (which should be ignored)
+        - Result shows 100% agreement but fallback is used
+        - Field consistency shows 83.3% (5/6 fields) incorrectly including reasoning
+        """
+
+        # Create a simple response model with reasoning that should be ignored
+        class SimpleConsensusResponse(BaseModelWithReasoning):
+            """Simple response with few fields to test consensus bug."""
+
+            term: str = VotingField(
+                description="The term being analyzed",
+                comparison=ComparisonStrategy.EXACT,
+            )
+
+            meaning: str = VotingField(
+                description="The meaning of the term",
+                comparison=ComparisonStrategy.SEMANTIC,
+                threshold=0.7,  # Lower threshold to allow more semantic variation
+            )
+
+            category: Literal["acronym", "keyword", "phrase"] = VotingField(
+                description="Category of the term",
+                comparison=ComparisonStrategy.EXACT,
+            )
+
+            status: Literal["meaningful", "not_meaningful"] = VotingField(
+                description="Whether the term is meaningful",
+                comparison=ComparisonStrategy.EXACT,
+            )
+
+        # Create deterministic models that return IDENTICAL voting fields but DIFFERENT reasoning
+        class DeterministicConsensusModel(ArityOneTypedCall[str, SimpleConsensusResponse]):
+            """Model that returns exact same values but different reasoning."""
+
+            def __init__(self, model_id: str):
+                self.model_id = model_id
+
+            async def call(self, x: str) -> SimpleConsensusResponse:
+                # Models return SLIGHTLY different semantic meanings but should still match
+                if self.model_id == "model1":
+                    meaning_text = (
+                        "Environmental, Social, and Governance factors for evaluating sustainability and ethical impact"
+                    )
+                elif self.model_id == "model2":
+                    meaning_text = "Environmental, Social, Governance criteria used to assess sustainability and corporate responsibility"
+                elif self.model_id == "model3":
+                    meaning_text = "Environmental, Social, and Governance standards for measuring sustainability and ethical business practices"
+                else:
+                    meaning_text = "Environmental, Social, and Governance factors for evaluating sustainability"
+
+                return SimpleConsensusResponse(
+                    term="ESG",
+                    meaning=meaning_text,  # Semantically similar but not identical
+                    category="acronym",
+                    status="meaningful",
+                    # ONLY reasoning differs significantly between models
+                    reasoning=f"Model {self.model_id} specific reasoning: This is different for each model but should be ignored for voting. {x}",
+                )
+
+        # Create 3 models with same voting values but different reasoning
+        models = [
+            ConsensusCore.model(
+                id="model1",
+                executor=DeterministicConsensusModel("model1"),
+                perspective="Conservative perspective",
+            ),
+            ConsensusCore.model(
+                id="model2",
+                executor=DeterministicConsensusModel("model2"),
+                perspective="Balanced perspective",
+            ),
+            ConsensusCore.model(
+                id="model3",
+                executor=DeterministicConsensusModel("model3"),
+                perspective="Liberal perspective",
+            ),
+        ]
+
+        # Judge also returns same values
+        judge = DeterministicConsensusModel("judge")
+
+        # Create consensus with settings that match the user's scenario
+        consensus = ConsensusCore.consensus(
+            models=models,
+            judge=judge,
+            settings=ConsensusSettings(
+                max_rounds=3,  # Match the user's max_rounds
+                threshold=0.65,  # 65% threshold means 2/3 models = 66.7% should pass
+                first_round_threshold=0.65,  # Same as regular threshold
+            ),
+        )
+
+        result = await consensus.call("What does ESG stand for?")
+
+        # CRITICAL ASSERTIONS - This is where the bug manifests
+
+        # Detailed debugging output
+        print("\n=== CONSENSUS RESULT DEBUG ===")
+        print(f"Consensus achieved: {result.consensus_achieved}")
+        print(f"Total rounds: {result.total_rounds}")
+        print(f"Convergence score: {result.convergence_score}")
+        print(f"Agreement percentage: {result.metrics.consensus_confidence * 100:.1f}%")
+        print(f"Fallback method: {result.metrics.fallback_method}")
+        print(f"Dissenting models: {result.dissenting_models}")
+
+        # Print round details
+        for i, round_data in enumerate(result.rounds):
+            print(f"\n--- Round {i + 1} ---")
+            print(f"  Responses: {len(round_data.responses)}")
+            print(f"  Consensus achieved: {round_data.consensus_achieved}")
+            if round_data.disagreement_analysis:
+                print(f"  Disagreement fields: {list(round_data.disagreement_analysis.disagreement_fields.keys())}")
+                print(f"  Consensus fields: {round_data.disagreement_analysis.consensus_fields}")
+
+        print("\n=== END DEBUG ===\n")
+
+        # The bug: All models agree on voting fields, but consensus fails
+        assert result.consensus_achieved is True, (
+            f"BUG: Consensus should be achieved when all models agree on voting fields! "
+            f"Got consensus={result.consensus_achieved}, fallback={result.metrics.fallback_method}"
+        )
+
+        # All models should have voted the same (no dissenting models)
+        assert len(result.dissenting_models) == 0, (
+            f"BUG: No models should be dissenting when all voting fields match! "
+            f"Got dissenting: {result.dissenting_models}"
+        )
+
+        # Convergence score should be 1.0 for perfect agreement
+        assert result.convergence_score == 1.0, (
+            f"BUG: Convergence should be 1.0 when all models agree! " f"Got: {result.convergence_score}"
+        )
+
+        # MUST achieve consensus in round 1 when all models agree
+        assert result.total_rounds == 1, (
+            f"BUG: Consensus MUST be achieved in round 1 when all models agree on voting fields! "
+            f"Got {result.total_rounds} rounds"
+        )
+
+        # Verify the response values are correct
+        assert result.final_response.term == "ESG"
+        assert result.final_response.category == "acronym"
+        assert result.final_response.status == "meaningful"
+
+        # No fallback method should be used
+        assert result.metrics.fallback_method is None, (
+            f"BUG: No fallback should be used when consensus is achieved! "
+            f"Got fallback: {result.metrics.fallback_method}"
+        )
+
+        # COMPREHENSIVE METRICS VERIFICATION
+        # Verify all consensus metrics are internally consistent
+
+        # Duration should be positive
+        assert result.metrics.duration_ms > 0, "Duration must be positive"
+
+        # Rounds metrics must match
+        assert result.metrics.rounds_to_convergence == 1, "Should converge in 1 round"
+        assert result.metrics.rounds_to_convergence == result.total_rounds, "Rounds metrics must match"
+
+        # Model calls should be 3 (one per model, one round)
+        assert (
+            result.metrics.total_model_calls == 3
+        ), f"Should have exactly 3 model calls (1 per model) in round 1, got {result.metrics.total_model_calls}"
+
+        # Convergence metrics must be consistent
+        assert result.metrics.convergence_achieved is True, "Convergence should be achieved"
+        assert result.metrics.convergence_achieved == result.consensus_achieved, "Convergence flags must match"
+
+        # Dissent rate should be 0 when all agree
+        assert result.metrics.dissent_rate == 0.0, "No dissent when all models agree"
+
+        # Consensus confidence should be 1.0 for perfect agreement
+        assert (
+            result.metrics.consensus_confidence == 1.0
+        ), f"Consensus confidence should be 1.0 for perfect agreement, got {result.metrics.consensus_confidence}"
+
+        # Convergence indicator should match convergence score
+        assert result.metrics.convergence_indicator == result.convergence_score, "Convergence indicators must match"
+        assert result.metrics.convergence_indicator == 1.0, "Perfect convergence indicator expected"
+
+        # Model contributions should all be high (1.0) when all agree
+        assert len(result.metrics.model_contributions) == 3, "Should have contributions from all 3 models"
+        assert all(
+            score == 1.0 for score in result.metrics.model_contributions.values()
+        ), f"All models should have 1.0 contribution when agreeing, got {result.metrics.model_contributions}"
+
+        # Refinement metrics (should be 0 for round 1)
+        assert result.metrics.total_refinements == 0, "No refinements in first round"
+        assert result.metrics.avg_refinements_per_round == 0.0, "No avg refinements in first round"
+
+        # Information flow should be empty for round 1
+        assert len(result.metrics.information_flows) == 1, "Should have 1 round of information flow"
+        assert result.metrics.information_flows[0] == {}, "First round has no information flow"
+
+        # Participating models check
+        assert len(result.participating_models) == 3, "All 3 models should participate"
+        assert set(result.participating_models) == {"model1", "model2", "model3"}, "Correct model IDs"
+
+        # Round data verification
+        assert len(result.rounds) == 1, "Should have exactly 1 round"
+        round1 = result.rounds[0]
+        assert round1.round_number == 0, "First round is numbered 0"
+        assert len(round1.responses) == 3, "All 3 models responded"
+        assert round1.consensus_achieved is True, "Consensus achieved in round 1"
+        assert round1.consensus_response is not None, "Consensus response must be set"
+
+        # Verify consensus response matches final response
+        assert round1.consensus_response == result.final_response, "Round consensus response must match final response"
+
+        # Disagreement analysis for round 1
+        assert round1.disagreement_analysis is not None, "Should have disagreement analysis"
+        assert len(round1.disagreement_analysis.disagreement_fields) == 0, "No disagreements"
+        assert (
+            "reasoning" not in round1.disagreement_analysis.consensus_fields
+        ), "Reasoning should NOT be in consensus fields (it's ignored)"
+        assert set(round1.disagreement_analysis.consensus_fields) == {
+            "term",
+            "meaning",
+            "category",
+            "status",
+        }, f"Should have exactly the voting fields in consensus, got {round1.disagreement_analysis.consensus_fields}"
+
+        # Verify reasoning is properly formatted
+        assert result.reasoning is not None, "Should have consensus reasoning"
+        assert (
+            "Unanimous consensus" in result.reasoning or "All 3 models" in result.reasoning
+        ), f"Reasoning should mention unanimous agreement, got: {result.reasoning}"
+
+        # Vote groups verification - MUST be present when consensus is checked
+        assert hasattr(round1, "vote_groups"), "Vote groups must be set after consensus check"
+        assert round1.vote_groups is not None, "Vote groups cannot be None"
+        assert len(round1.vote_groups) == 1, "Should have exactly 1 vote group when all agree"
+        vote_group = list(round1.vote_groups.values())[0]
+        assert len(vote_group) == 3, "All 3 models in same vote group"

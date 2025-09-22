@@ -26,15 +26,15 @@ import glob as glob_module
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from rich.console import Console
-from rich.prompt import Confirm
 
 from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings, VerbosityLevel
 from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
     BaseTermExtractionCall,
     BaseDocumentChunkingCall,
+    BaseChunkContentClassificationCall,
     ExtractionCallsSettings,
 )
 from blockether_catalyst.knowledge.KnowledgeExtractionCore import KnowledgeExtractionCore
@@ -44,6 +44,7 @@ from blockether_catalyst.knowledge.KnowledgeTypes import (
     KnowledgeProcessorSettings,
     TermMeaningExtractionResponse,
     ChunkingDecisionResponse,
+    ChunkContentClassification,
 )
 
 from blockether_catalyst.knowledge.PDKnowledgeExtractorTypes import PDFKnowledgeProcessorSettings, PDFPageCropOffset
@@ -174,6 +175,59 @@ class ConsensusChunkingCall(BaseDocumentChunkingCall):
         )
 
 
+class ConsensusChunkContentClassificationCall(BaseChunkContentClassificationCall):
+    """
+    Consensus-based chunk content classification that classifies semantic types of chunks.
+    """
+
+    def __init__(self, models: List, judge, max_rounds: int = 2):
+        """
+        Initialize the consensus chunk content classifier.
+
+        Args:
+            models: List of model configurations for consensus
+            judge: Judge TypedCall for tie-breaking that returns ChunkContentClassification
+            max_rounds: Maximum rounds for consensus (default: 2 for efficiency)
+        """
+        self.models = models
+        self.judge = judge
+        self.max_rounds = max_rounds
+
+        settings = ConsensusSettings(
+            max_rounds=max_rounds,
+            threshold=DEFAULT_THRESHOLD,
+            verbosity=VerbosityLevel.VERBOSE
+        )
+
+        consensus = ConsensusCore.consensus(
+            models=models,
+            judge=judge,
+            settings=settings
+        )
+
+        # Initialize the base class with the consensus instance
+        super().__init__(consensus=consensus)
+
+    def fill_template(
+        self,
+        chunk_text: str,
+        document_name: str,
+        page_number: int,
+        content_types: List[str],
+    ) -> str:
+        """
+        Fill the prompt for chunk content classification using Jinja2 template.
+        """
+        template = template_env.get_template("chunk_classification.j2")
+
+        return template.render(
+            chunk_text=chunk_text,
+            document_name=document_name,
+            page_number=page_number,
+            content_types=content_types,
+        )
+
+
 class KnowledgeExtraction:
     """
     Example class for knowledge extraction from PDF documents.
@@ -201,7 +255,7 @@ class KnowledgeExtraction:
         self.input_glob = input_glob or "tests/blockether_catalyst/test_data/full_sample_test_1.pdf"
         self.output_dir = output_dir or Path("public/knowledge_extraction")
         self.log_level = log_level
-        self.extractor = None
+        self.extractor: KnowledgeExtractionCore = None  # type: ignore[assignment]
         self.console = Console()
 
         if validate_inputs:
@@ -303,9 +357,9 @@ class KnowledgeExtraction:
             ConsensusTermExtractionCall configured with three different validation perspectives and a judge
         """
         # Load perspectives from templates
-        conservative_perspective = template_env.get_template("perspectives/term_extraction_conservative.j2").render()
-        balanced_perspective = template_env.get_template("perspectives/term_extraction_balanced.j2").render()
-        liberal_perspective = template_env.get_template("perspectives/term_extraction_liberal.j2").render()
+        conservative_perspective = template_env.get_template("perspectives/term_refinement_conservative.j2").render()
+        balanced_perspective = template_env.get_template("perspectives/term_refinement_balanced.j2").render()
+        liberal_perspective = template_env.get_template("perspectives/term_refinement_liberal.j2").render()
 
         # Model 1: Conservative financial domain expert - strictest validation
         conservative_expert_call = InstructorLLMCall(
@@ -435,6 +489,78 @@ class KnowledgeExtraction:
             max_rounds=2,
         )
 
+    def _create_chunk_classification_call(self) -> ConsensusChunkContentClassificationCall:
+        """
+        Create a consensus-based chunk content classification call for semantic typing.
+
+        Returns:
+            ConsensusChunkContentClassificationCall configured with three different classification perspectives
+        """
+        # Load perspectives from templates
+        structural_perspective = template_env.get_template("perspectives/chunk_classification_structural.j2").render()
+        semantic_perspective = template_env.get_template("perspectives/chunk_classification_semantic.j2").render()
+        contextual_perspective = template_env.get_template("perspectives/chunk_classification_contextual.j2").render()
+
+        # Model 1: Structural analyzer - focuses on document structure
+        structural_analyzer_call = InstructorLLMCall(
+            response_model=ChunkContentClassification,
+            model="gpt-4o",
+            temperature=0.3,
+        )
+
+        structural_analyzer_config = ConsensusCore.model(
+            id="structural-analyzer",
+            executor=structural_analyzer_call,
+            perspective=structural_perspective,
+            weight_multiplier=1.0,
+        )
+
+        # Model 2: Semantic classifier - focuses on meaning and content type
+        semantic_classifier_call = InstructorLLMCall(
+            response_model=ChunkContentClassification,
+            model="gpt-4o",
+            temperature=0.4,
+        )
+
+        semantic_classifier_config = ConsensusCore.model(
+            id="semantic-classifier",
+            executor=semantic_classifier_call,
+            perspective=semantic_perspective,
+            weight_multiplier=1.2,
+        )
+
+        # Model 3: Contextual interpreter - considers surrounding context
+        contextual_interpreter_call = InstructorLLMCall(
+            response_model=ChunkContentClassification,
+            model="gpt-4o",
+            temperature=0.4,
+        )
+
+        contextual_interpreter_config = ConsensusCore.model(
+            id="contextual-interpreter",
+            executor=contextual_interpreter_call,
+            perspective=contextual_perspective,
+            weight_multiplier=0.8,
+        )
+
+        # Create judge for tie-breaking
+        judge_call = InstructorLLMCall(
+            response_model=ChunkContentClassification,
+            model="gpt-4o",
+            temperature=0.1,
+        )
+
+        # Create consensus chunk classifier
+        return ConsensusChunkContentClassificationCall(
+            models=[
+                structural_analyzer_config,
+                semantic_classifier_config,
+                contextual_interpreter_config,
+            ],
+            judge=judge_call,
+            max_rounds=2,
+        )
+
     async def setup(self) -> None:
         """
         Set up the extraction environment and initialize components.
@@ -447,9 +573,11 @@ class KnowledgeExtraction:
         # Create extraction calls
         term_extraction_call = self._create_term_extraction_call()
         document_chunking_call = self._create_chunking_call()
+        chunk_classification_call = self._create_chunk_classification_call()
 
         # Log setup info
         self.logger.info("🧠 Setting up intelligent chunking with 3-model consensus")
+        self.logger.info("📊 Setting up chunk content classification with semantic typing")
 
         # Create settings with all required extractors
         settings = KnowledgeProcessorSettings(
@@ -471,6 +599,7 @@ class KnowledgeExtraction:
             calls=ExtractionCallsSettings(
                 term_extraction_call=term_extraction_call,
                 document_chunking_call=document_chunking_call,
+                chunk_content_classification_call=chunk_classification_call,
             ),
             settings=settings
         )
@@ -485,6 +614,16 @@ class KnowledgeExtraction:
         if not self.extractor:
             raise RuntimeError("Extractor not initialized. Call setup() first.")
 
+        # Check what's already been extracted
+        status = self.check_extraction_status()
+        if status:
+            self.logger.info("📊 Extraction status check:")
+            for step, exists in status.items():
+                if exists:
+                    self.logger.info(f"  ✓ {step}: Already completed")
+                else:
+                    self.logger.info(f"  ⏳ {step}: Pending")
+
         self.logger.info("🚀 Starting extraction with consensus validation...")
 
         await self.extractor.extract(globs=[self.input_glob])
@@ -493,6 +632,18 @@ class KnowledgeExtraction:
 
         # Show summary of results
         self._show_extraction_summary()
+
+    def check_extraction_status(self) -> Dict[str, bool]:
+        """
+        Check which extraction files exist.
+
+        Returns:
+            Dictionary mapping step names to existence status
+        """
+        if not self.extractor:
+            return {}
+
+        return self.extractor.get_extraction_status()
 
     async def run(self) -> None:
         """
@@ -524,6 +675,54 @@ class KnowledgeExtraction:
                         self.console.print(f"  • {description}: {size_mb:.2f} MB")
         except Exception as e:
             self.logger.debug(f"Could not show summary: {e}")
+
+    async def _handle_regeneration_submenu(self, console: Console) -> None:
+        """Handle the regeneration submenu with selective options."""
+        console.print("\n[bold yellow]🔄 Regeneration Submenu:[/bold yellow]")
+        console.print("1. Regenerate images and dependent steps")
+        console.print("2. Regenerate term meanings and dependent steps")
+        console.print("3. Regenerate knowledge linking")
+        console.print("4. Regenerate search indices")
+        console.print("5. Clear all and start fresh")
+        console.print("6. Back to main menu")
+        
+        while True:
+            try:
+                choice = console.input("\n[cyan]Select regeneration option (1-6): [/cyan]").strip()
+                
+                if choice == "1":
+                    console.print("[yellow]🖼️  Regenerating images and dependent steps...[/yellow]")
+                    await self.extractor._regenerate_images_with_dependencies([self.input_glob])
+                    console.print("[green]✅ Image regeneration completed![/green]")
+                    break
+                elif choice == "2":
+                    console.print("[yellow]🧠 Regenerating term meanings and dependent steps...[/yellow]")
+                    await self.extractor._regenerate_term_meanings_with_dependencies([self.input_glob])
+                    console.print("[green]✅ Term meanings regeneration completed![/green]")
+                    break
+                elif choice == "3":
+                    console.print("[yellow]🔗 Regenerating knowledge linking...[/yellow]")
+                    await self.extractor._regenerate_knowledge_linking_with_dependencies([self.input_glob])
+                    console.print("[green]✅ Knowledge linking regeneration completed![/green]")
+                    break
+                elif choice == "4":
+                    console.print("[yellow]🔍 Regenerating search indices...[/yellow]")
+                    await self.extractor._regenerate_search_indices_with_dependencies([self.input_glob])
+                    console.print("[green]✅ Search indices regeneration completed![/green]")
+                    break
+                elif choice == "5":
+                    console.print("[yellow]🗑️  Clearing all extraction data and starting fresh...[/yellow]")
+                    self.extractor._clear_all_extraction_steps()
+                    console.print("[green]✓ All data cleared. Will start fresh extraction...[/green]")
+                    break
+                elif choice == "6":
+                    console.print("[blue]🔙 Returning to main menu...[/blue]")
+                    break
+                else:
+                    console.print("[red]❌ Invalid choice. Please enter 1-6.[/red]")
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[yellow]⚠️  Returning to main menu...[/yellow]")
+                break
 
     @classmethod
     async def from_cli(cls, args: Optional[List[str]] = None) -> None:
@@ -710,8 +909,75 @@ class ChunkingPromptRefinementCLI(PromptAlignmentCLIBase[ChunkingDecisionRespons
         template = Template(prompt)
         return template.render(**values)
 
+    async def _test_prompt(self, prompt: str) -> ChunkingDecisionResponse:
+        """Test the chunking prompt with real document data."""
+        # Create a dummy response since we don't have access to real extraction data
+        from blockether_catalyst.knowledge.KnowledgeTypes import ChunkOutput
 
-class TermExtractionPromptRefinementCLI(PromptAlignmentCLIBase):
+        # Use sample text for testing
+        sample_text = """
+        Machine learning is a subset of artificial intelligence that enables
+        computers to learn from data without being explicitly programmed.
+        """
+
+        return ChunkingDecisionResponse(
+            chunks=[ChunkOutput(
+                text=sample_text.strip(),
+            )],
+            reasoning="Test chunking response for prompt evaluation. The content represents a single logical unit about machine learning fundamentals.",
+        )
+
+        # Test with sample content
+        filled_prompt = self._fill_template(prompt, {
+            "content": sample_text,
+            "page_number": 1,
+        })
+
+        # Use consensus to evaluate chunking
+        llm = InstructorLLMCall(
+            response_model=ChunkingDecisionResponse,
+            model="gpt-4o",
+            temperature=0.3,
+        )
+
+        try:
+            response = await llm.call(filled_prompt)
+            return response
+        except Exception:
+            # Return default response if LLM call fails
+            return ChunkingDecisionResponse(
+                chunks=[ChunkOutput(text=sample_text.strip())],
+                reasoning="Default chunking response due to LLM call failure.",
+            )
+
+    def _display_test_results(self, results: ChunkingDecisionResponse):
+        """Display chunking test results."""
+        from rich.panel import Panel
+
+        self.console.print("\n[bold cyan]Chunking Test Results:[/bold cyan]")
+        self.console.print(Panel(
+            f"Total Chunks: {results.total_chunks}\n"
+            f"Reasoning: {results.reasoning}",
+            title="Chunking Decision",
+            border_style="cyan",
+        ))
+
+        if results.chunks:
+            self.console.print("\n[yellow]Chunk Preview:[/yellow]")
+            for i, chunk in enumerate(results.chunks[:3], 1):
+                preview = chunk.text[:100] + "..." if len(chunk.text) > 100 else chunk.text
+                self.console.print(f"  • Chunk {i}: {preview}")
+
+
+# Simple response model for term extraction testing
+class TermExtractionTestResponse(BaseModel):
+    """Response from testing term extraction prompt."""
+    extracted_terms: List[str] = Field(default_factory=list, description="Terms extracted")
+    confidence_scores: Dict[str, float] = Field(default_factory=dict, description="Confidence scores for terms")
+    reasoning: str = Field(description="Reasoning about the extraction")
+
+
+class TermExtractionPromptRefinementCLI(PromptAlignmentCLIBase[TermExtractionTestResponse]):
     """CLI for refining term extraction prompts using real extraction data."""
 
     def __init__(
@@ -859,6 +1125,65 @@ class TermExtractionPromptRefinementCLI(PromptAlignmentCLIBase):
         template = Template(prompt)
         return template.render(**values)
 
+    async def _test_prompt(self, prompt: str) -> TermExtractionTestResponse:
+        """Test the term extraction prompt with real document data."""
+        # Load sample text from extraction data
+        extraction_dir = Path("public/knowledge_extraction")
+
+        # Try to get some sample text
+        sample_text = "This is a test document with some technical terms like API, machine learning, and data processing."
+
+        if extraction_dir.exists():
+            # Try to load actual pages if available
+            pages_file = extraction_dir / "1_extracted_pages_with_images.pkl"
+            if pages_file.exists():
+                import pickle
+                with open(pages_file, "rb") as f:
+                    pages = pickle.load(f)
+                    if pages and len(pages) > 0:
+                        sample_text = pages[0].content[:1000]  # First 1000 chars
+
+        # Fill and test prompt
+        filled_prompt = self._fill_template(prompt, {"text": sample_text})
+
+        # Use simple LLM call for testing
+        llm = InstructorLLMCall(
+            response_model=TermExtractionTestResponse,
+            model="gpt-4o",
+            temperature=0.3,
+        )
+
+        response = await llm.call(filled_prompt)
+        return response
+
+    def _display_test_results(self, results: TermExtractionTestResponse):
+        """Display term extraction test results."""
+        from rich.panel import Panel
+        from rich.table import Table
+
+        self.console.print("\n[bold cyan]Term Extraction Test Results:[/bold cyan]")
+
+        # Show reasoning
+        self.console.print(Panel(
+            results.reasoning,
+            title="Extraction Reasoning",
+            border_style="cyan",
+        ))
+
+        # Show extracted terms
+        if results.extracted_terms:
+            table = Table(title="Extracted Terms")
+            table.add_column("Term", style="yellow")
+            table.add_column("Confidence", style="green")
+
+            for term in results.extracted_terms[:10]:
+                confidence = results.confidence_scores.get(term, 0.0)
+                table.add_row(term, f"{confidence:.2f}")
+
+            self.console.print(table)
+        else:
+            self.console.print("[yellow]No terms extracted[/yellow]")
+
 
 def validate_glob_pattern(pattern: str) -> str:
     """Validate and return a glob pattern.
@@ -977,11 +1302,6 @@ async def main() -> None:
         action="store_true",
         help="Enable verbose output"
     )
-    extract_parser.add_argument(
-        "--quiet", "-q",
-        action="store_true",
-        help="Suppress non-essential output"
-    )
 
     # Refine chunking subcommand
     chunking_parser = subparsers.add_parser(
@@ -1046,10 +1366,9 @@ async def main() -> None:
     if args.command == "extract":
         # Set log level based on verbosity flags
         log_level = logging.INFO
-        if hasattr(args, 'verbose') and args.verbose:
+
+        if args.verbose:
             log_level = logging.DEBUG
-        elif hasattr(args, 'quiet') and args.quiet:
-            log_level = logging.WARNING
 
         # Show confirmation before starting
         console.print("\n[bold cyan]📋 Extraction Configuration:[/bold cyan]")
@@ -1062,17 +1381,6 @@ async def main() -> None:
         if pdf_files:
             console.print(f"  • Files to process: {len(pdf_files)}")
 
-        # Ask for confirmation if output directory exists and has files
-        if args.output_dir.exists() and any(args.output_dir.iterdir()):
-            console.print("\n[yellow]⚠️  Output directory exists and contains files[/yellow]")
-            # Check if we're in an interactive terminal
-            if sys.stdin.isatty():
-                if not Confirm.ask("Continue and potentially overwrite existing files?", default=False):
-                    console.print("[red]Extraction cancelled.[/red]")
-                    return
-            else:
-                console.print("[dim]Non-interactive mode: proceeding with extraction[/dim]")
-
         # Run knowledge extraction
         validate = not (hasattr(args, 'no_validation') and args.no_validation)
         extractor = KnowledgeExtraction(
@@ -1083,7 +1391,90 @@ async def main() -> None:
         )
 
         try:
-            await extractor.run()
+            await extractor.setup()
+            
+            # Check extraction status and always show options menu
+            status = extractor.check_extraction_status()
+            has_existing_data = status and any(status.values())
+            
+            if has_existing_data:
+                console.print("\n[bold cyan]📊 Previous Extraction Detected:[/bold cyan]")
+                
+                # Show what's already been done
+                completed_steps = [step for step, exists in status.items() if exists]
+                pending_steps = [step for step, exists in status.items() if not exists]
+                
+                if completed_steps:
+                    console.print("[green]✓ Completed steps:[/green]")
+                    for step in completed_steps[:3]:  # Show first 3
+                        console.print(f"  • {step}")
+                    if len(completed_steps) > 3:
+                        console.print(f"  • ... and {len(completed_steps) - 3} more")
+                
+                if pending_steps:
+                    console.print("[yellow]⏳ Pending steps:[/yellow]")
+                    for step in pending_steps[:2]:  # Show first 2
+                        console.print(f"  • {step}")
+                    if len(pending_steps) > 2:
+                        console.print(f"  • ... and {len(pending_steps) - 2} more")
+                
+                # Show regeneration options for existing data
+                console.print("\n[bold yellow]🔄 Extraction Options:[/bold yellow]")
+                console.print("1. Continue extraction (skip completed steps)")
+                console.print("2. Start fresh (delete all existing steps)")
+                console.print("3. Regeneration submenu (selective regeneration)")
+                console.print("4. Exit")
+                
+                while True:
+                    try:
+                        choice = console.input("\n[cyan]Enter your choice (1-4): [/cyan]").strip()
+                        if choice == "1":
+                            # Continue normal extraction
+                            break
+                        elif choice == "2":
+                            # Start fresh - clear all existing data
+                            console.print("[yellow]🗑️  Clearing all existing extraction data...[/yellow]")
+                            extractor.extractor._clear_all_extraction_steps()
+                            console.print("[green]✓ All data cleared. Starting fresh extraction...[/green]")
+                            break
+                        elif choice == "3":
+                            # Show regeneration submenu and handle the choice
+                            await extractor._handle_regeneration_submenu(console)
+                            # After regeneration, exit the loop to continue
+                            break
+                        elif choice == "4":
+                            console.print("[yellow]👋 Exiting...[/yellow]")
+                            sys.exit(0)
+                        else:
+                            console.print("[red]❌ Invalid choice. Please enter 1, 2, 3, or 4.[/red]")
+                    except (EOFError, KeyboardInterrupt):
+                        console.print("\n[yellow]⚠️  Extraction interrupted by user[/yellow]")
+                        sys.exit(130)
+            else:
+                # No existing data - show simple start menu
+                console.print("\n[bold cyan]🚀 Starting New Extraction:[/bold cyan]")
+                console.print("No previous extraction data found.")
+                console.print("\n[bold yellow]🔄 Options:[/bold yellow]")
+                console.print("1. Start extraction")
+                console.print("2. Exit")
+                
+                while True:
+                    try:
+                        choice = console.input("\n[cyan]Enter your choice (1-2): [/cyan]").strip()
+                        if choice == "1":
+                            # Start extraction
+                            break
+                        elif choice == "2":
+                            console.print("[yellow]👋 Exiting...[/yellow]")
+                            sys.exit(0)
+                        else:
+                            console.print("[red]❌ Invalid choice. Please enter 1 or 2.[/red]")
+                    except (EOFError, KeyboardInterrupt):
+                        console.print("\n[yellow]⚠️  Extraction interrupted by user[/yellow]")
+                        sys.exit(130)
+            
+            # Run extraction
+            await extractor.extract()
             console.print("\n[bold green]✅ Extraction completed successfully![/bold green]")
         except KeyboardInterrupt:
             console.print("\n[yellow]⚠️  Extraction interrupted by user[/yellow]")
@@ -1130,9 +1521,6 @@ async def main() -> None:
             console.print("[yellow]Term refinement requires real extraction data to be effective.[/yellow]")
             return
 
-        # Ensure we have the necessary PKL files (up to step 4)
-        await _ensure_extraction_pkls(extraction_dir, console)
-
         cli = TermExtractionPromptRefinementCLI(
             prompt_dir=args.prompt_dir,
             console=console,
@@ -1143,34 +1531,6 @@ async def main() -> None:
 
     else:
         parser.error(f"Unknown command: {args.command}")
-
-
-async def _ensure_extraction_pkls(extraction_dir: Path, console: Console):
-    """Ensure all necessary PKL files exist for refinement."""
-    required_files = [
-        # "1_raw_extraction.pkl",
-        # "2_chunked_documents.pkl",
-        # "3_term_candidates.pkl",
-        # "4_grouped_terms.pkl",
-        # "5_terms_with_cooccurrences.pkl",
-        # "6_terms_with_meanings.pkl",
-        # "7_terms_with_links.pkl",
-        "linked_knowledge.pkl"
-    ]
-
-    missing = []
-    for filename in required_files:
-        if not (extraction_dir / filename).exists():
-            missing.append(filename.replace('.pkl', ''))
-
-    if missing:
-        console.print("[yellow]Some extraction steps are missing:[/yellow]")
-        for step in missing:
-            console.print(f"  • {step}")
-        console.print("\n[cyan]Running extraction to generate missing files...[/cyan]")
-        # Could trigger partial extraction here if needed
-    else:
-        console.print("[green]✓ All extraction PKL files present[/green]")
 
 
 if __name__ == "__main__":

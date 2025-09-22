@@ -26,8 +26,10 @@ from blockether_catalyst.knowledge.KnowledgeTypes import (
     KnowledgePageData,
     KnowledgeTableData,
     LinkedKnowledge,
+    NormalizedDocumentMetadata,
     Term,
     TermCooccurrence,
+    TermInfo,
     TermLink,
     TermOccurrence,
     TermWithLinks,
@@ -135,23 +137,37 @@ def create_sample_dataset() -> LinkedKnowledge:
 
     # Create sample documents
     documents = {
-        "doc1": DocumentMetadata(
+        "doc1": NormalizedDocumentMetadata(
             document_id="doc1",
-            filename="ml_guide.pdf",
+            document_filename="ml_guide.pdf",
+            document_path="ml_guide.pdf",
+            title="ML Guide",
+            subject=None,
+            author=None,
+            modification_date=None,
+            publication_date=None,
             total_pages=3,
             total_chunks=3,
             total_terms=3,
             total_tables=0,
+            total_images=0,
             total_acronyms=1,
             total_keywords=2,
         ),
-        "doc2": DocumentMetadata(
+        "doc2": NormalizedDocumentMetadata(
             document_id="doc2",
-            filename="ai_overview.pdf",
+            document_filename="ai_overview.pdf",
+            document_path="ai_overview.pdf",
+            title="AI Overview",
+            subject=None,
+            author=None,
+            modification_date=None,
+            publication_date=None,
             total_pages=2,
             total_chunks=1,
             total_terms=2,
             total_tables=0,
+            total_images=0,
             total_acronyms=0,
             total_keywords=2,
         ),
@@ -166,7 +182,7 @@ def create_sample_dataset() -> LinkedKnowledge:
             index=0,
             page=1,
             text="Machine learning is a subset of artificial intelligence that enables computers to learn without being explicitly programmed.",
-            terms=["machine learning", "artificial intelligence"],
+            terms={"machine learning": 1, "artificial intelligence": 1},
         ),
         "chunk_2": KnowledgeChunkWithTerms(
             document_id="doc2",
@@ -175,7 +191,7 @@ def create_sample_dataset() -> LinkedKnowledge:
             index=0,
             page=1,
             text="Artificial intelligence has revolutionized many industries through automation and data analysis.",
-            terms=["artificial intelligence"],
+            terms={"artificial intelligence": 1},
         ),
         "chunk_3": KnowledgeChunkWithTerms(
             document_id="doc1",
@@ -184,7 +200,7 @@ def create_sample_dataset() -> LinkedKnowledge:
             index=1,
             page=1,
             text="Modern machine learning algorithms can process vast amounts of data to identify patterns and make predictions.",
-            terms=["machine learning"],
+            terms={"machine learning": 1},
         ),
         "chunk_4": KnowledgeChunkWithTerms(
             document_id="doc1",
@@ -193,7 +209,7 @@ def create_sample_dataset() -> LinkedKnowledge:
             index=2,
             page=2,
             text="RESTful APIs provide a standardized way to interact with web services using HTTP methods.",
-            terms=["API", "REST"],
+            terms={"API": 1, "REST": 1},
         ),
     }
 
@@ -221,35 +237,25 @@ def create_sample_dataset() -> LinkedKnowledge:
         ("doc2", 1): KnowledgePageData(page=1, text="AI overview content from page 1", images=[], tables=[]),
     }
 
-    # Build indices
-    term_to_documents_index = {
-        "machine learning": {"doc1", "doc2"},
-        "artificial intelligence": {"doc2"},
-        "API": {"doc1"},
-        "REST": {"doc1"},
-    }
-
-    document_to_terms_index = {
-        "doc1": {"machine learning", "API", "REST"},
-        "doc2": {"machine learning", "artificial intelligence"},
-    }
-
-    document_to_chunk_ids_index = {
-        "doc1": {"chunk_1", "chunk_3", "chunk_4"},
-        "doc2": {"chunk_2"},
-    }
+    # Build term_to_chunks_index
+    term_to_chunks_index = {}
+    for term_name, term_data in terms.items():
+        chunks_set = set()
+        for occurrence in term_data.occurrences:
+            chunks_set.add((occurrence.document_id, occurrence.chunk_index))
+        term_to_chunks_index[term_name.lower()] = chunks_set
 
     return LinkedKnowledge(
         documents=documents,
+        pages=pages,
         terms=terms,
         chunks=chunks,
-        pages=pages,
-        term_to_documents_index=term_to_documents_index,
-        document_to_terms_index=document_to_terms_index,
-        document_to_chunk_ids_index=document_to_chunk_ids_index,
+        term_to_chunks_index=term_to_chunks_index,
         total_acronyms=2,  # API, ML
         total_keywords=2,  # machine learning, neural network
-        total_chunks=3,  # 3 chunks total
+        total_chunks=4,  # 4 chunks total
+        total_images=1,
+        total_tables=1,
     )
 
 
@@ -264,7 +270,7 @@ def sample_document_chunks() -> List[KnowledgeChunkWithTerms]:
             index=0,
             text="Machine learning algorithms require significant computational power and data preprocessing.",
             page=1,
-            terms=["machine learning", "algorithms"],
+            terms={"machine learning": 1, "algorithms": 1},
         ),
         KnowledgeChunkWithTerms(
             document_id="doc1",
@@ -273,7 +279,7 @@ def sample_document_chunks() -> List[KnowledgeChunkWithTerms]:
             index=1,
             text="API endpoints provide REST interface for accessing ML models and services.",
             page=1,
-            terms=["API", "ML"],
+            terms={"API": 1, "ML": 1},
         ),
         KnowledgeChunkWithTerms(
             document_id="doc1",
@@ -282,28 +288,35 @@ def sample_document_chunks() -> List[KnowledgeChunkWithTerms]:
             index=2,
             text="Deep learning neural networks process complex patterns in large datasets.",
             page=2,
-            terms=["neural networks"],
+            terms={"neural networks": 1},
         ),
     ]
 
 
 @pytest.fixture
-def sample_document() -> DocumentMetadata:
+def sample_document() -> NormalizedDocumentMetadata:
     """Create a sample document metadata."""
-    return DocumentMetadata(
+    return NormalizedDocumentMetadata(
         document_id="doc1",
-        filename="ml_guide.pdf",
+        document_filename="ml_guide.pdf",
+        document_path="ml_guide.pdf",
+        title="ML Guide",
+        subject=None,
+        author=None,
+        modification_date=None,
+        publication_date=None,
         total_pages=2,
         total_chunks=3,
         total_terms=5,
         total_tables=0,
+        total_images=0,
         total_acronyms=1,
         total_keywords=4,
     )
 
 
 @pytest.fixture
-def sample_terms() -> Dict[str, Term]:
+def sample_terms() -> Dict[str, TermWithLinks]:
     """Create sample terms with meanings and co-occurrences."""
     ml_keyword = TermWithLinks(
         term="machine learning",
@@ -478,8 +491,8 @@ def sample_pages() -> Dict[Tuple[str, int], KnowledgePageData]:
 
 @pytest.fixture
 def sample_linked_knowledge(
-    sample_document: DocumentMetadata,
-    sample_terms: Dict[str, Term],
+    sample_document: NormalizedDocumentMetadata,
+    sample_terms: Dict[str, TermWithLinks],
     sample_links: List[TermLink],
     sample_document_chunks: List[KnowledgeChunkWithTerms],
     sample_pages: Dict[Tuple[str, int], KnowledgePageData],
@@ -488,8 +501,13 @@ def sample_linked_knowledge(
     # Convert chunks to the new format
     chunks_dict = {chunk.doc_id: chunk for chunk in sample_document_chunks}
 
-    # Build the document_to_chunk_ids_index
-    document_to_chunk_ids_index = {"doc1": {"doc1_p1_c0", "doc1_p1_c1", "doc1_p2_c2"}}
+    # Build the term_to_chunks_index from terms
+    term_to_chunks_index = {}
+    for term_name, term_data in sample_terms.items():
+        chunks_set = set()
+        for occurrence in term_data.occurrences:
+            chunks_set.add((occurrence.document_id, occurrence.chunk_index))
+        term_to_chunks_index[term_name.lower()] = chunks_set
 
     # Calculate totals from the sample data
     total_acronyms = sum(1 for term in sample_terms.values() if term.type == "acronym")
@@ -498,21 +516,22 @@ def sample_linked_knowledge(
 
     return LinkedKnowledge(
         documents={"doc1": sample_document},
-        terms=sample_terms,
-        links=sample_links,
-        chunks=chunks_dict,
         pages=sample_pages,
-        document_to_chunk_ids_index=document_to_chunk_ids_index,
+        terms=sample_terms,
+        chunks=chunks_dict,
+        term_to_chunks_index=term_to_chunks_index,
         total_acronyms=total_acronyms,
         total_keywords=total_keywords,
         total_chunks=total_chunks,
+        total_images=0,
+        total_tables=1,
     )
 
 
 @pytest.fixture
 def search_core(sample_linked_knowledge: LinkedKnowledge) -> KnowledgeSearchCore:
     """Create initialized KnowledgeSearchCore instance."""
-    return KnowledgeSearchCore(sample_linked_knowledge)
+    return KnowledgeSearchCore(linked_knowledge=sample_linked_knowledge)
 
 
 # ============================================================================
@@ -525,7 +544,7 @@ class TestKnowledgeSearchCoreInitialization:
 
     def test_initialization_with_linked_knowledge(self, sample_linked_knowledge: LinkedKnowledge) -> None:
         """Test proper initialization with LinkedKnowledge."""
-        search_core = KnowledgeSearchCore(sample_linked_knowledge)
+        search_core = KnowledgeSearchCore(linked_knowledge=sample_linked_knowledge)
 
         assert search_core.linked_knowledge == sample_linked_knowledge
         assert search_core._vector_store is not None
@@ -534,20 +553,25 @@ class TestKnowledgeSearchCoreInitialization:
         """Test initialization with empty LinkedKnowledge."""
         empty_knowledge = LinkedKnowledge(
             documents={},
+            pages={},
             terms={},
-            links=[],
+            chunks={},
+            term_to_chunks_index={},
             total_acronyms=0,
             total_keywords=0,
             total_chunks=0,
+            total_images=0,
+            total_tables=0,
         )
-        search_core = KnowledgeSearchCore(empty_knowledge)
+        assert empty_knowledge is not None, "empty_knowledge should not be None"
+        search_core = KnowledgeSearchCore(linked_knowledge=empty_knowledge)
 
         assert search_core.linked_knowledge == empty_knowledge
         assert search_core._vector_store is not None
 
     def test_initialization_builds_indices(self, sample_linked_knowledge: LinkedKnowledge) -> None:
         """Test that initialization properly builds search indices."""
-        search_core = KnowledgeSearchCore(sample_linked_knowledge)
+        search_core = KnowledgeSearchCore(linked_knowledge=sample_linked_knowledge)
 
         # Check that vector store is populated
         assert search_core._vector_store is not None
@@ -660,8 +684,9 @@ class TestKnowledgeSearchCoreSearch:
         # Check that related_terms includes both linked terms and co-occurrences
         for result in results:
             assert isinstance(result.related_terms, list)
-            # All items in related_terms should be Term objects
-            assert all(isinstance(term, Term) for term in result.related_terms)
+            # All items in related_terms should be TermInfo, Term, TermWithLinks objects or strings
+            for term in result.related_terms:
+                assert isinstance(term, (Term, TermWithLinks, TermInfo, str)), f"Unexpected type: {type(term)}"
 
 
 # ============================================================================
@@ -693,7 +718,7 @@ class TestKnowledgeSearchCorePickleIntegration:
             assert pickle_path.exists()
 
             # Create new instance and load from pickle
-            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path)
+            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
 
             # Verify loaded data structure integrity
             assert len(loaded_core.linked_knowledge.documents) == len(dataset.documents)
@@ -714,8 +739,8 @@ class TestKnowledgeSearchCorePickleIntegration:
 
             # Verify specific result content matches
             for orig, loaded in zip(original_ml_results, loaded_ml_results):
-                assert orig.text == loaded.text
-                assert orig.document_id == loaded.document_id
+                assert orig.content == loaded.content
+                assert orig.document_name == loaded.document_name
                 # Enhanced search should have similar data
                 if hasattr(orig, "primary_terms") and hasattr(loaded, "primary_terms"):
                     assert len(orig.primary_terms) == len(loaded.primary_terms)
@@ -737,7 +762,7 @@ class TestKnowledgeSearchCorePickleIntegration:
 
             # Save and load
             original_core.persist()
-            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path)
+            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
 
             # Time loaded search
             start_time = time.time()
@@ -761,7 +786,7 @@ class TestKnowledgeSearchCorePickleIntegration:
             original_core.persist()
 
             # Load and verify term relationships
-            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path)
+            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
 
             # Check that the vector store was properly loaded
             assert loaded_core._vector_store is not None
@@ -787,7 +812,7 @@ class TestKnowledgeSearchCorePickleIntegration:
             original_core.persist()
 
             # Load and verify media content
-            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path)
+            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
 
             # Check images and tables exist
             doc1_page1 = loaded_core.linked_knowledge.pages[("doc1", 1)]
@@ -798,7 +823,7 @@ class TestKnowledgeSearchCorePickleIntegration:
 
             # Verify specific content
             image = doc1_page1.images[0]
-            assert image.href == "/fake/path/image1.png"
+            assert image.path == "/fake/path/image1.png"
 
             table = doc1_page2.tables[0]
             assert table.rows == 3
@@ -821,7 +846,7 @@ class TestKnowledgeSearchCorePickleIntegration:
                 core.persist()
 
                 # Load fresh instance
-                core = KnowledgeSearchCore.from_pickle(pickle_path)
+                core = KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
 
                 # Verify integrity each cycle
                 assert len(core.linked_knowledge.documents) == 2
@@ -877,7 +902,7 @@ class TestKnowledgeSearchPersistence:
         assert pickle_path.exists()
 
         # Load from pickle using class method
-        loaded_search_core = KnowledgeSearchCore.from_pickle(pickle_path)
+        loaded_search_core = KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
 
         # Test search after loading
         results_after = loaded_search_core.search("machine learning", k=2)
@@ -920,7 +945,7 @@ class TestKnowledgeSearchPersistence:
         pickle_path = tmp_path / "nonexistent.pkl"
 
         with pytest.raises(FileNotFoundError):
-            KnowledgeSearchCore.from_pickle(pickle_path)
+            KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
 
 
 # ============================================================================
@@ -955,7 +980,7 @@ class TestKnowledgeSearchCorePerformance:
 
             # Time the loading
             start_time = time.time()
-            KnowledgeSearchCore.from_pickle(pickle_path)
+            KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
             load_time = time.time() - start_time
 
             # Should load in under 0.5 seconds
@@ -1037,7 +1062,7 @@ class TestKnowledgeSearchCorePerformance:
             original_core = KnowledgeSearchCore(linked_knowledge=dataset, pickle_path=pickle_path, auto_load=False)
             original_core.persist()
 
-            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path)
+            loaded_core = KnowledgeSearchCore.from_pickle(pickle_path, resources_base_url=None)
 
             # Test search performance on loaded instance
             start_time = time.time()

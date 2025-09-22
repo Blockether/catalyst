@@ -1,0 +1,12 @@
+{
+  "yaml.schemas": {
+    "https://json.schemastore.org/yamllint.json": ".yamllint"
+  },
+  "yaml.customTags": [
+    "!reference sequence"
+  ],
+  "yaml.validate": true,
+  "[yaml]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml"
+  }
+}

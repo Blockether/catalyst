@@ -76,7 +76,6 @@ class PromptAlignmentCore:
         self._evolution_cache: Dict[str, List[PromptEvolution]] = {}
 
         self._principles: List[AlignmentPrinciple] = []
-        self._successful_patterns: List[Tuple[str, str]] = []  # (prompt, response) pairs
 
     async def align_prompt(self, config: PromptConfiguration) -> AlignmentResult:
         """
@@ -107,7 +106,7 @@ class PromptAlignmentCore:
                 prompt=current_prompt,
                 score=evaluation.alignment_score,
                 feedback=evaluation.feedback,
-                improvements_made=[s.root for s in evaluation.suggested_improvements],
+                improvements_made=[s.value for s in evaluation.suggested_improvements],
             )
             evolution_history.append(evolution)
 
@@ -214,161 +213,6 @@ class PromptAlignmentCore:
         # Apply all principles
         aligned_prompt = self._principle_strategy.apply_principles(prompt, all_principles, preserve_context)
         return aligned_prompt, new_principles
-
-    async def learn_from_success(self, good_prompt: str, response: str) -> List[AlignmentPrinciple]:
-        """
-        Learn principles from a well-crafted prompt-response pair (kudos learning).
-
-        This implements the notebook's approach of learning from successful interactions
-        to extract reusable principles.
-
-        Args:
-            good_prompt: A prompt that produced excellent results
-            response: The successful response generated
-
-        Returns:
-            List of principles extracted from the success
-        """
-        # Store successful pattern
-        self._successful_patterns.append((good_prompt, response))
-
-        # Extract principles from what made this interaction successful
-        analysis_request = f"""
-        Analyze this successful prompt-response pair and extract principles:
-
-        Prompt: {good_prompt}
-
-        Successful Response: {response[:500]}...
-
-        What principles made this prompt effective? Extract reusable guidelines.
-        """
-
-        consensus_result = await self._alignment_consensus.call(analysis_request)
-        feedback = consensus_result.final_response
-        principles = self._principle_strategy.extract_principles(feedback)
-        self._add_principles(principles)
-
-        logger.info(f"Learned {len(principles)} principles from successful interaction")
-        return principles
-
-    async def extract_principles_from_ideal(self, prompt: str, ideal_response: str) -> List[AlignmentPrinciple]:
-        """
-        Extract principles by comparing a prompt with an ideal response.
-
-        This implements the notebook's approach of providing an ideal response
-        to learn what principles should guide prompt creation.
-
-        Args:
-            prompt: The original prompt
-            ideal_response: The ideal response we want to achieve
-
-        Returns:
-            List of principles for achieving the ideal response
-        """
-        comparison_request = f"""
-        Compare this prompt with the ideal response to extract improvement principles:
-
-        Current Prompt: {prompt}
-
-        Ideal Response: {ideal_response}...
-
-        What principles would help the prompt achieve this ideal response?
-        Focus on reusable guidelines that can improve similar prompts.
-        """
-
-        consensus_result = await self._alignment_consensus.call(comparison_request)
-        feedback = consensus_result.final_response
-        principles = self._principle_strategy.extract_principles(feedback)
-
-        # Mark these as high-importance since they come from ideal examples
-        for principle in principles:
-            principle.importance = min(principle.importance * 1.2, 1.0)
-
-        self._add_principles(principles)
-
-        logger.info(f"Extracted {len(principles)} principles from ideal response comparison")
-        return principles
-
-    async def critique_response(self, prompt: str, response: str, target_behavior: str) -> str:
-        """
-        Critique a model response to identify strengths and weaknesses.
-
-        This is step 1 of the notebook's critique-based approach.
-
-        Args:
-            prompt: The prompt that generated the response
-            response: The model's response to critique
-            target_behavior: The desired behavior to align with
-
-        Returns:
-            Detailed critique of the response
-        """
-        critique_request = f"""
-        Critique this model response against the target behavior.
-
-        Prompt: {prompt}
-
-        Model Response: {response}
-
-        Target Behavior: {target_behavior}
-
-        Please provide a detailed critique identifying:
-        1. What works well in this response
-        2. What doesn't align with the target behavior
-        3. Specific areas for improvement
-        4. Why these issues occur
-
-        Focus on being specific and actionable in your critique.
-        """
-
-        consensus_result = await self._alignment_consensus.call(critique_request)
-        critique_feedback = consensus_result.final_response
-        # Extract the critique text from the feedback
-        return critique_feedback.overall_assessment
-
-    async def critique_response_for_principles(
-        self, prompt: str, response: str, target_behavior: str
-    ) -> List[AlignmentPrinciple]:
-        """
-        Extract principles by critiquing a model response.
-
-        This implements the notebook's full critique-to-principles pipeline.
-
-        Args:
-            prompt: The prompt that generated the response
-            response: The model's response to critique
-            target_behavior: The desired behavior to align with
-
-        Returns:
-            List of principles extracted from the critique
-        """
-        # Step 1: Get detailed critique
-        critique = await self.critique_response(prompt, response, target_behavior)
-
-        # Step 2: Extract principles from the critique
-        principle_request = f"""
-        Based on this critique, extract reusable principles for prompt improvement.
-
-        Original Prompt: {prompt}
-        Target Behavior: {target_behavior}
-        Critique: {critique}
-
-        Extract specific, actionable principles that can be applied to improve this and similar prompts.
-        Focus on generalizable guidelines that address the issues identified in the critique.
-        """
-
-        consensus_result = await self._alignment_consensus.call(principle_request)
-        feedback = consensus_result.final_response
-        principles = self._principle_strategy.extract_principles(feedback)
-
-        # Mark critique-derived principles with higher importance
-        for principle in principles:
-            principle.importance = min(principle.importance * 1.1, 1.0)
-
-        self._add_principles(principles)
-
-        logger.info(f"Extracted {len(principles)} principles from response critique")
-        return principles
 
     def _add_principles(self, principles: List[AlignmentPrinciple]) -> None:
         """

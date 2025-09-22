@@ -2,35 +2,28 @@
 PDF Processing Algorithm using pdfplumber for sophisticated table extraction.
 """
 
-import base64
 import hashlib
-import io
 import logging
 import re
 from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import pdfplumber
 from pdfplumber import page
 from pdfplumber.display import PageImage
-from PIL import Image
 
 from .ImageRecognition import ImageRecognition, ImageRecognitionSettings
 from .KnowledgeTypes import (
     DocumentMetadata,
     ImageMetadata,
     KnowledgeExtractionResult,
-    KnowledgePageData,
     KnowledgePageDataWithRawText,
     KnowledgeProcessorSettings,
     KnowledgeTableData,
 )
 from .PDKnowledgeExtractorTypes import (
-    PDFImageProcessingSettings,
     PDFKnowledgeProcessorSettings,
-    PDFPageCropOffset,
     PDFProcessorTableExtractionSettings,
     PDFProcessorTextExtractionSettings,
 )
@@ -58,9 +51,7 @@ class PDFKnowledgeExtractor:
         self._settings = knowledge_settings.pdf_settings
         self._table_settings = self._settings.pdf_table_extraction or PDFProcessorTableExtractionSettings()
         self._text_extraction_settings = self._settings.pdf_text_extraction or PDFProcessorTextExtractionSettings()
-        self._pdf_image_processing_settings = self._settings.pdf_image_processing or PDFImageProcessingSettings()
-        self._current_document: Optional[str] = None
-        self._current_document_path: Optional[Path] = None
+        # REMOVED instance variables that caused thread-safety issues
         self._image_output_dir = image_output_dir
 
     @property
@@ -87,9 +78,9 @@ class PDFKnowledgeExtractor:
             source_type="pdf",
         )
 
-        # Store document name and path for logging and image naming
-        self._current_document = source.name
-        self._current_document_path = source
+        # Pass document info as parameters for thread-safety
+        current_document = source.name
+        current_document_path = source
 
         with pdfplumber.open(source) as pdf:
             # Extract metadata
@@ -111,7 +102,7 @@ class PDFKnowledgeExtractor:
                 page_image = None
 
                 page = self._crop_page(page, page_image)
-                page_data = self._process_page(page)
+                page_data = self._process_page(page, current_document, current_document_path)
 
                 # Add processed page to results
                 result.pages.append(page_data)
@@ -132,10 +123,12 @@ class PDFKnowledgeExtractor:
     def _process_page(
         self,
         page: page.Page,
+        current_document: str,
+        current_document_path: Path,
     ) -> KnowledgePageDataWithRawText:
         """Process a single PDF page."""
         # Extract tables
-        tables = self._extract_tables_from_page(page)
+        tables = self._extract_tables_from_page(page, current_document)
 
         # Get table bounding boxes
         table_bboxes = [table.bbox for table in tables]
@@ -146,7 +139,7 @@ class PDFKnowledgeExtractor:
         base_text = page_without_tables.extract_text(**self._text_extraction_settings.model_dump()) or ""
 
         # Extract image
-        images = self._extract_images_from_page(page, context=base_text)
+        images = self._extract_images_from_page(page, context=base_text, current_document=current_document, current_document_path=current_document_path)
 
         # Fix hyphenated line breaks immediately after extraction
         base_text = self._fix_hyphenated_line_breaks(base_text)
@@ -236,6 +229,7 @@ class PDFKnowledgeExtractor:
     def _extract_tables_from_page(
         self,
         page: page.Page,
+        current_document: str,
     ) -> List[PDFTableData]:
         """Extract all tables from a page using pdfplumber."""
         tables = []
@@ -263,7 +257,7 @@ class PDFKnowledgeExtractor:
 
             except Exception as e:
                 self._logger.warning(
-                    f"[{self._current_document}] Error extracting table on page {page.page_number}: {e}"
+                    f"[{current_document}] Error extracting table on page {page.page_number}: {e}"
                 )
 
         return tables
@@ -272,6 +266,8 @@ class PDFKnowledgeExtractor:
         self,
         page: page.Page,
         context: str,
+        current_document: str,
+        current_document_path: Path,
     ) -> List[ImageMetadata]:
         """Extract non-decorative images from page and save to files
 
@@ -289,7 +285,7 @@ class PDFKnowledgeExtractor:
                 img_height = img_obj.get("height", 0)
                 if img_height < 64:
                     self._logger.info(
-                        f"[{self._current_document}] Skipped small image on page {page.page_number}: "
+                        f"[{current_document}] Skipped small image on page {page.page_number}: "
                         f"{img_width}x{img_height} pixels (height < 64px)"
                     )
                     continue
@@ -308,16 +304,16 @@ class PDFKnowledgeExtractor:
                     page_image = cropped.to_image(resolution=300, antialias=True)
 
                     # Create filename based on PDF name and page number
-                    pdf_stem = self._current_document_path.stem if self._current_document_path else "document"
+                    pdf_stem = current_document_path.stem if current_document_path else "document"
                     image_filename = f"{pdf_stem}_page_{page.page_number}_img_{idx + 1}.png"
                     image_path = self._image_output_dir / image_filename
                     image = page_image.original
 
-                    if not self._current_document:
+                    if not current_document:
                         raise ValueError("Current document name is not set for image naming.")
 
                     metadata = ImageMetadata(
-                        document_name=self._current_document,
+                        document_name=current_document,
                         page=page.page_number,
                         path=str(image_path),
                         caption=self._image_recognition.caption_for_image(image, context=context),
@@ -330,12 +326,12 @@ class PDFKnowledgeExtractor:
                     images.append(metadata)
 
                     self._logger.info(
-                        f"[{self._current_document}] Saved image from page {page.page_number}: {image_filename}"
+                        f"[{current_document}] Saved image from page {page.page_number}: {image_filename}"
                     )
 
             except Exception as e:
                 self._logger.warning(
-                    f"[{self._current_document}] Error processing image {idx} on page {page.page_number}: {e}"
+                    f"[{current_document}] Error processing image {idx} on page {page.page_number}: {e}"
                 )
 
         return images

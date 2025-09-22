@@ -56,7 +56,7 @@ class PDFOptimizer:
 
         print(f"PDFOptimizer: Batch optimization complete. Processed {len(pdf_files)} files.")
 
-    def _optimize_all_pdf_files(self):
+    def _optimize_all_pdf_files(self) -> list[Path]:
         pdf_files = self._find_pdf_files()
 
         print(f"PDFOptimizer: Found {len(pdf_files)} PDF files to optimize")

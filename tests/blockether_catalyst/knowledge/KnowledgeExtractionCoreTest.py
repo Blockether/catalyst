@@ -10,6 +10,7 @@ import anyio
 import pytest
 
 from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+    BaseChunkContentClassificationCall,
     BaseDocumentChunkingCall,
     BaseTermExtractionCall,
     ExtractionCallsSettings,
@@ -32,10 +33,12 @@ class TestKnowledgeExtractionCore:
         """Create mock extraction calls settings."""
         mock_term_extraction = MagicMock(spec=BaseTermExtractionCall)
         mock_document_chunking = MagicMock(spec=BaseDocumentChunkingCall)
+        mock_chunk_classification = MagicMock(spec=BaseChunkContentClassificationCall)
 
         return ExtractionCallsSettings(
             term_extraction_call=mock_term_extraction,
             document_chunking_call=mock_document_chunking,
+            chunk_content_classification_call=mock_chunk_classification,
         )
 
     @pytest.fixture
@@ -57,9 +60,12 @@ class TestKnowledgeExtractionCore:
         """
         Test extraction with documents containing only acronyms.
         """
+        from blockether_catalyst.knowledge.KnowledgeTypes import DocumentMetadata
+
         document = KnowledgeExtractionResultWithChunks(
             id="test-acronyms",
-            filename="test_acronyms.pdf",
+            document_filename="test_acronyms.pdf",
+            document_metadata=DocumentMetadata(document_path="test_acronyms.pdf"),
             source_type="pdf",
             chunks=[
                 KnowledgeChunk(
@@ -89,9 +95,12 @@ class TestKnowledgeExtractionCore:
         """
         Test extraction with empty document (no chunks).
         """
+        from blockether_catalyst.knowledge.KnowledgeTypes import DocumentMetadata
+
         document = KnowledgeExtractionResultWithChunks(
             id="test-empty",
-            filename="test_empty.pdf",
+            document_filename="test_empty.pdf",
+            document_metadata=DocumentMetadata(document_path="test_empty.pdf"),
             source_type="pdf",
             chunks=[],  # Empty chunks
         )
@@ -106,9 +115,12 @@ class TestKnowledgeExtractionCore:
         """
         Test extraction with chunks containing empty text.
         """
+        from blockether_catalyst.knowledge.KnowledgeTypes import DocumentMetadata
+
         document = KnowledgeExtractionResultWithChunks(
             id="test-empty-text",
-            filename="test_empty_text.pdf",
+            document_filename="test_empty_text.pdf",
+            document_metadata=DocumentMetadata(document_path="test_empty_text.pdf"),
             source_type="pdf",
             chunks=[
                 KnowledgeChunk(
@@ -140,9 +152,12 @@ class TestKnowledgeExtractionCore:
         """
         Test extraction with documents containing both keywords and acronyms.
         """
+        from blockether_catalyst.knowledge.KnowledgeTypes import DocumentMetadata
+
         document = KnowledgeExtractionResultWithChunks(
             id="test-mixed",
-            filename="test_mixed.pdf",
+            document_filename="test_mixed.pdf",
+            document_metadata=DocumentMetadata(document_path="test_mixed.pdf"),
             source_type="pdf",
             chunks=[
                 KnowledgeChunk(
@@ -177,9 +192,12 @@ class TestKnowledgeExtractionCore:
         """
         Test that special characters in acronyms are handled correctly.
         """
+        from blockether_catalyst.knowledge.KnowledgeTypes import DocumentMetadata
+
         document = KnowledgeExtractionResultWithChunks(
             id="test-special",
-            filename="test_special.pdf",
+            document_filename="test_special.pdf",
+            document_metadata=DocumentMetadata(document_path="test_special.pdf"),
             source_type="pdf",
             chunks=[
                 KnowledgeChunk(
@@ -221,8 +239,14 @@ class TestKnowledgeExtractionCore:
                 )
             )
 
+        from blockether_catalyst.knowledge.KnowledgeTypes import DocumentMetadata
+
         document = KnowledgeExtractionResultWithChunks(
-            id="test-large", filename="test_large.pdf", source_type="pdf", chunks=chunks
+            id="test-large",
+            document_filename="test_large.pdf",
+            document_metadata=DocumentMetadata(document_path="test_large.pdf"),
+            source_type="pdf",
+            chunks=chunks,
         )
 
         terms = await extractor._extract_terms_from_document(document)

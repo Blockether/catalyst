@@ -4,11 +4,12 @@ ASGI Core Module - Base class for modular ASGI components
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, Environment, FileSystemLoader
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -148,7 +149,10 @@ class ASGIModuleConfig(BaseModel):
     description: str = Field(description="Module description")
 
     statics: List[StaticMount] = Field(default_factory=list, description="Static file mounts for this module")
-    templates: Optional[Jinja2Templates] = Field(description="Jinja2 templates for this module")
+    templates: Optional[Jinja2Templates] = Field(default=None, description="Jinja2 templates for this module")
+    template_dirs: Optional[Union[Path, List[Path]]] = Field(
+        default=None, description="Template directories for this module"
+    )
     extensions: Optional[ASGIModuleExtensionsConfig] = Field(
         default=None,
         description="Optional extensions configuration",
@@ -160,6 +164,37 @@ class ASGIModuleConfig(BaseModel):
 class ASGICoreModule(ASGIModuleConfig, ABC):
     """Base class for ASGI modules that can be mounted to ASGICoreApplication."""
 
+    def _setup_template_inheritance(self) -> None:
+        """Set up template inheritance with ChoiceLoader.
+
+        This method configures a template loader that searches in multiple directories:
+        1. Module-specific templates (if provided)
+        2. Parent ASGI templates as fallback
+        """
+        # Convert single path to list for uniform handling
+        if isinstance(self.template_dirs, Path):
+            template_paths = [self.template_dirs]
+        else:
+            template_paths = self.template_dirs if self.template_dirs else []
+
+        # Add parent ASGI templates as fallback
+        parent_template_path = Path(__file__).parent / "templates"
+        if parent_template_path.exists() and parent_template_path not in template_paths:
+            template_paths.append(parent_template_path)
+
+        # Create loaders for each path
+        loaders = [FileSystemLoader(path) for path in template_paths if path and Path(path).exists()]
+
+        if loaders:
+            # Create ChoiceLoader for template inheritance
+            template_loader = ChoiceLoader(loaders) if len(loaders) > 1 else loaders[0]
+
+            # Create Jinja2 environment with security enabled
+            template_env = Environment(loader=template_loader, autoescape=True)
+
+            # Initialize templates
+            self.templates = Jinja2Templates(env=template_env)
+
     def model_post_init(self, __context: Any) -> None:
         """Post-initialization to set up computed fields and templates."""
         # Set title if not provided
@@ -169,6 +204,10 @@ class ASGICoreModule(ASGIModuleConfig, ABC):
         # Set description if not provided
         if self.description is None:
             self.description = f"{self.title} Module"
+
+        # Set up templates with inheritance if template_dirs is specified
+        if self.template_dirs and not self.templates:
+            self._setup_template_inheritance()
 
     @abstractmethod
     def mount(self, app: FastAPI, router: APIRouter) -> None:

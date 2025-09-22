@@ -21,10 +21,14 @@ from blockether_catalyst.knowledge.KnowledgeVectorizers import KnowledgeVectoriz
 
 from ..encoder.EncoderCore import EncoderCore
 from .KnowledgeTypes import (
+    ImageInfo,
     KnowledgeSearchResult,
     LinkedKnowledge,
+    NormalizedSearchResult,
     SearchResult,
     SearchResultMetadata,
+    TableInfo,
+    TermInfo,
     TermWithLinks,
     TopTermsResult,
 )
@@ -119,19 +123,24 @@ class KnowledgeSearchCore:
         self._resources_base_url = resources_base_url
 
         self.pickle_path = Path(pickle_path) if pickle_path else None
-        if not linked_knowledge and auto_load and self.pickle_path and self.pickle_path.exists():
+
+        # Debug logging
+        logger.debug(
+            f"KnowledgeSearchCore init called with linked_knowledge={type(linked_knowledge)}, is None: {linked_knowledge is None}"
+        )
+
+        if linked_knowledge is None and auto_load and self.pickle_path and self.pickle_path.exists():
             logger.info(f"Loading KnowledgeSearchCore from pickle: {self.pickle_path}")
             self._load(self.pickle_path)
             self._is_initialized_from_state = True
             return
-        else:
-            # Otherwise, initialize from linked_knowledge
-            if linked_knowledge is None:
-                raise ValueError("linked_knowledge is required when not loading from pickle")
+        elif linked_knowledge is None:
+            # If no pickle file and no linked_knowledge, raise error
+            raise ValueError("linked_knowledge is required when not loading from pickle")
 
-            self._linked_knowledge = linked_knowledge
-            self._vector_store = InMemoryVectorStore(embedding=EncoderEmbeddings())
-            self._is_initialized_from_state = False
+        self._linked_knowledge = linked_knowledge
+        self._vector_store = InMemoryVectorStore(embedding=EncoderEmbeddings())
+        self._is_initialized_from_state = False
 
         # Populate vector store with all chunks
         self._populate_vector_store()
@@ -144,7 +153,7 @@ class KnowledgeSearchCore:
         """Get the underlying linked knowledge structure."""
         return self._linked_knowledge
 
-    def resolve_term(self, term_key: str) -> Optional[TermWithLinks]:
+    def _resolve_term(self, term_key: str) -> Optional[TermWithLinks]:
         """
         Resolve a term key to its TermWithLinks object.
 
@@ -247,7 +256,7 @@ class KnowledgeSearchCore:
         threshold: float = DEFAULT_THRESHOLD,
         max_depth: int = DEFAULT_MAX_DEPTH,
         max_cooccurrences: int = DEFAULT_MAX_COOCCURRENCES,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[NormalizedSearchResult]:
         """
         Perform enhanced search and return normalized results ready for consumption.
 
@@ -261,7 +270,7 @@ class KnowledgeSearchCore:
         3. Analyzes term frequencies in the query
         4. Calculates relevance scores based on term statistics
         5. Sorts results using both similarity and term relevance
-        6. Returns normalized results in TypedDict format
+        6. Returns normalized results as Pydantic models
 
         Args:
             query: Search query text
@@ -271,17 +280,14 @@ class KnowledgeSearchCore:
             max_cooccurrences: Maximum number of co-occurring terms to include
 
         Returns:
-            List of normalized search results ready for consumption
+            List of NormalizedSearchResult Pydantic models ready for consumption
         """
         start_time = time.time()
         logger.info(f"Performing enhanced search for query: '{query}'")
 
         vectorizers = KnowledgeVectorizers(keywords_min_df=1, acronyms_min_df=1)
 
-        # Perform vector search (get more results initially for better ranking)
-        search_results = self._similarity_search(query, k=k * 2, threshold=threshold)
-
-        # Extract top keywords and acronyms from the query
+        # Extract top keywords and acronyms from the query FIRST
         top_terms = self._get_top_keywords_and_acronyms(
             query,
             vectorizers,
@@ -297,56 +303,121 @@ class KnowledgeSearchCore:
         if top_terms.acronyms:
             logger.info(f"Top acronyms from query: {top_terms.acronyms[: self.MAX_TOP_ACRONYMS_FROM_QUERY]}")
 
+        # CRITICAL FIX: Get more results with a lower threshold for acronym/keyword matching
+        # We'll filter by the actual threshold AFTER checking for acronym/keyword matches
+        search_threshold = min(threshold, 0.3) if (top_terms.acronyms or top_terms.keywords) else threshold
+
+        # Perform vector search (get more results initially for better ranking)
+        # Use the lower threshold to ensure we don't miss acronym/keyword matches
+        search_results = self._similarity_search(query, k=k * 3, threshold=search_threshold)
+
         # Enhance search results with term analysis and boosting
         # The function now handles efficient top-k selection internally
         enhanced_results = self._enhance_search_results(
-            search_results, query, top_terms, max_depth, max_cooccurrences, k
+            search_results, query, top_terms, max_depth, max_cooccurrences, k * 2  # Get more for filtering
         )
 
-        # Convert to normalized format
-        normalized_results: List[Dict[str, Any]] = []
+        # Filter enhanced results based on acronym/keyword matches
+        final_results = []
+
+        # Create sets for fast lookup
+        query_acronyms = {ac[0].lower() for ac in top_terms.acronyms}
+        query_keywords = {kw[0].lower() for kw in top_terms.keywords}
 
         for result in enhanced_results:
+            # Check if this result contains any of the query acronyms/keywords
+            contains_query_terms = False
+
+            if query_acronyms or query_keywords:
+                # Check primary terms for matches
+                for term in result.primary_terms:
+                    term_lower = term.term.lower()
+                    if term_lower in query_acronyms or term_lower in query_keywords:
+                        contains_query_terms = True
+                        break
+
+                # If not found in primary, check the text content
+                if not contains_query_terms:
+                    text_lower = result.text.lower()
+                    for acronym in query_acronyms:
+                        if acronym in text_lower:
+                            contains_query_terms = True
+                            break
+                    if not contains_query_terms:
+                        for keyword in query_keywords:
+                            if keyword in text_lower:
+                                contains_query_terms = True
+                                break
+
+            # Include result if:
+            # 1. It contains query acronyms/keywords (regardless of score), OR
+            # 2. Its score meets the threshold (for non-acronym/keyword matches)
+            if contains_query_terms:
+                logger.debug(f"Including result with score {result.score:.3f} - contains query terms")
+                final_results.append(result)
+            elif result.score >= threshold:
+                final_results.append(result)
+            else:
+                logger.debug(f"Filtering out result with score {result.score:.3f} - below threshold and no query terms")
+
+        # Sort by final score and take top k
+        final_results.sort(key=lambda r: r.final_score, reverse=True)
+        final_results = final_results[:k]
+
+        # Convert to NormalizedSearchResult Pydantic models
+        normalized_results: List[NormalizedSearchResult] = []
+
+        for result in final_results:
             # Build document reference with href (properly encoded)
             doc_href = ""
             if self._resources_base_url and result.document_path:
                 # Encode the path to handle spaces and special characters
-                encoded_path = quote(result.document_path, safe='/')
+                encoded_path = quote(result.document_path, safe="/")
                 doc_href = f"{self._resources_base_url}/{encoded_path}"
 
-            # Simplified normalized result
-            normalized_result = {
-                "score": result.score,
-                "content": result.text,
-                "document_name": result.document_name,
-                "page": result.page,
-                "author": result.metadata.author if result.metadata else None,
-                "publication_date": result.metadata.publication_date if result.metadata else None,
-                "modified_date": result.metadata.modified_date if result.metadata else None,
-                "href": doc_href,
-                "images": [
-                    {
-                        "caption": img.caption,
-                        "href": f"{self._resources_base_url}/{quote(img.path, safe='/')}",
-                        "page": img.page,
-                    }
-                    for img in result.images
-                ],
-                "tables": [
-                    {
-                        "markdown": table.to_markdown(),
-                        "page": table.page,
-                    }
-                    for table in result.tables
-                ],
-                "primary_terms": [self._normalize_term_info(term, k) for term in result.primary_terms[:k]],
-                "related_terms": [self._normalize_term_info(term, int(k / 2)) for term in result.related_terms[:3]],
-            }
+            # Convert images to ImageInfo models
+            images = []
+            for img in result.images:
+                images.append(
+                    ImageInfo(
+                        caption=img.caption,
+                        href=f"{self._resources_base_url}/{quote(img.path, safe='/')}",
+                        page=img.page,
+                        document_name=result.document_name,
+                    )
+                )
 
-            # Clean empty values from the result before appending
-            cleaned_result = self._clean_empty_values(normalized_result)
-            if cleaned_result:  # Only append if result is not empty after cleaning
-                normalized_results.append(cleaned_result)
+            # Convert tables to TableInfo models
+            tables = []
+            for table in result.tables:
+                tables.append(
+                    TableInfo(
+                        markdown_content=table.to_markdown(),
+                        page=table.page,
+                    )
+                )
+
+            # Convert terms to TermInfo models
+            primary_terms = [self._convert_to_term_info(term, k) for term in result.primary_terms[:k]]
+            related_terms = [self._convert_to_term_info(term, int(k / 2)) for term in result.related_terms[:3]]
+
+            # Create NormalizedSearchResult
+            normalized_result = NormalizedSearchResult(
+                score=result.score,
+                content=result.text,
+                document_name=result.document_name,
+                page=result.page if result.page else None,
+                author=result.metadata.author if result.metadata else None,
+                publication_date=result.metadata.publication_date if result.metadata else None,
+                modified_date=result.metadata.modified_date if result.metadata else None,
+                href=doc_href if doc_href else None,
+                images=images,
+                tables=tables,
+                primary_terms=[term for term in primary_terms if term],  # Filter out None values
+                related_terms=[term for term in related_terms if term],  # Filter out None values
+            )
+
+            normalized_results.append(normalized_result)
 
         search_time = time.time() - start_time
         logger.info(
@@ -660,13 +731,13 @@ class KnowledgeSearchCore:
             return cleaned if cleaned else None
 
         if isinstance(data, list):
-            cleaned = []
+            cleaned_list: list = []
             for item in data:
                 cleaned_item = self._clean_empty_values(item)
                 # Only include non-empty items
                 if cleaned_item is not None and cleaned_item != "" and cleaned_item != [] and cleaned_item != {}:
-                    cleaned.append(cleaned_item)
-            return cleaned if cleaned else None
+                    cleaned_list.append(cleaned_item)
+            return cleaned_list if cleaned_list else None
 
         # For strings, check if empty
         if isinstance(data, str):
@@ -675,48 +746,44 @@ class KnowledgeSearchCore:
         # For other types, return as is
         return data
 
-    def _normalize_term_info(self, term: TermWithLinks, link_limit: int) -> Dict[str, Any]:
+    def _convert_to_term_info(self, term: TermWithLinks, link_limit: int) -> Optional[TermInfo]:
         """
-        Normalize a term with its linked terms into a simple dictionary format.
+        Convert a TermWithLinks to a TermInfo Pydantic model.
 
         Args:
-            term: The term to normalize
+            term: The term to convert
             link_limit: Maximum number of linked terms to include
 
         Returns:
-            Normalized term information as dictionary with empty values removed
+            TermInfo model or None if conversion fails
         """
         # Resolve linked terms
         linked_terms = []
 
         for link in term.links[:link_limit]:
             # Resolve the link_to string to get the actual term object
-            linked_term = self.resolve_term(link.link_to)
+            linked_term = self._resolve_term(link.link_to)
             if linked_term:
                 linked_terms.append(
-                    {
-                        "term": linked_term.term,
-                        "meaning": linked_term.meaning[:250] if linked_term.meaning else None,
-                        "term_type": linked_term.type,
-                        "link_score": link.score,
-                        "total_times_occurred_in_knowledgebase": linked_term.total,
-                    }
+                    TermInfo(
+                        term=linked_term.term,
+                        meaning=linked_term.meaning[:600] if linked_term.meaning else None,
+                        term_type=linked_term.type,
+                        link_score=link.score,
+                        total_times_occurred_in_knowledgebase=linked_term.total,
+                    )
                 )
 
         # Sort linked terms by score
-        linked_terms.sort(key=lambda x: x["link_score"], reverse=True)
+        linked_terms.sort(key=lambda x: x.link_score if x.link_score else 0, reverse=True)
 
-        result = {
-            "term": term.term,
-            "meaning": term.meaning,
-            "term_type": term.type,
-            "total_times_occurred_in_knowledgebase": term.total,
-            "linked_terms": linked_terms,
-        }
-
-        # Clean empty values recursively
-        cleaned_result = self._clean_empty_values(result)
-        return cleaned_result if cleaned_result else {}
+        return TermInfo(
+            term=term.term,
+            meaning=term.meaning,
+            term_type=term.type,
+            total_times_occurred_in_knowledgebase=term.total,
+            linked_terms=linked_terms,
+        )
 
     def _resolve_linked_terms(
         self,
@@ -788,6 +855,19 @@ class KnowledgeSearchCore:
 
             result.images.extend(page_data.images)
             result.tables.extend(page_data.tables)
+
+    def get_extraction_details(self) -> Dict[str, Any]:
+        """Get extraction details using the configured resources base URL.
+
+        Returns:
+            Dictionary containing all extraction details with proper URLs
+        """
+        if not self._linked_knowledge:
+            return {}
+
+        return self._linked_knowledge.get_extraction_details(
+            base_url=self._resources_base_url or ""
+        )
 
     def persist(self, path: Optional[Union[str, Path]] = None) -> None:
         """

@@ -93,7 +93,7 @@ class FieldComparator:
 
         if strategy == ComparisonStrategy.EXACT:
             # Python's == handles lists, dicts, and most types correctly
-            return value1 == value2
+            return bool(value1 == value2)
 
         if strategy == ComparisonStrategy.RANGE:
             if not isinstance(value1, (int, float)) or not isinstance(value2, (int, float)):
@@ -184,7 +184,28 @@ class FieldComparator:
     def _compare_model_derived(obj1: Any, obj2: Any, threshold: float) -> bool:
         """Compare two BaseModel objects using recursive field comparison."""
         # Import here to avoid circular dependency
-        from pydantic import BaseModel
+        from pydantic import BaseModel, RootModel
+
+        # Handle RootModel special case
+        if isinstance(obj1, RootModel) and isinstance(obj2, RootModel):
+            if type(obj1) is not type(obj2):
+                return False
+            # For RootModel, compare the root values directly
+            # Check if the RootModel has any special comparison metadata
+            root_field = obj1.__class__.model_fields.get("root")
+            if root_field:
+                voting_meta = FieldComparator._extract_voting_metadata(root_field)
+                return FieldComparator.compare_fields(
+                    obj1.root,
+                    obj2.root,
+                    strategy=voting_meta.strategy,
+                    tolerance=voting_meta.tolerance,
+                    threshold=voting_meta.threshold,
+                    decimal_places=voting_meta.decimal_places,
+                    custom_comparator=voting_meta.custom_comparator,
+                )
+            # Fallback to direct comparison
+            return FieldComparator._compare_items_recursively(obj1.root, obj2.root, threshold)
 
         if not isinstance(obj1, BaseModel) or not isinstance(obj2, BaseModel):
             return bool(obj1 == obj2)
@@ -226,9 +247,12 @@ class FieldComparator:
     def _compare_items_recursively(item1: Any, item2: Any, threshold: float) -> bool:
         """Compare two items recursively based on their type."""
         # Import here to avoid circular dependency
-        from pydantic import BaseModel
+        from pydantic import BaseModel, RootModel
 
-        if isinstance(item1, BaseModel) and isinstance(item2, BaseModel):
+        # RootModel is also a BaseModel, so check for it first
+        if isinstance(item1, RootModel) and isinstance(item2, RootModel):
+            return FieldComparator._compare_model_derived(item1, item2, threshold)
+        elif isinstance(item1, BaseModel) and isinstance(item2, BaseModel):
             return FieldComparator._compare_model_derived(item1, item2, threshold)
         elif isinstance(item1, (list, tuple)) and isinstance(item2, (list, tuple)):
             return FieldComparator._compare_sequence_unordered_derived(item1, item2, threshold)
@@ -327,7 +351,7 @@ def VotingField(
     """
     Enhanced Field function that includes voting comparison metadata.
 
-    Works exactly like Pydantic's Field() but adds voting comparison strategy.
+    Works with both regular BaseModel fields AND RootModel root fields!
     All standard Field parameters are supported (default, description, alias, etc.)
 
     Args:
@@ -339,30 +363,21 @@ def VotingField(
         **kwargs: All standard Pydantic Field keyword arguments
 
     Usage:
+        # Regular BaseModel field
         class MyResponse(BaseModelWithReasoning):
-            # Exact match required for this field (default behavior)
             answer: int = VotingField(description="The answer")
-
-            # This field is ignored during voting
             confidence: float = VotingField(
                 default=0.0,
                 comparison=ComparisonStrategy.IGNORE,
                 description="Model confidence"
             )
 
-            # Values within 10% are considered equal
-            score: float = VotingField(
-                comparison=ComparisonStrategy.RANGE,
-                tolerance=0.1,
-                ge=0,  # Standard Field validation still works
-                le=100
-            )
-
-            # Semantic similarity with custom threshold
-            description: str = VotingField(
+        # RootModel - VotingField works here too!
+        class SemanticString(RootModel[str]):
+            root: str = VotingField(
                 comparison=ComparisonStrategy.SEMANTIC,
-                threshold=0.75,  # 75% cosine similarity required
-                description="Description with semantic matching"
+                threshold=0.75,
+                description="Semantic string"
             )
     """
     # Store comparison metadata in the field's json_schema_extra

@@ -43,7 +43,10 @@ class TestPromptAlignmentCLIBase:
         prompts_dir.mkdir(exist_ok=True)
         test_file = prompts_dir / "test.txt"
         test_file.write_text("Test prompt with {placeholder1} and {placeholder2}")
-        return self.ConcreteImplementation(prompt_name="test", prompt_dir=prompts_dir)
+
+        # Use tmp_path for output directory to avoid creating real directories
+        output_dir = tmp_path / "output" / "test_responses"
+        return self.ConcreteImplementation(prompt_name="test", prompt_dir=prompts_dir, output_dir=output_dir)
 
     def test_get_prompt_placeholders_extraction(self, cli_instance):
         """Test that placeholders are correctly extracted from prompt."""
@@ -198,7 +201,11 @@ class TestPromptAlignmentCLIBase:
         cli_instance._save_prompt_template(custom_prompt)
 
         # Create new instance to test loading
-        new_instance = self.ConcreteImplementation(prompt_name="test", prompt_dir=cli_instance.prompt_dir)
+        new_instance = self.ConcreteImplementation(
+            prompt_name="test",
+            prompt_dir=cli_instance.prompt_dir,
+            output_dir=cli_instance.output_dir,
+        )
 
         loaded_prompt = new_instance._load_prompt_template()
         assert loaded_prompt == custom_prompt

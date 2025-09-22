@@ -6,6 +6,6 @@ pytest_plugins = ("anyio",)
 
 
 @pytest.fixture
-def anyio_backend():
+def anyio_backend() -> str:
     """Configure anyio to test with trio backend only."""
     return "trio"

@@ -79,10 +79,20 @@ class TestConsensusCore:
         """Test creating Consensus with defaults."""
         models = [
             core.model(
-                id="test-model",
+                id="test-model-1",
                 executor=mock_executor,
-                perspective="As a test model",
-            )
+                perspective="As test model 1",
+            ),
+            core.model(
+                id="test-model-2",
+                executor=mock_executor,
+                perspective="As test model 2",
+            ),
+            core.model(
+                id="test-model-3",
+                executor=mock_executor,
+                perspective="As test model 3",
+            ),
         ]
         judge = mock_executor  # Use same executor as judge
         consensus = core.consensus(models=models, judge=judge)
@@ -90,17 +100,28 @@ class TestConsensusCore:
         assert consensus.__class__.__name__ == "Consensus"
         assert consensus.settings.max_rounds == 5
         assert consensus.settings.threshold == 0.5
-        assert consensus.settings.first_round_threshold == 0.75
+        # First round threshold is auto-adjusted for 3 models (max is 0.667)
+        assert consensus.settings.first_round_threshold < 0.667
         assert consensus.settings.max_concurrent_calls == 10
 
     def test_consensus_with_settings(self, core: Any, mock_executor: Any) -> None:
         """Test creating Consensus with custom settings."""
         models = [
             core.model(
-                id="test-model",
+                id="test-model-1",
                 executor=mock_executor,
-                perspective="As a test model",
-            )
+                perspective="As test model 1",
+            ),
+            core.model(
+                id="test-model-2",
+                executor=mock_executor,
+                perspective="As test model 2",
+            ),
+            core.model(
+                id="test-model-3",
+                executor=mock_executor,
+                perspective="As test model 3",
+            ),
         ]
         settings = ConsensusSettings(
             max_concurrent_calls=5,
@@ -113,7 +134,8 @@ class TestConsensusCore:
         assert consensus.settings.max_concurrent_calls == 5
         assert consensus.settings.max_rounds == 5
         assert consensus.settings.threshold == 0.5
-        assert consensus.settings.first_round_threshold == 0.75  # Default super-majority
+        # First round threshold is auto-adjusted for 3 models (max is 0.667)
+        assert consensus.settings.first_round_threshold < 0.667
 
     def test_configuration(self, core: Any, mock_executor: Any) -> None:
         """Test creating model configuration."""
@@ -198,16 +220,19 @@ class TestConsensusCore:
         mock_call = MockTypedCall(answer="static_test_answer", confidence=0.96)
 
         # Test static method without instance
-        config = ConsensusCore.model(id="static-test", executor=mock_call, perspective="As a static test")
-        assert config.id == "static-test"
-        assert config.perspective == "As a static test"
-        assert config.weight_multiplier == 1.0
+        config1 = ConsensusCore.model(id="static-test-1", executor=mock_call, perspective="As static test 1")
+        config2 = ConsensusCore.model(id="static-test-2", executor=mock_call, perspective="As static test 2")
+        config3 = ConsensusCore.model(id="static-test-3", executor=mock_call, perspective="As static test 3")
+        assert config1.id == "static-test-1"
+        assert config1.perspective == "As static test 1"
+        assert config1.weight_multiplier == 1.0
 
-        # Test hashgraph consensus creation
-        consensus = ConsensusCore.consensus(models=[config], judge=mock_call)
+        consensus = ConsensusCore.consensus(models=[config1, config2, config3], judge=mock_call)
         assert consensus.__class__.__name__ == "Consensus"
-        assert len(consensus.models) == 1
-        assert consensus.models[0].id == "static-test"
+        assert len(consensus.models) == 3
+        assert consensus.models[0].id == "static-test-1"
+        assert consensus.models[1].id == "static-test-2"
+        assert consensus.models[2].id == "static-test-3"
 
     def test_type_annotations(self, core: Any) -> None:
         """Test that all methods have proper type annotations."""

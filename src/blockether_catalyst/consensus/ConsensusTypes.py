@@ -111,6 +111,10 @@ class DisagreementAnalysis(BaseModel):
         description="Fields with disagreements mapped to string representations of different values",
     )
     consensus_fields: List[str] = Field(default_factory=list, description="Fields where all models agree")
+    ignored_fields: List[str] = Field(
+        default_factory=list,
+        description="Fields that are ignored in consensus (IGNORE strategy)",
+    )
 
 
 class GossipHistory(BaseModel):
@@ -207,7 +211,6 @@ class ConsensusMetrics(BaseModel):
 class ConsensusResult(BaseModelWithReasoning, Generic[T]):
     """Result of the consensus process."""
 
-    # reasoning field inherited from BaseModelWithReasoning
     consensus_achieved: bool = Field(description="Whether consensus was reached")
     final_response: T = Field(description="The final consensus response")
     rounds: List[ConsensusRound[T]] = Field(description="All rounds in the consensus process")
@@ -240,7 +243,8 @@ class VerbosityLevel(Enum):
     """Logging verbosity levels for consensus operations."""
 
     SILENT = 0  # No logging at all
-    VERBOSE = 1  # Full comprehensive output at the end
+    COMPACT = 1  # Single line summary with key metrics
+    VERBOSE = 2  # Full comprehensive output at the end  # Full comprehensive output at the end
 
 
 class ConsensusSettings(BaseModel):

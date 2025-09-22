@@ -12,6 +12,9 @@ This document contains critical information about working with this codebase. Fo
    - Running Verification Scripts: `uv run python3 verification/*`
    - Upgrading: `uv add --dev package --upgrade-package package`
    - FORBIDDEN: `uv pip install`, `@latest` syntax
+   - **IMPORTANT**: When getting import errors (ModuleNotFoundError), install ALL dependencies with: `uv sync --all-extras`
+   - **For complete setup**: Use `uv sync --all-extras` to install all optional dependencies at once
+   - **Note**: Dependencies are organized in extras like `api` and `extraction` in pyproject.toml - no need to add them individually!
 
 2. Code Quality
    - Type hints required for all code
@@ -26,8 +29,10 @@ This document contains critical information about working with this codebase. Fo
    - IF THE PROPERTY should be public then hide it using `_` and create a property function!,
    - Every test file should end in `Test` postfix. In the test file we should use classes always!!
    - using `hasattr` is forbidden by default and same as `getattr`
+   - PREFER `isinstance()` over `hasattr()` for type checking - it's type-safe, faster, and doesn't trigger side effects
+   - If you must check for attributes, use `getattr(obj, 'attr', None) is not None` instead of `hasattr(obj, 'attr')`
    - use static type instead of dictionary whenever it's possible and it makes sense
-   -
+   - **PROHIBITED: Meaningless inline comments (e.g., `x = 1  # Set x to 1`). Comments must add value, not state the obvious. NO COMMENTS on implementation side unless they explain complex logic.**
 3. Testing Requirements
    - Framework: `poe test`
    - Async testing: use `anyio` over `asyncio`

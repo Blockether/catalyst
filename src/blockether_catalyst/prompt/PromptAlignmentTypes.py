@@ -8,17 +8,22 @@ process, following the patterns established in the codebase.
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field
 
-from ..consensus.VotingComparison import BaseModelWithReasoning
+from ..consensus.VotingComparison import (
+    BaseModelWithReasoning,
+    ComparisonStrategy,
+    VotingField,
+)
 
 
-class SemanticString(RootModel[str]):
+class SemanticString(BaseModel):
     """A string wrapper that uses semantic comparison."""
 
-    root: str = Field(
-        threshold=0.75,
+    value: str = VotingField(
         description="String with semantic comparison",
+        comparison=ComparisonStrategy.SEMANTIC,
+        threshold=0.75,
     )
 
 
@@ -37,26 +42,32 @@ class AlignmentPrinciple(BaseModel):
 class EvaluationResult(BaseModelWithReasoning):
     """Result of evaluating a prompt against target behavior."""
 
-    alignment_score: float = Field(
+    alignment_score: float = VotingField(
         ge=0.0,
         le=1.0,
         description="How well the prompt aligns with target behavior (0-1)",
+        comparison=ComparisonStrategy.RANGE,
+        tolerance=0.1,
     )
-    feedback: str = Field(
+    feedback: str = VotingField(
         min_length=10,
         description="Detailed feedback on the prompt's alignment",
+        comparison=ComparisonStrategy.SEMANTIC,
     )
-    strengths: List[SemanticString] = Field(
+    strengths: List[SemanticString] = VotingField(
         default_factory=list,
         description="Identified strengths of the prompt",
+        comparison=ComparisonStrategy.DERIVED,
     )
-    weaknesses: List[SemanticString] = Field(
+    weaknesses: List[SemanticString] = VotingField(
         default_factory=list,
         description="Identified weaknesses of the prompt",
+        comparison=ComparisonStrategy.DERIVED,
     )
-    suggested_improvements: List[SemanticString] = Field(
+    suggested_improvements: List[SemanticString] = VotingField(
         default_factory=list,
         description="Specific improvements suggested",
+        comparison=ComparisonStrategy.DERIVED,
     )
 
 
@@ -72,31 +83,38 @@ class AlignmentPrincipleList(BaseModel):
 class AlignmentFeedback(BaseModelWithReasoning):
     """Feedback from alignment model for prompt improvement."""
 
-    overall_assessment: str = Field(
+    overall_assessment: str = VotingField(
         min_length=20,
         description="Overall assessment of the prompt",
+        comparison=ComparisonStrategy.SEMANTIC,
     )
-    specific_issues: List[SemanticString] = Field(
+    specific_issues: List[SemanticString] = VotingField(
         default_factory=list,
         description="Specific issues identified in the prompt",
+        comparison=ComparisonStrategy.DERIVED,
     )
-    improvement_suggestions: List[SemanticString] = Field(
+    improvement_suggestions: List[SemanticString] = VotingField(
         default_factory=list,
         description="Concrete suggestions for improvement",
+        comparison=ComparisonStrategy.DERIVED,
     )
-    principles_to_apply: AlignmentPrincipleList = Field(
+    principles_to_apply: AlignmentPrincipleList = VotingField(
         default_factory=AlignmentPrincipleList,
         description="Principles that should be applied",
+        comparison=ComparisonStrategy.DERIVED,
     )
-    revised_prompt_suggestion: Optional[str] = Field(
+    revised_prompt_suggestion: Optional[str] = VotingField(
         default=None,
         description="Direct suggestion for revised prompt",
+        comparison=ComparisonStrategy.SEMANTIC,
     )
-    confidence_score: float = Field(
+    confidence_score: float = VotingField(
         default=0.8,
         ge=0.0,
         le=1.0,
         description="Confidence in the feedback provided",
+        comparison=ComparisonStrategy.RANGE,
+        tolerance=0.1,
     )
 
 
@@ -151,24 +169,4 @@ class AlignmentMetrics(BaseModel):
         ge=0.0,
         le=1.0,
         description="Stability of improvements across iterations",
-    )
-
-
-class PromptTemplate(BaseModel):
-    """Template for structured prompts."""
-
-    template: str = Field(
-        description="The prompt template with placeholders",
-    )
-    variables: List[str] = Field(
-        default_factory=list,
-        description="List of variables in the template",
-    )
-    constraints: List[str] = Field(
-        default_factory=list,
-        description="Constraints that should be maintained",
-    )
-    context_preservation_zones: List[str] = Field(
-        default_factory=list,
-        description="Parts of the prompt that should be preserved",
     )

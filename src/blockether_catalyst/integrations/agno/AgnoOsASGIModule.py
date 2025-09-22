@@ -1,8 +1,10 @@
+import json
 import logging
+import uuid
 from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.os import AgentOS
 from agno.os.settings import AgnoAPISettings
@@ -13,7 +15,7 @@ from fastmcp import FastMCP
 from fastmcp.prompts import Prompt
 from fastmcp.resources import Resource
 from fastmcp.tools import Tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from blockether_catalyst.asgi.ASGICoreModule import (
     ASGICoreModule,
@@ -60,12 +62,45 @@ def default_token_resolver(token: str, os: AgentOS, request: Request) -> Optiona
     return None
 
 
+class AgnoOSAPISettings(BaseModel):
+    """API settings for AgnoOS integration."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    docs_enabled: bool = Field(default=True, description="Enable API documentation")
+    cors_list: List[str] = Field(
+        default_factory=lambda: ["http://localhost:*"],
+        description="CORS allowed origins",
+    )
+    api_token: Optional[str] = Field(default=None, description="API authentication token")
+
+
+class CookieConfig(BaseModel):
+    """Configuration for cookies."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    user_id_max_age: int = Field(default=86400, description="User ID cookie max age in seconds")
+    token_max_age: int = Field(default=86400, description="Token cookie max age in seconds")
+
+
+class AssistantConfig(BaseModel):
+    """Configuration for an assistant."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    name: str = Field(default="Omniscient Assistant", description="Name of the assistant")
+    short: str = Field(default="O", description="Short name/abbreviation for the assistant")
+    runner: Any = Field(description="The runner (agent, workflow, or team) for this assistant")
+    cookies: CookieConfig = Field(default_factory=CookieConfig, description="Cookie configuration")
+
+
 class MCPConfig(BaseModel):
     """Configuration for MCP integration."""
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    agent: "Agent" = Field(..., description="The MCP agent to use")
+    workflow: "Workflow" = Field(..., description="The MCP workflow to use")
     name: str = Field(description="Name of the MCP application")
     tools: List[Tool] = Field(default_factory=list, description="List of tools to register with MCP")
     resources: List[Resource] = Field(default_factory=list, description="List of resources for MCP")
@@ -73,17 +108,45 @@ class MCPConfig(BaseModel):
 
 
 class ChatConfig(BaseModel):
-    chat_agent: "Agent"
-    user_id_cookie_max_age: int = 86400
-    token_cookie_max_age: int = 86400
-    assistant_name: str = "Omniscient Assistant"
-    assistant_avatar: str = "O"
-    base_url: str
-    auth_token_resolver: AuthTokenResolver = default_token_resolver
+    """Configuration for chat interface."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    assistant: AssistantConfig = Field(description="Assistant configuration")
+    user_id_cookie_max_age: int = Field(default=86400, description="User ID cookie max age in seconds")
+    token_cookie_max_age: int = Field(default=86400, description="Token cookie max age in seconds")
+    base_url: str = Field(description="Base URL for the application")
+    auth_token_resolver: AuthTokenResolver = Field(
+        default=default_token_resolver, description="Token resolver function"
+    )
+
+    def get_executor_type(self) -> str:
+        """Get the executor type based on runner class name."""
+        runner_class = self.assistant.runner.__class__.__name__
+        if runner_class == "Workflow":
+            return "workflows"
+        elif runner_class == "Team":
+            return "teams"
+        elif runner_class == "Agent":
+            return "agents"
+        else:
+            return "workflows"  # Default fallback
+
+    def get_session_type(self) -> str:
+        """Get the session type based on runner class name."""
+        runner_class = self.assistant.runner.__class__.__name__
+        if runner_class == "Workflow":
+            return "workflow"
+        elif runner_class == "Team":
+            return "team"
+        elif runner_class == "Agent":
+            return "agent"
+        else:
+            return "workflow"  # Default fallback
 
 
 class AgnoOsASGIModule(ASGICoreModule):
-    templates: Optional[Jinja2Templates] = Jinja2Templates(directory=Path(__file__).parent / "templates")
+    template_dirs: Optional[Union[Path, List[Path]]] = Path(__file__).parent / "templates"
     extensions: Optional[ASGIModuleExtensionsConfig] = ASGIModuleExtensionsConfig(
         tailwind=TailwindConfig(cdn_enabled=True), htmx=HTMXConfig(cdn_enabled=True)
     )
@@ -128,8 +191,8 @@ class AgnoOsASGIModule(ASGICoreModule):
             for tool in self.mcp.tools:
                 mcp.add_tool(tool)
 
-        if not self.chat or not self.chat.chat_agent:
-            raise ValueError("Chat configuration or chat agent is not properly set")
+        if not self.chat or not self.chat.assistant:
+            raise ValueError("Chat configuration or assistant is not properly set")
 
         @router_os.get("/view", response_class=HTMLResponse, include_in_schema=False)
         async def chat_interface(request: Request) -> HTMLResponse:
@@ -163,20 +226,37 @@ class AgnoOsASGIModule(ASGICoreModule):
             if not user_id:
                 user_id = request.cookies.get("user_id")
 
+            # Determine the session type based on what's configured
+            session_type = "workflow"  # Default to workflow
+            executor_id = ""
+
+            if self.workflows:
+                session_type = "workflow"
+                executor_id = self.workflows[0].id if hasattr(self.workflows[0], 'id') else ""
+            elif self.agents:
+                session_type = "agent"
+                executor_id = self.agents[0].id if hasattr(self.agents[0], 'id') else ""
+            elif self.teams:
+                session_type = "team"
+                executor_id = self.teams[0].id if hasattr(self.teams[0], 'id') else ""
+
             # Create the response using render_template which returns a TemplateResponse
             response = self.render_template(
                 "chat.j2",
                 {
-                    "agent_name": self.chat.chat_agent.name,
-                    "agent_description": self.chat.chat_agent.description,
-                    "agent_id": self.chat.chat_agent.id,
+                    "agent_name": self.chat.assistant.runner.name,
+                    "agent_description": self.chat.assistant.runner.description,
+                    "agent_id": self.chat.assistant.runner.id,
+                    "executor_name": self.chat.assistant.runner.name,  # Add executor_name for template compatibility
                     "session_id": session_id,
                     "user_id": user_id or "",  # Pass resolved user_id to template
                     "auth_token": token or "",  # Pass token to template
                     "base_url": self.chat.base_url,  # Pass base URL to template
                     "api_prefix": self.prefix,  # /os
-                    "assistant_name": self.chat.assistant_name,  # Pass configurable assistant name
-                    "assistant_avatar": self.chat.assistant_avatar,  # Pass configurable avatar
+                    "assistant_name": self.chat.assistant.name,  # Pass configurable assistant name
+                    "assistant_avatar": self.chat.assistant.short,  # Pass configurable avatar
+                    "session_type": session_type,  # Add session type for API calls
+                    "executor_id": executor_id,  # Add executor ID for API calls
                 },
                 request=request,
             )
@@ -225,8 +305,8 @@ class AgnoOsASGIModule(ASGICoreModule):
                     "timestamp": datetime.now().strftime("%I:%M %p"),
                     "message_id": message_id,
                     "is_error": is_error,
-                    "assistant_name": self.chat.assistant_name,
-                    "assistant_avatar": self.chat.assistant_avatar,
+                    "assistant_name": self.chat.assistant.name,
+                    "assistant_avatar": self.chat.assistant.short,
                 },
                 request=request,
             )
@@ -649,4 +729,140 @@ class AgnoOsASGIModule(ASGICoreModule):
                 },
             )
 
+        @router_os.post("/executor/runs", include_in_schema=False)
+        async def executor_runs(request: Request) -> Dict[str, Any]:
+            """Execute a run with the configured executor (agent, workflow, or team)."""
+            # The UI sends FormData, so parse it as form data
+            form_data = await request.form()
+
+            # Extract parameters from form data - UI sends 'message' not 'input'
+            input_text = form_data.get("message", "")
+            session_id = form_data.get("session_id")
+            user_id = form_data.get("user_id", "anonymous")
+
+            if not input_text:
+                return {
+                    "error": "Missing required field: 'message'",
+                    "status": "error",
+                    "code": 400
+                }
+
+            # Get the runner from the assistant config
+            runner = self.chat.assistant.runner
+
+            try:
+                # Execute based on runner type
+                if hasattr(runner, "run"):
+                    # For agents and workflows
+                    result = runner.run(input_text, session_id=session_id, user_id=user_id)
+                elif hasattr(runner, "execute"):
+                    # Alternative method name
+                    result = runner.execute(input_text, session_id=session_id, user_id=user_id)
+                else:
+                    # Fallback: just call the runner directly
+                    result = runner(input_text)
+
+                # Extract content and session info from result
+                content = ""
+                actual_session_id = session_id  # Default to passed session_id
+                actual_run_id = str(uuid.uuid4())  # Default run ID
+
+                # Handle different result formats
+                if hasattr(result, "content"):
+                    content = result.content
+                elif hasattr(result, "output"):
+                    content = result.output
+                elif isinstance(result, dict):
+                    content = result.get("content", result.get("output", str(result)))
+                else:
+                    content = str(result)
+
+                # Extract session_id from result if available
+                if hasattr(result, "session_id"):
+                    actual_session_id = result.session_id
+                elif isinstance(result, dict) and "session_id" in result:
+                    actual_session_id = result["session_id"]
+
+                # Extract run_id from result if available
+                if hasattr(result, "run_id"):
+                    actual_run_id = result.run_id
+                elif isinstance(result, dict) and "run_id" in result:
+                    actual_run_id = result["run_id"]
+
+                return {
+                    "run_id": actual_run_id,
+                    "session_id": actual_session_id,
+                    "status": "completed",
+                    "output": content,
+                }
+
+            except Exception as e:
+                logger.exception("Failed to execute run")
+                return {
+                    "run_id": str(uuid.uuid4()),
+                    "session_id": session_id,
+                    "status": "failed",
+                    "error": str(e),
+                    "output": f"Error: {str(e)}",
+                }
+
+        @router_os.get("/sessions/{session_id}/runs", include_in_schema=False)
+        async def get_session_runs(session_id: str) -> List[Dict[str, Any]]:
+            """Get all runs for a session."""
+            try:
+                # Get the runner from the assistant config
+                runner = self.chat.assistant.runner
+                
+                # Check if the runner has a database
+                if not hasattr(runner, 'db') or runner.db is None:
+                    logger.debug(f"No database configured for runner, returning empty list for session {session_id}")
+                    return []
+                
+                # Get the session from the database
+                session = runner.db.get_session(session_id)
+                if not session:
+                    logger.debug(f"No session found for {session_id}")
+                    return []
+                
+                # Extract runs from the session
+                runs = []
+                if hasattr(session, 'agent_runs'):
+                    # For agent sessions
+                    for run in session.agent_runs:
+                        runs.append({
+                            "run_id": run.run_id,
+                            "session_id": session_id,
+                            "input": run.user_message,
+                            "output": run.response,
+                            "created_at": run.created_at.isoformat() if hasattr(run.created_at, 'isoformat') else str(run.created_at),
+                        })
+                elif hasattr(session, 'workflow_runs'):
+                    # For workflow sessions
+                    for run in session.workflow_runs:
+                        runs.append({
+                            "run_id": run.run_id,
+                            "session_id": session_id,
+                            "input": run.input,
+                            "output": run.output,
+                            "created_at": run.created_at.isoformat() if hasattr(run.created_at, 'isoformat') else str(run.created_at),
+                        })
+                elif hasattr(session, 'team_runs'):
+                    # For team sessions
+                    for run in session.team_runs:
+                        runs.append({
+                            "run_id": run.run_id,
+                            "session_id": session_id,
+                            "input": run.input,
+                            "output": run.output,
+                            "created_at": run.created_at.isoformat() if hasattr(run.created_at, 'isoformat') else str(run.created_at),
+                        })
+                
+                logger.debug(f"Retrieved {len(runs)} runs for session {session_id}")
+                return runs
+
+            except Exception:
+                logger.exception(f"Failed to get session runs for {session_id}")
+                return []
+
+        # Add all AgentOS routes to our router
         router.routes = list(router.routes) + list(router_os.routes)

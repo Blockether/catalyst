@@ -26,9 +26,9 @@ class TestKnowledgeTableData:
         result = table_data.to_markdown()
         expected = (
             "| Header 1 | Header 2 | Header 3 |\n"
-            "| --- | --- | --- |\n"
-            "| Cell 1 | Cell 2 | Cell 3 |\n"
-            "| Cell 4 | Cell 5 | Cell 6 |"
+            "|----------|----------|----------|\n"
+            "| Cell 1   | Cell 2   | Cell 3   |\n"
+            "| Cell 4   | Cell 5   | Cell 6   |"
         )
 
         assert result == expected
@@ -47,7 +47,7 @@ class TestKnowledgeTableData:
         )
 
         result = table_data.to_markdown()
-        expected = "| Name | Age | City |\n" "| --- | --- | --- |\n" "| John |  | NYC |\n" "|  | 25 |  |"
+        expected = "| Name | Age | City |\n" "|------|-----|------|\n" "| John |     | NYC  |\n" "|      | 25  |      |"
 
         assert result == expected
 
@@ -77,7 +77,7 @@ class TestKnowledgeTableData:
         )
 
         result = table_data.to_markdown()
-        expected = "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 |  |\n| X | Y | Z |"
+        expected = "| A | B | C |\n|---|---|---|\n| 1 | 2 |   |\n| X | Y | Z |"
 
         assert result == expected
 

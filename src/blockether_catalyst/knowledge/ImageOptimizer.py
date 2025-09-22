@@ -61,7 +61,7 @@ class ImageOptimizer:
 
         print(f"ImageOptimizer: Batch optimization complete. Processed {len(png_files)} files.")
 
-    def _optimize_all_png_files(self):
+    def _optimize_all_png_files(self) -> list[Path]:
         png_files = self._find_png_files()
 
         print(f"ImageOptimizer: Found {len(png_files)} PNG files to optimize")

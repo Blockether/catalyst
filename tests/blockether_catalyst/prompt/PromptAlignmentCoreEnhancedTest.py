@@ -31,9 +31,6 @@ class TestPromptAlignmentCoreEnhanced:
 
     # Test constants
     TEST_PROMPT = "What is machine learning?"
-    TEST_GOOD_PROMPT = "Explain machine learning with specific examples from healthcare"
-    TEST_GOOD_RESPONSE = "Machine learning in healthcare enables predictive diagnostics..."
-    TEST_IDEAL_RESPONSE = "Machine learning is a subset of AI that uses statistical techniques..."
     TEST_DOMAIN = "technical"
 
     @pytest.fixture
@@ -43,14 +40,14 @@ class TestPromptAlignmentCoreEnhanced:
         evaluation_result = EvaluationResult(
             alignment_score=0.85,
             feedback="Good alignment",
-            strengths=[SemanticString(s) for s in ["Clear"]],
-            weaknesses=[SemanticString(s) for s in []],
-            suggested_improvements=[SemanticString(s) for s in []],
+            strengths=[SemanticString(value=s) for s in ["Clear"]],
+            weaknesses=[SemanticString(value=s) for s in []],
+            suggested_improvements=[SemanticString(value=s) for s in []],
             reasoning="The prompt aligns exceptionally well with the target behavior and produces quality responses consistently across multiple evaluation dimensions. The clarity of instruction and specificity of requirements ensure robust and reliable model outputs that meet all defined criteria.",
         )
         mock.call = AsyncMock(
             return_value=ConsensusResult(
-                reasoning="Consensus achieved through evaluation",
+                reasoning="Consensus achieved through comprehensive evaluation of multiple model responses and careful consideration of all perspectives. The models demonstrated strong agreement on the optimal approach, with consistent reasoning across all participants. This consensus represents a well-validated solution that incorporates diverse analytical viewpoints and methodologies.",
                 consensus_achieved=True,
                 final_response=evaluation_result,
                 rounds=[],
@@ -69,10 +66,10 @@ class TestPromptAlignmentCoreEnhanced:
         mock = MagicMock(spec=Consensus)
         alignment_feedback = AlignmentFeedback(
             overall_assessment="Excellent prompt structure that can be learned from",
-            specific_issues=[SemanticString(s) for s in []],
-            improvement_suggestions=[SemanticString(s) for s in []],
+            specific_issues=[SemanticString(value=s) for s in []],
+            improvement_suggestions=[SemanticString(value=s) for s in []],
             principles_to_apply=AlignmentPrincipleList(
-                [
+                principles=[
                     AlignmentPrinciple(
                         principle="Always include specific domain examples",
                         importance=0.9,
@@ -84,11 +81,11 @@ class TestPromptAlignmentCoreEnhanced:
                 ]
             ),
             confidence_score=0.9,
-            reasoning="This interaction demonstrates effective prompt construction that should be captured as reusable principles.",
+            reasoning="This interaction demonstrates effective prompt construction that should be captured as reusable principles. The prompt shows excellent structure with specific domain examples and clear definitions. These patterns can be extracted and reused across similar prompts to ensure consistent quality and alignment with user expectations.",
         )
         mock.call = AsyncMock(
             return_value=ConsensusResult(
-                reasoning="Consensus achieved on alignment feedback",
+                reasoning="Consensus achieved on alignment feedback through multi-model evaluation. All participating models agreed on the assessment of the prompt's structure and the principles that should be extracted. The feedback represents a well-balanced view incorporating diverse perspectives on prompt improvement strategies.",
                 consensus_achieved=True,
                 final_response=alignment_feedback,
                 rounds=[],
@@ -110,50 +107,6 @@ class TestPromptAlignmentCoreEnhanced:
             target_consensus=mock_target_consensus,
             alignment_consensus=mock_alignment_consensus,
         )
-
-    @pytest.mark.anyio
-    async def test_kudos_learning(
-        self,
-        alignment_core_with_persistence: PromptAlignmentCore,
-        mock_alignment_consensus: MagicMock,
-    ) -> None:
-        """Test learning from successful prompt-response pairs."""
-        # Learn from a successful interaction
-        principles = await alignment_core_with_persistence.learn_from_success(
-            self.TEST_GOOD_PROMPT, self.TEST_GOOD_RESPONSE
-        )
-
-        assert len(principles) == 2
-        assert principles[0].principle == "Always include specific domain examples"
-        assert principles[0].importance == 0.9
-
-        # Verify principles were persisted
-        stored_principles = alignment_core_with_persistence.get_stored_principles()
-        assert len(stored_principles) == 2
-        assert stored_principles[0].principle == principles[0].principle
-
-        # Verify successful pattern was stored
-        assert len(alignment_core_with_persistence._successful_patterns) == 1
-        assert alignment_core_with_persistence._successful_patterns[0][0] == self.TEST_GOOD_PROMPT
-
-    @pytest.mark.anyio
-    async def test_ideal_response_training(
-        self,
-        alignment_core_with_persistence: PromptAlignmentCore,
-    ) -> None:
-        """Test extracting principles from ideal responses."""
-        # Extract principles from ideal response
-        principles = await alignment_core_with_persistence.extract_principles_from_ideal(
-            self.TEST_PROMPT, self.TEST_IDEAL_RESPONSE
-        )
-
-        assert len(principles) == 2
-        # Importance should be boosted for ideal response principles
-        assert principles[0].importance > 0.85  # Boosted from 0.9
-
-        # Verify persistence
-        stored_principles = alignment_core_with_persistence.get_stored_principles()
-        assert len(stored_principles) == 2
 
     def test_principle_database_operations(self, alignment_core_with_persistence: PromptAlignmentCore) -> None:
         """Test principle database storage and retrieval."""
@@ -219,15 +172,15 @@ class TestPromptAlignmentCoreEnhanced:
         # Setup mock to return low score initially, then high
         mock_target_consensus.call.side_effect = [
             ConsensusResult(
-                reasoning="Initial evaluation consensus",
+                reasoning="Initial evaluation consensus reached through comprehensive assessment of the prompt against target behavior criteria. The models have identified key weaknesses and areas for improvement, providing a solid foundation for iterative refinement through principle extraction and application.",
                 consensus_achieved=True,
                 final_response=EvaluationResult(
                     alignment_score=0.4,
                     feedback="Needs improvement",
-                    strengths=[SemanticString(s) for s in []],
-                    weaknesses=[SemanticString(s) for s in ["Too vague"]],
-                    suggested_improvements=[SemanticString(s) for s in ["Be more specific"]],
-                    reasoning="The prompt lacks the specificity required for quality responses.",
+                    strengths=[SemanticString(value=s) for s in []],
+                    weaknesses=[SemanticString(value=s) for s in ["Too vague"]],
+                    suggested_improvements=[SemanticString(value=s) for s in ["Be more specific"]],
+                    reasoning="The prompt lacks the specificity required for quality responses. It needs more detailed instructions about the expected output format, the level of detail required, and clear context about the task. Without these elements, the model cannot reliably produce the desired results.",
                 ),
                 rounds=[],
                 total_rounds=1,
@@ -235,15 +188,15 @@ class TestPromptAlignmentCoreEnhanced:
                 participating_models=["model1"],
             ),
             ConsensusResult(
-                reasoning="Second evaluation consensus",
+                reasoning="Second evaluation consensus demonstrates significant improvement in prompt alignment. The applied principles have successfully addressed the identified weaknesses, resulting in a more specific and effective prompt that better meets the target behavior requirements.",
                 consensus_achieved=True,
                 final_response=EvaluationResult(
                     alignment_score=0.9,
                     feedback="Much better",
-                    strengths=[SemanticString(s) for s in ["Specific"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
-                    reasoning="The prompt now includes the specificity needed for alignment.",
+                    strengths=[SemanticString(value=s) for s in ["Specific"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
+                    reasoning="The prompt now demonstrates excellent specificity through the application of stored and refined principles, addressing all previously identified weaknesses and incorporating structured improvements that align with target behavior requirements.",
                 ),
                 rounds=[],
                 total_rounds=1,
@@ -251,15 +204,15 @@ class TestPromptAlignmentCoreEnhanced:
                 participating_models=["model1"],
             ),
             ConsensusResult(
-                reasoning="Final evaluation consensus",
+                reasoning="Final evaluation consensus confirms optimal prompt alignment has been achieved. The iterative refinement process has successfully incorporated all necessary principles, resulting in a prompt that fully meets the specified requirements with excellent structure and clarity.",
                 consensus_achieved=True,
                 final_response=EvaluationResult(
                     alignment_score=0.9,
                     feedback="Final check",
-                    strengths=[SemanticString(s) for s in ["Specific"]],
-                    weaknesses=[SemanticString(s) for s in []],
-                    suggested_improvements=[SemanticString(s) for s in []],
-                    reasoning="The prompt successfully aligns with the specified requirements and demonstrates good structure.",
+                    strengths=[SemanticString(value=s) for s in ["Specific"]],
+                    weaknesses=[SemanticString(value=s) for s in []],
+                    suggested_improvements=[SemanticString(value=s) for s in []],
+                    reasoning="The prompt successfully aligns with the specified requirements and demonstrates good structure through systematic application of learned principles, incorporating domain-specific patterns and maintaining clarity throughout the refinement process to achieve optimal alignment.",
                 ),
                 rounds=[],
                 total_rounds=1,
@@ -333,37 +286,3 @@ class TestPromptAlignmentCoreEnhanced:
         stored_texts = [p.principle for p in stored]
         for text in principle_texts:
             assert text in stored_texts
-
-    @pytest.mark.anyio
-    async def test_principle_importance_adjustment(
-        self,
-        alignment_core_with_persistence: PromptAlignmentCore,
-        mock_alignment_consensus: MagicMock,
-    ) -> None:
-        """Test that ideal response principles get importance boost."""
-        # Mock should return principles with base importance
-        mock_alignment_consensus.call.return_value = ConsensusResult(
-            reasoning="Consensus on ideal principles",
-            consensus_achieved=True,
-            final_response=AlignmentFeedback(
-                overall_assessment="Analysis of ideal response",
-                specific_issues=[SemanticString(s) for s in []],
-                improvement_suggestions=[SemanticString(s) for s in []],
-                principles_to_apply=AlignmentPrincipleList(
-                    [AlignmentPrinciple(principle="Test principle", importance=0.8)]
-                ),
-                confidence_score=0.9,
-                reasoning="Ideal response analysis shows these principles lead to quality outputs.",
-            ),
-            rounds=[],
-            total_rounds=1,
-            convergence_score=1.0,
-            participating_models=["model1"],
-        )
-
-        principles = await alignment_core_with_persistence.extract_principles_from_ideal(
-            self.TEST_PROMPT, self.TEST_IDEAL_RESPONSE
-        )
-
-        # Importance should be boosted by 1.2x (capped at 1.0)
-        assert principles[0].importance == 0.96  # 0.8 * 1.2

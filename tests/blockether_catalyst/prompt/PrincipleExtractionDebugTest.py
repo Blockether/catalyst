@@ -15,6 +15,7 @@ from blockether_catalyst.prompt.PromptAlignmentTypes import (
     AlignmentFeedback,
     AlignmentPrinciple,
     AlignmentPrincipleList,
+    SemanticString,
 )
 
 
@@ -39,7 +40,7 @@ class TestPrincipleExtractionDebug:
             overall_assessment=self.GOOD_FEEDBACK_TEXT,
             specific_issues=[],  # Empty
             improvement_suggestions=[],  # Empty
-            principles_to_apply=AlignmentPrincipleList(root=[]),  # Empty
+            principles_to_apply=AlignmentPrincipleList(principles=[]),  # Empty
             confidence_score=self.SCORE,
             reasoning="The prompt is already well-aligned with expectations. It demonstrates excellent structure, clarity, and completeness. The instructions are specific and actionable, making it easy for the model to understand and execute the desired task effectively.",
         )
@@ -55,11 +56,11 @@ class TestPrincipleExtractionDebug:
             overall_assessment="Needs improvement to achieve better alignment",
             specific_issues=[],
             improvement_suggestions=[
-                "Should add more specific instructions",
-                "Must include concrete examples",
-                "Ensure clarity in requirements",
+                SemanticString(value="Should add more specific instructions"),
+                SemanticString(value="Must include concrete examples"),
+                SemanticString(value="Ensure clarity in requirements"),
             ],
-            principles_to_apply=AlignmentPrincipleList(root=[]),
+            principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.7,
             reasoning="The prompt needs these improvements to be more effective. The current version lacks specificity and concrete guidance. By adding more specific instructions, including concrete examples, and ensuring clarity in requirements, the prompt will better guide the model to produce the desired output consistently.",
         )
@@ -76,12 +77,12 @@ class TestPrincipleExtractionDebug:
         feedback = AlignmentFeedback(
             overall_assessment="Has several issues that need to be addressed",
             specific_issues=[
-                "Lacks clarity",
-                "Missing examples",
-                "Too vague",
+                SemanticString(value="Lacks clarity"),
+                SemanticString(value="Missing examples"),
+                SemanticString(value="Too vague"),
             ],
             improvement_suggestions=[],
-            principles_to_apply=AlignmentPrincipleList(root=[]),
+            principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.6,
             reasoning="These issues need to be addressed for the prompt to be effective. The lack of clarity makes it difficult for the model to understand the requirements. Missing examples leave the model without concrete guidance. The vague nature of the instructions leads to inconsistent and unpredictable outputs.",
         )
@@ -100,7 +101,7 @@ class TestPrincipleExtractionDebug:
             specific_issues=[],
             improvement_suggestions=[],
             principles_to_apply=AlignmentPrincipleList(
-                root=[
+                principles=[
                     AlignmentPrinciple(
                         principle="Always provide concrete examples",
                         importance=0.95,
@@ -127,15 +128,15 @@ class TestPrincipleExtractionDebug:
         feedback = AlignmentFeedback(
             overall_assessment="Multiple areas for improvement",
             specific_issues=[
-                "Lacks context",
-                "Too complex",
+                SemanticString(value="Lacks context"),
+                SemanticString(value="Too complex"),
             ],
             improvement_suggestions=[
-                "Should simplify the language",
-                "Must add relevant examples",
+                SemanticString(value="Should simplify the language"),
+                SemanticString(value="Must add relevant examples"),
             ],
             principles_to_apply=AlignmentPrincipleList(
-                root=[
+                principles=[
                     AlignmentPrinciple(
                         principle="Be concise and clear",
                         importance=0.85,
@@ -164,7 +165,7 @@ class TestPrincipleExtractionDebug:
             overall_assessment="Excellent prompt that meets all requirements",
             specific_issues=[],
             improvement_suggestions=[],
-            principles_to_apply=AlignmentPrincipleList(root=[]),
+            principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.95,
             reasoning="The prompt is already optimal and well-aligned with the target requirements. It demonstrates exceptional clarity, provides comprehensive context, includes relevant examples, and uses precise language. The structure is logical and the instructions are unambiguous, making it an exemplary prompt that requires no further refinement.",
         )
@@ -180,13 +181,13 @@ class TestPrincipleExtractionDebug:
             overall_assessment="Mixed feedback with both positives and areas for improvement",
             specific_issues=[],
             improvement_suggestions=[
-                "Should add more detail",  # Actionable
-                "Must include examples",  # Actionable
-                "This is interesting",  # Not actionable
-                "Good attempt",  # Not actionable
-                "Ensure proper formatting",  # Actionable
+                SemanticString(value="Should add more detail"),  # Actionable
+                SemanticString(value="Must include examples"),  # Actionable
+                SemanticString(value="This is interesting"),  # Not actionable
+                SemanticString(value="Good attempt"),  # Not actionable
+                SemanticString(value="Ensure proper formatting"),  # Actionable
             ],
-            principles_to_apply=AlignmentPrincipleList(root=[]),
+            principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.7,
             reasoning="Some improvements needed to enhance the prompt's effectiveness. While the prompt has good elements, adding more detail, including examples, and ensuring proper formatting will make it more reliable. The actionable suggestions provided will systematically address these areas and create a more robust prompt.",
         )
@@ -205,7 +206,7 @@ class TestPrincipleExtractionDebug:
             specific_issues=[],
             improvement_suggestions=[],
             principles_to_apply=AlignmentPrincipleList(
-                root=[
+                principles=[
                     AlignmentPrinciple(
                         principle="Too short",  # Less than MIN_PRINCIPLE_LENGTH
                         importance=0.9,

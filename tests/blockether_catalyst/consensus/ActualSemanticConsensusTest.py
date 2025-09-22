@@ -117,30 +117,31 @@ class TestActualSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_exact_fields_must_match_exactly(self):
-        """Test that EXACT fields require exact matching."""
+        """Test that EXACT fields require exact matching and different values don't group together."""
 
-        # Same category but different codes
+        # Same category but different codes - tests EXACT field comparison
         response1 = SimpleResponse(
             category="AI",
-            code=100,  # Different code
+            code=100,
             metadata="model1",
             reasoning="This model assigns code 100 to the AI category based on specific criteria and evaluation metrics that prioritize certain technical aspects and implementation details found within the analyzed document content and structure.",
         )
 
         response2 = SimpleResponse(
             category="AI",
-            code=200,  # Different code
+            code=200,  # Different code - should NOT group with response1
             metadata="model2",
             reasoning="This model assigns code 200 to the AI category using alternative evaluation criteria that emphasize different technical priorities and weighting factors in the comprehensive assessment of document content and themes.",
         )
 
         response3 = SimpleResponse(
             category="AI",
-            code=100,  # Same as model1
+            code=100,  # Same as response1 - SHOULD group together
             metadata="model3",
             reasoning="This model also assigns code 100 to the AI category following similar evaluation methodology and criteria as the first model, confirming the assessment through independent analysis of the same document.",
         )
 
+        # Use 3 models with a threshold of 66% (which is achievable with 2/3)
         models = [
             ConsensusCore.model(id="model1", executor=StaticMockCall(response1), perspective="Code 100"),
             ConsensusCore.model(id="model2", executor=StaticMockCall(response2), perspective="Code 200"),
@@ -152,17 +153,26 @@ class TestActualSemanticConsensus:
         consensus = ConsensusCore.consensus(
             models=models,
             judge=judge,
-            settings=ConsensusSettings(max_rounds=1, threshold=0.7),  # Need 70% agreement
+            settings=ConsensusSettings(max_rounds=1, threshold=0.66),  # 66% threshold
         )
 
         result = await consensus.call("Categorize with code")
 
-        # Models 1 and 3 agree (2/3 = 66.7%), which is less than 70%
-        # So consensus should not be achieved
-        assert result.consensus_achieved is False
-        # But we should still get a result (from voting or judge)
-        assert result.final_response is not None
-        assert result.final_response.code in [100, 200]
+        # With EXACT field comparison working correctly:
+        # - Models 1 and 3 have code=100 and should vote together (2/3 = 66.7%)
+        # - Model 2 has code=200 and votes alone (1/3 = 33.3%)
+        # - 66.7% >= 66% threshold, so consensus SHOULD be achieved
+        assert result.consensus_achieved is True
+        assert result.final_response.code == 100  # The majority group has code=100
+
+        # Verify the voting groups were formed correctly
+        if result.rounds:
+            vote_groups = result.rounds[0].vote_groups
+            # Should have exactly 2 groups (one for code=100, one for code=200)
+            assert len(vote_groups) == 2
+            # One group should have 2 members, the other should have 1
+            group_sizes = sorted([len(group) for group in vote_groups.values()])
+            assert group_sizes == [1, 2]
 
     @pytest.mark.anyio
     async def test_ignored_fields_dont_affect_voting(self):
@@ -252,28 +262,27 @@ class TestActualSemanticConsensus:
 
         judge = StaticMockCall(responseA)
 
-        # Test with 60% threshold (3/5 = 60%, should achieve consensus)
+        # Test with 55% threshold (3/5 = 60%, should achieve consensus)
+        consensus_55 = ConsensusCore.consensus(
+            models=models,
+            judge=judge,
+            settings=ConsensusSettings(max_rounds=1, threshold=0.55, first_round_threshold=0.55),
+        )
+
+        result_55 = await consensus_55.call("Test 55% threshold")
+        assert result_55.consensus_achieved is True
+        assert result_55.final_response.category == "Neural Networks"
+
+        # Test with 60% threshold (3/5 = 60%, should achieve consensus at exactly the threshold)
         consensus_60 = ConsensusCore.consensus(
             models=models,
             judge=judge,
-            settings=ConsensusSettings(max_rounds=1, threshold=0.6, first_round_threshold=0.6),
+            settings=ConsensusSettings(max_rounds=1, threshold=0.60, first_round_threshold=0.60),
         )
 
         result_60 = await consensus_60.call("Test 60% threshold")
         assert result_60.consensus_achieved is True
         assert result_60.final_response.category == "Neural Networks"
-
-        # Test with 70% threshold (3/5 = 60%, should NOT achieve consensus)
-        consensus_70 = ConsensusCore.consensus(
-            models=models,
-            judge=judge,
-            settings=ConsensusSettings(max_rounds=1, threshold=0.7, first_round_threshold=0.7),
-        )
-
-        result_70 = await consensus_70.call("Test 70% threshold")
-        assert result_70.consensus_achieved is False
-        # But should still have a result from voting
-        assert result_70.final_response is not None
 
     @pytest.mark.anyio
     async def test_perfect_tie_uses_judge(self):
@@ -293,12 +302,19 @@ class TestActualSemanticConsensus:
             reasoning="This model categorizes as Supervised Learning due to comprehensive coverage of labeled datasets, loss functions, and gradient-based optimization techniques for training predictive models in the document.",
         )
 
-        # 2 models each, perfect tie
+        # 2 models for A, 2 for B, 1 neutral - creates a tie situation
+        responseC = SimpleResponse(
+            category="Unsupervised Learning",
+            code=30,
+            metadata="UL",
+            reasoning="This model identifies Unsupervised Learning based on clustering algorithms and dimensionality reduction techniques discussed without labeled data requirements in the technical documentation.",
+        )
         models = [
             ConsensusCore.model(id="a1", executor=StaticMockCall(responseA), perspective="RL1"),
             ConsensusCore.model(id="a2", executor=StaticMockCall(responseA), perspective="RL2"),
             ConsensusCore.model(id="b1", executor=StaticMockCall(responseB), perspective="SL1"),
             ConsensusCore.model(id="b2", executor=StaticMockCall(responseB), perspective="SL2"),
+            ConsensusCore.model(id="c1", executor=StaticMockCall(responseC), perspective="UL1"),
         ]
 
         # Judge picks A

@@ -3,8 +3,8 @@ ASGI Core Application - Root application manager with module support
 """
 
 import logging
-from contextlib import asynccontextmanager
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, cast
 
@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .ASGICoreModule import ASGICoreModule, ASGIModuleConfig, StaticMount
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class CORSConfig(BaseModel):
     """CORS middleware configuration."""
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     allow_origins: List[str] = Field(default=["*"])
     allow_credentials: bool = Field(default=True)
@@ -36,7 +36,7 @@ class CORSConfig(BaseModel):
 class ASGIApplicationConfig(BaseModel):
     """ASGI application configuration."""
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # Core Settings
     title: str = Field(default="Catalyst API")
@@ -45,23 +45,29 @@ class ASGIApplicationConfig(BaseModel):
     prefix: str = Field(default="")
     statics: List[StaticMount] = Field(default_factory=list, description="Static file mounts for this module")
 
-    # API Documentation
-    debug: bool = Field(default=False)
-    docs_url: Optional[str] = Field(default="/docs")
-    redoc_url: Optional[str] = Field(default="/redoc")
-    openapi_url: Optional[str] = Field(default="/openapi.json")
-    openapi_prefix: str = Field(default="")
+    # Modules
+    modules: List[ASGICoreModule] = Field(default_factory=list)
 
-    # CORS and GZIP
+    # CORS
     cors: Optional[CORSConfig] = None
+
+    # Server
+    host: str = Field(default="127.0.0.1")
+    port: int = Field(default=8000)
+
+    # Compression
     gzip_enabled: bool = Field(default=True)
     gzip_minimum_size: int = Field(default=1000)
 
-    modules: List[ASGICoreModule] = Field(default_factory=list)
+    # Logging
+    debug: bool = Field(default=False)
+    log_level: str = Field(default="INFO")
+    log_requests: bool = Field(default=True)
 
-    # Server Settings
-    host: str = Field(default="0.0.0.0")
-    port: int = Field(default=8000)
+    # OpenAPI/Swagger
+    docs_url: Optional[str] = Field(default="/docs")
+    redoc_url: Optional[str] = Field(default="/redoc")
+    openapi_url: Optional[str] = Field(default="/openapi.json")
 
     # Security
     trusted_hosts: Optional[List[str]] = None
@@ -174,7 +180,10 @@ class ASGICoreApplication(ASGIApplicationConfig):
                 mount_url = os.path.join(full_prefix, mount.mount.lstrip("/"))
                 self._app.mount(
                     mount_url,
-                    StaticFiles(directory=os.path.join(os.getcwd(), mount.directory), html=mount.html),
+                    StaticFiles(
+                        directory=os.path.join(os.getcwd(), mount.directory),
+                        html=mount.html,
+                    ),
                     name=f"{module_name}_{mount.mount.replace('/', '_')}",
                 )
 
