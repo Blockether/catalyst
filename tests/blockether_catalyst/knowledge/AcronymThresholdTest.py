@@ -98,8 +98,7 @@ class TestAcronymThresholdBehavior:
         # Use "Credit Risk" which should be identified as important keywords
         # in financial documents
         results_low = search_module.search("Credit Risk", k=10, threshold=0.3)
-        results_high = search_module.search("Credit Risk", k=10, threshold=0.9)
-        
+
         # Check that we get some results even with low threshold
         assert len(results_low) > 0, "No results for 'Credit Risk' with low threshold"
         
