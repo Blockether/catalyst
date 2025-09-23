@@ -1,7 +1,7 @@
 """Tests for the AgnoOsASGIModule sessions endpoint."""
 
+from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
-from typing import Dict, Any
 
 import pytest
 from fastapi import APIRouter
@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from blockether_catalyst.asgi.ASGICoreApplication import ASGICoreApplication
 from blockether_catalyst.integrations.agno.AgnoOsASGIModule import (
     AgnoOsASGIModule,
-    ChatConfig,
     AssistantConfig,
+    ChatConfig,
 )
 
 
@@ -44,18 +44,15 @@ class TestAgnoSessionsEndpoint:
     def agno_module_with_db(self, mock_runner, mock_workflow):
         """Create AgnoOsASGIModule with database."""
         chat_config = ChatConfig(
-            assistant=AssistantConfig(
-                name="Test Assistant",
-                runner=mock_runner
-            ),
-            base_url="http://localhost:8000"
+            assistant=AssistantConfig(name="Test Assistant", runner=mock_runner),
+            base_url="http://localhost:8000",
         )
 
         module = AgnoOsASGIModule(
             title="Test Module",
             description="Test Description",
             chat=chat_config,
-            workflows=[mock_workflow]
+            workflows=[mock_workflow],
         )
         return module
 
@@ -63,18 +60,15 @@ class TestAgnoSessionsEndpoint:
     def agno_module_no_db(self, mock_runner_no_db, mock_workflow):
         """Create AgnoOsASGIModule without database."""
         chat_config = ChatConfig(
-            assistant=AssistantConfig(
-                name="Test Assistant",
-                runner=mock_runner_no_db
-            ),
-            base_url="http://localhost:8000"
+            assistant=AssistantConfig(name="Test Assistant", runner=mock_runner_no_db),
+            base_url="http://localhost:8000",
         )
 
         module = AgnoOsASGIModule(
             title="Test Module",
             description="Test Description",
             chat=chat_config,
-            workflows=[mock_workflow]
+            workflows=[mock_workflow],
         )
         return module
 
@@ -83,11 +77,7 @@ class TestAgnoSessionsEndpoint:
         """Create test app with database."""
         from fastapi import FastAPI
 
-        app = FastAPI(
-            title="Test App",
-            description="Test",
-            version="1.0.0"
-        )
+        app = FastAPI(title="Test App", description="Test", version="1.0.0")
         router = APIRouter()
         agno_module_with_db.mount(app, router)
         app.include_router(router, prefix="/os")  # Add the /os prefix
@@ -98,11 +88,7 @@ class TestAgnoSessionsEndpoint:
         """Create test app without database."""
         from fastapi import FastAPI
 
-        app = FastAPI(
-            title="Test App",
-            description="Test",
-            version="1.0.0"
-        )
+        app = FastAPI(title="Test App", description="Test", version="1.0.0")
         router = APIRouter()
         agno_module_no_db.mount(app, router)
         app.include_router(router, prefix="/os")  # Add the /os prefix
@@ -128,8 +114,8 @@ class TestAgnoSessionsEndpoint:
                 "limit": 20,
                 "page": 1,
                 "sort_by": "created_at",
-                "sort_order": "desc"
-            }
+                "sort_order": "desc",
+            },
         )
 
         assert response.status_code == 200
@@ -143,14 +129,7 @@ class TestAgnoSessionsEndpoint:
 
     def skip_test_sessions_endpoint_with_custom_pagination(self, test_client_no_db):
         """Test /sessions endpoint with custom pagination parameters."""
-        response = test_client_no_db.get(
-            "/os/sessions",
-            params={
-                "type": "workflow",
-                "limit": 50,
-                "page": 2
-            }
-        )
+        response = test_client_no_db.get("/os/sessions", params={"type": "workflow", "limit": 50, "page": 2})
 
         assert response.status_code == 200
         data = response.json()
@@ -184,7 +163,7 @@ class TestAgnoSessionsEndpoint:
         """Test /executor/runs endpoint with invalid form data."""
         response = test_client_no_db.post(
             "/os/executor/runs",
-            data={"message": ""}  # Empty message
+            data={"message": ""},  # Empty message
         )
 
         assert response.status_code == 200
@@ -198,16 +177,13 @@ class TestAgnoSessionsEndpoint:
         """Test /executor/runs endpoint with valid input."""
         # Mock the runner to have a run method that returns WorkflowRunOutput-like object
         from types import SimpleNamespace
-        mock_result = SimpleNamespace(
-            content="Test response",
-            session_id="test-123",
-            run_id="run-456"
-        )
+
+        mock_result = SimpleNamespace(content="Test response", session_id="test-123", run_id="run-456")
         mock_runner_no_db.run = MagicMock(return_value=mock_result)
 
         response = test_client_no_db.post(
             "/os/executor/runs",
-            data={"message": "test query", "session_id": "test-123"}
+            data={"message": "test query", "session_id": "test-123"},
         )
 
         assert response.status_code == 200

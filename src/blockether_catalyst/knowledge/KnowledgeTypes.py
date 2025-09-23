@@ -566,9 +566,8 @@ class TermInfo(TypedPydanticModel):
     term: str = Field(description="The term text")
     meaning: Optional[str] = Field(default=None, description="Meaning of the term")
     term_type: Optional[str] = Field(default=None, description="Type of term (e.g., acronym, keyword)")
-    link_score: Optional[float] = Field(default=None, description="Score of the link to this term")
     total_times_occurred_in_knowledgebase: Optional[int] = Field(default=None, description="Total occurrences")
-    linked_terms: List["TermInfo"] = Field(default_factory=list, description="Linked terms")
+    linked_terms: List["LinkedTermInfo"] = Field(default_factory=list, description="Terms linked from this term")
 
     def markdown(self) -> str:
         """Generate markdown for a term."""
@@ -596,6 +595,15 @@ class TermInfo(TypedPydanticModel):
                 lines.append(f"    - {linked_term.term}")
 
         return "\n".join(lines)
+
+
+class LinkedTermInfo(TermInfo):
+    """Information about a term that is linked from another term (extends TermInfo with link_score)."""
+
+    link_score: float = Field(description="Score of the link to this term (strength of relationship, 0.0-1.0)")
+    linked_terms: List["LinkedTermInfo"] = Field(
+        default_factory=list, description="Nested linked terms (usually empty)"
+    )
 
 
 class ImageInfo(TypedPydanticModel):

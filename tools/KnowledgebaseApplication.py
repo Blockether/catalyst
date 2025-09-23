@@ -51,7 +51,6 @@ search_module = KnowledgeSearchCore.from_pickle(
     resources_base_url=RESOURCES_URL
 )
 
-
 KnowledgeProviderGPT4oModel = OpenAILike(
     api_key="dummy",
     base_url="http://localhost:3005/v1",
@@ -72,35 +71,27 @@ db = SqliteDb()
 
 def KnowledgeRetriever(
     query: str = Field(..., title="query", description="The search query to find relevant documents."),
-    max_documents: int = Field(..., title="max_documents", description="The number of documents to retrieve.")
+    max_documents: Optional[int] = Field(title="max_documents", description="The number of documents to retrieve.")
 ) -> List[dict]:
-    max_documents = 10
 
     # search() now returns List[NormalizedSearchResult] Pydantic models
     results: List[NormalizedSearchResult] = search_module.search(
         query=query,
-        k=max_documents,
+        k=max_documents or 10,
         threshold=0.5,
         max_depth=2,
         max_cooccurrences=3
     )
 
-    # Use the markdown() method from the Pydantic model
-    return [
-        {
-            "content": result.markdown()
-        }
-        for result in results
-    ]
+    return [res.model_dump() for res in results]
 
 
-knowledge_query = Tool.from_function(
+knowledge_query_mcp_tool = Tool.from_function(
     fn=KnowledgeRetriever,
     name="search_knowledge",
     description="Search the knowledge base for relevant documents and information.",
     enabled=True,
 )
-
 
 def knowledge_retriever_step(
     query: str,
@@ -108,7 +99,6 @@ def knowledge_retriever_step(
     **kwargs: dict
 ) -> Optional[List[dict]]:
     """Workflow step for retrieving knowledge."""
-    print(KnowledgeRetriever(query=query, max_documents=num_documents))
     return KnowledgeRetriever(query=query, max_documents=num_documents)
 
 
@@ -230,9 +220,8 @@ MainKnowledgebaseWorkflow = Workflow(
     steps=[knowledge_agent_step],  # Using the Agent step
     store_events=True,
     store_executor_outputs=True,
-    cache_session=True,  # Enable session caching to ensure sessions are created and tracked
+    cache_session=True,
 )
-
 
 
 agno_asgi_module = AgnoOsASGIModule(
@@ -249,7 +238,6 @@ agno_asgi_module = AgnoOsASGIModule(
         base_url=BASE_URL
     ),
     mcp=MCPConfig(
-        workflow=MainKnowledgebaseWorkflow,
         name="Catalyst Knowledge MCP",
         tools=[knowledge_query],
     ),

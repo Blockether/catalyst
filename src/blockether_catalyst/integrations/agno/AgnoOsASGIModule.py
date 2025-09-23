@@ -100,7 +100,6 @@ class MCPConfig(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    workflow: "Workflow" = Field(..., description="The MCP workflow to use")
     name: str = Field(description="Name of the MCP application")
     tools: List[Tool] = Field(default_factory=list, description="List of tools to register with MCP")
     resources: List[Resource] = Field(default_factory=list, description="List of resources for MCP")
@@ -191,6 +190,8 @@ class AgnoOsASGIModule(ASGICoreModule):
             for tool in self.mcp.tools:
                 mcp.add_tool(tool)
 
+            app.mount("/mcp", mcp.http_app("/", stateless_http=True, transport="sse"))
+
         if not self.chat or not self.chat.assistant:
             raise ValueError("Chat configuration or assistant is not properly set")
 
@@ -232,13 +233,13 @@ class AgnoOsASGIModule(ASGICoreModule):
 
             if self.workflows:
                 session_type = "workflow"
-                executor_id = self.workflows[0].id if hasattr(self.workflows[0], 'id') else ""
+                executor_id = self.workflows[0].id if hasattr(self.workflows[0], "id") else ""
             elif self.agents:
                 session_type = "agent"
-                executor_id = self.agents[0].id if hasattr(self.agents[0], 'id') else ""
+                executor_id = self.agents[0].id if hasattr(self.agents[0], "id") else ""
             elif self.teams:
                 session_type = "team"
-                executor_id = self.teams[0].id if hasattr(self.teams[0], 'id') else ""
+                executor_id = self.teams[0].id if hasattr(self.teams[0], "id") else ""
 
             # Create the response using render_template which returns a TemplateResponse
             response = self.render_template(
@@ -744,7 +745,7 @@ class AgnoOsASGIModule(ASGICoreModule):
                 return {
                     "error": "Missing required field: 'message'",
                     "status": "error",
-                    "code": 400
+                    "code": 400,
                 }
 
             # Get the runner from the assistant config
@@ -807,64 +808,93 @@ class AgnoOsASGIModule(ASGICoreModule):
                 }
 
         @router_os.get("/sessions/{session_id}/runs", include_in_schema=False)
-        async def get_session_runs(session_id: str) -> List[Dict[str, Any]]:
+        async def get_session_runs(session_id: str, request: Request) -> List[Dict[str, Any]]:
             """Get all runs for a session."""
             try:
                 # Get the runner from the assistant config
                 runner = self.chat.assistant.runner
-                
+
                 # Check if the runner has a database
-                if not hasattr(runner, 'db') or runner.db is None:
+                if not hasattr(runner, "db") or runner.db is None:
                     logger.debug(f"No database configured for runner, returning empty list for session {session_id}")
                     return []
-                
+
+                # Get session type from query params if provided
+                session_type = request.query_params.get("type")
+
                 # Get the session from the database - try different session types
                 session = None
-                for session_type in ["workflow", "agent", "team"]:
+                if session_type:
+                    # If type is specified, only try that type
                     try:
                         session = runner.db.get_session(session_id, session_type)
-                        if session:
-                            break
                     except Exception:
-                        continue
+                        pass
+                else:
+                    # Otherwise try all types
+                    for st in ["agent", "workflow", "team"]:
+                        try:
+                            session = runner.db.get_session(session_id, st)
+                            if session:
+                                break
+                        except Exception:
+                            continue
 
                 if not session:
                     logger.debug(f"No session found for {session_id}")
                     return []
-                
+
                 # Extract runs from the session
                 runs = []
-                if hasattr(session, 'agent_runs'):
+                if hasattr(session, "agent_runs") and session.agent_runs:
                     # For agent sessions
                     for run in session.agent_runs:
-                        runs.append({
-                            "run_id": run.run_id,
-                            "session_id": session_id,
-                            "input": run.user_message,
-                            "output": run.response,
-                            "created_at": run.created_at.isoformat() if hasattr(run.created_at, 'isoformat') else str(run.created_at),
-                        })
-                elif hasattr(session, 'workflow_runs'):
+                        runs.append(
+                            {
+                                "run_id": run.run_id,
+                                "session_id": session_id,
+                                "input": getattr(run, "user_message", getattr(run, "input", "")),
+                                "output": getattr(run, "response", getattr(run, "output", "")),
+                                "created_at": (
+                                    run.created_at.isoformat()
+                                    if hasattr(run.created_at, "isoformat")
+                                    else str(run.created_at)
+                                ),
+                            }
+                        )
+                elif hasattr(session, "workflow_runs") and session.workflow_runs:
                     # For workflow sessions
                     for run in session.workflow_runs:
-                        runs.append({
-                            "run_id": run.run_id,
-                            "session_id": session_id,
-                            "input": run.input,
-                            "output": run.output,
-                            "created_at": run.created_at.isoformat() if hasattr(run.created_at, 'isoformat') else str(run.created_at),
-                        })
-                elif hasattr(session, 'team_runs'):
+                        runs.append(
+                            {
+                                "run_id": run.run_id,
+                                "session_id": session_id,
+                                "input": getattr(run, "input", getattr(run, "user_message", "")),
+                                "output": getattr(run, "output", getattr(run, "response", "")),
+                                "created_at": (
+                                    run.created_at.isoformat()
+                                    if hasattr(run.created_at, "isoformat")
+                                    else str(run.created_at)
+                                ),
+                            }
+                        )
+                elif hasattr(session, "team_runs") and session.team_runs:
                     # For team sessions
                     for run in session.team_runs:
-                        runs.append({
-                            "run_id": run.run_id,
-                            "session_id": session_id,
-                            "input": run.input,
-                            "output": run.output,
-                            "created_at": run.created_at.isoformat() if hasattr(run.created_at, 'isoformat') else str(run.created_at),
-                        })
-                
+                        runs.append(
+                            {
+                                "run_id": run.run_id,
+                                "session_id": session_id,
+                                "input": getattr(run, "input", getattr(run, "user_message", "")),
+                                "output": getattr(run, "output", getattr(run, "response", "")),
+                                "created_at": (
+                                    run.created_at.isoformat()
+                                    if hasattr(run.created_at, "isoformat")
+                                    else str(run.created_at)
+                                ),
+                            }
+                        )
+
                 logger.debug(f"Retrieved {len(runs)} runs for session {session_id}")
                 return runs
 

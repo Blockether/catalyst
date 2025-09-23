@@ -24,6 +24,7 @@ from .KnowledgeTypes import (
     ImageInfo,
     KnowledgeSearchResult,
     LinkedKnowledge,
+    LinkedTermInfo,
     NormalizedSearchResult,
     SearchResult,
     SearchResultMetadata,
@@ -314,7 +315,12 @@ class KnowledgeSearchCore:
         # Enhance search results with term analysis and boosting
         # The function now handles efficient top-k selection internally
         enhanced_results = self._enhance_search_results(
-            search_results, query, top_terms, max_depth, max_cooccurrences, k * 2  # Get more for filtering
+            search_results,
+            query,
+            top_terms,
+            max_depth,
+            max_cooccurrences,
+            k * 2,  # Get more for filtering
         )
 
         # Filter enhanced results based on acronym/keyword matches
@@ -765,12 +771,13 @@ class KnowledgeSearchCore:
             linked_term = self._resolve_term(link.link_to)
             if linked_term:
                 linked_terms.append(
-                    TermInfo(
+                    LinkedTermInfo(
                         term=linked_term.term,
                         meaning=linked_term.meaning[:600] if linked_term.meaning else None,
                         term_type=linked_term.type,
                         link_score=link.score,
                         total_times_occurred_in_knowledgebase=linked_term.total,
+                        linked_terms=[],  # Usually empty to prevent deep nesting
                     )
                 )
 
@@ -865,9 +872,7 @@ class KnowledgeSearchCore:
         if not self._linked_knowledge:
             return {}
 
-        return self._linked_knowledge.get_extraction_details(
-            base_url=self._resources_base_url or ""
-        )
+        return self._linked_knowledge.get_extraction_details(base_url=self._resources_base_url or "")
 
     def persist(self, path: Optional[Union[str, Path]] = None) -> None:
         """

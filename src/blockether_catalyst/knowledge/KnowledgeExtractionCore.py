@@ -1060,12 +1060,10 @@ class KnowledgeExtractionCore:
                 """Classify a single chunk's semantic type - MANDATORY."""
                 # Handle empty or whitespace-only chunks
                 if not chunk.text or not chunk.text.strip():
-                    logger.warning(
-                        f"Chunk {chunk.index} is empty, assigning 'general' semantic type"
-                    )
+                    logger.warning(f"Chunk {chunk.index} is empty, assigning 'general' semantic type")
                     chunk.semantic_types = ["general"]
                     return chunk
-                
+
                 result = await self.calls.chunk_content_classification_call.execute(
                     chunk_text=chunk.text,
                     document_name=doc_result.document_filename,

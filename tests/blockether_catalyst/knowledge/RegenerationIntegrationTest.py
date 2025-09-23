@@ -52,9 +52,13 @@ class TestRegenerationIntegration:
         mock_chunk_classification = MagicMock(spec=BaseChunkContentClassificationCall)
 
         # Configure mock responses
-        mock_term_extraction.execute = AsyncMock(return_value={"terms": [{"term": "API", "type": "acronym", "count": 5}]})
+        mock_term_extraction.execute = AsyncMock(
+            return_value={"terms": [{"term": "API", "type": "acronym", "count": 5}]}
+        )
         mock_document_chunking.execute = AsyncMock(return_value={"chunks": [{"text": "Sample chunk", "page": 1}]})
-        mock_chunk_classification.execute = AsyncMock(return_value={"classification": {"semantic_types": ["explanation"]}})
+        mock_chunk_classification.execute = AsyncMock(
+            return_value={"classification": {"semantic_types": ["explanation"]}}
+        )
 
         return ExtractionCallsSettings(
             term_extraction_call=mock_term_extraction,
@@ -195,6 +199,7 @@ class TestRegenerationIntegration:
                         full_form="Application Programming Interface",
                         meaning="A set of protocols and tools for building software applications",
                         total=15,
+                        reasoning="API is identified as an acronym standing for Application Programming Interface. It appears frequently in technical documentation and refers to protocols and tools used for building software applications. This term is fundamental to software development and integration discussions.",
                         occurrences=[
                             TermOccurrence(
                                 document_id="doc1_hash",
@@ -217,6 +222,7 @@ class TestRegenerationIntegration:
                         full_form="Application Programming Interface",
                         meaning="A set of protocols and tools for building software applications",
                         total=15,
+                        reasoning="API is identified as an acronym standing for Application Programming Interface. It appears frequently in technical documentation and refers to protocols and tools used for building software applications. This term is fundamental to software development and integration discussions.",
                         occurrences=[
                             TermOccurrence(
                                 document_id="doc1_hash",
@@ -259,6 +265,7 @@ class TestRegenerationIntegration:
                             full_form="Application Programming Interface",
                             meaning="A set of protocols and tools for building software applications",
                             total=15,
+                            reasoning="API is identified as an acronym standing for Application Programming Interface. It appears frequently in technical documentation and refers to protocols and tools used for building software applications. This term is fundamental to software development and integration discussions.",
                             occurrences=[],
                             cooccurrences=[],
                             links=[],

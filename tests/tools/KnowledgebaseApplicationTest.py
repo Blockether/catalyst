@@ -2,15 +2,15 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
 from typing import List
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-from agno.workflow import Workflow
-from agno.workflow.step import Step
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAILike
+from agno.workflow import Workflow
+from agno.workflow.step import Step
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "tools"))
 
@@ -34,9 +34,9 @@ class TestKnowledgebaseApplication:
 
         # Configure mock results
         for i, result in enumerate(mock_results):
-            result.markdown.return_value = f"# Result {i+1}\nMocked search result content {i+1}"
-            result.document_name = f"document_{i+1}.pdf"
-            result.chunk_id = f"chunk_{i+1}"
+            result.markdown.return_value = f"# Result {i + 1}\nMocked search result content {i + 1}"
+            result.document_name = f"document_{i + 1}.pdf"
+            result.chunk_id = f"chunk_{i + 1}"
             result.page = i + 1
             result.relevance_score = 0.9 - (i * 0.1)
 
@@ -60,14 +60,11 @@ class TestKnowledgebaseApplication:
     def test_knowledge_retriever_function(self, mock_search_module):
         """Test the KnowledgeRetriever function."""
         # Import here to use mocked module
-        with patch('tools.KnowledgebaseApplication.search_module', mock_search_module):
+        with patch("tools.KnowledgebaseApplication.search_module", mock_search_module):
             from tools.KnowledgebaseApplication import KnowledgeRetriever
 
             # Test with valid query
-            results = KnowledgeRetriever(
-                query="test query",
-                max_documents=5
-            )
+            results = KnowledgeRetriever(query="test query", max_documents=5)
 
             # Verify search was called
             mock_search_module.search.assert_called_once_with(
@@ -75,31 +72,28 @@ class TestKnowledgebaseApplication:
                 k=10,  # Note: hardcoded to 10 in function
                 threshold=0.5,  # Updated to match actual implementation
                 max_depth=2,
-                max_cooccurrences=3
+                max_cooccurrences=3,
             )
 
             # Verify results format
             assert len(results) == 2
-            assert all('content' in result for result in results)
-            assert results[0]['content'] == "# Result 1\nMocked search result content 1"
+            assert all("content" in result for result in results)
+            assert results[0]["content"] == "# Result 1\nMocked search result content 1"
 
     def test_knowledge_retriever_empty_results(self, mock_search_module):
         """Test KnowledgeRetriever with no results."""
         mock_search_module.search.return_value = []
 
-        with patch('tools.KnowledgebaseApplication.search_module', mock_search_module):
+        with patch("tools.KnowledgebaseApplication.search_module", mock_search_module):
             from tools.KnowledgebaseApplication import KnowledgeRetriever
 
-            results = KnowledgeRetriever(
-                query="no matches",
-                max_documents=5
-            )
+            results = KnowledgeRetriever(query="no matches", max_documents=5)
 
             assert results == []
 
     def test_knowledge_retriever_step_function(self, mock_search_module):
         """Test knowledge_retriever_step function."""
-        with patch('tools.KnowledgebaseApplication.search_module', mock_search_module):
+        with patch("tools.KnowledgebaseApplication.search_module", mock_search_module):
             from tools.KnowledgebaseApplication import knowledge_retriever_step
 
             # Call the step function with query
@@ -137,14 +131,14 @@ class TestKnowledgebaseApplication:
         assert MainKnowledgebaseWorkflow.name == "Knowledge Base Q&A Workflow"
         assert MainKnowledgebaseWorkflow.id == "MainKnowledgebaseWorkflow"
 
-    @patch('agno.workflow.Workflow.run')
+    @patch("agno.workflow.Workflow.run")
     def test_workflow_execution(self, mock_run):
         """Test the complete workflow execution."""
         # Mock the workflow execution
         mock_run.return_value = {
             "status": "completed",
             "response": "Here is the information you requested...",
-            "sources": ["document_1.pdf", "document_2.pdf"]
+            "sources": ["document_1.pdf", "document_2.pdf"],
         }
 
         from tools.KnowledgebaseApplication import MainKnowledgebaseWorkflow
@@ -182,7 +176,7 @@ class TestKnowledgebaseApplication:
         # Simulate search failure
         mock_search_module.search.side_effect = Exception("Search failed")
 
-        with patch('tools.KnowledgebaseApplication.search_module', mock_search_module):
+        with patch("tools.KnowledgebaseApplication.search_module", mock_search_module):
             from tools.KnowledgebaseApplication import KnowledgeRetriever
 
             # Should raise the exception (or handle it based on implementation)

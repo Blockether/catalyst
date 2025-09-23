@@ -139,7 +139,12 @@ class PDFKnowledgeExtractor:
         base_text = page_without_tables.extract_text(**self._text_extraction_settings.model_dump()) or ""
 
         # Extract image
-        images = self._extract_images_from_page(page, context=base_text, current_document=current_document, current_document_path=current_document_path)
+        images = self._extract_images_from_page(
+            page,
+            context=base_text,
+            current_document=current_document,
+            current_document_path=current_document_path,
+        )
 
         # Fix hyphenated line breaks immediately after extraction
         base_text = self._fix_hyphenated_line_breaks(base_text)
@@ -256,9 +261,7 @@ class PDFKnowledgeExtractor:
                     tables.append(pdf_table)
 
             except Exception as e:
-                self._logger.warning(
-                    f"[{current_document}] Error extracting table on page {page.page_number}: {e}"
-                )
+                self._logger.warning(f"[{current_document}] Error extracting table on page {page.page_number}: {e}")
 
         return tables
 
