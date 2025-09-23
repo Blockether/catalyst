@@ -451,7 +451,7 @@ class TestAgnoOsASGIModule:
         result = default_token_resolver("token", mock_os, mock_request)
         assert result is None
 
-    def test_mcp_config(self, real_workflow):
+    def test_mcp_config(self):
         """Test MCPConfig creation and usage."""
         # Create a proper Tool instance using Tool.from_function
         from fastmcp.tools import Tool
@@ -462,9 +462,8 @@ class TestAgnoOsASGIModule:
 
         test_tool = Tool.from_function(fn=test_tool_func, name="test_tool", description="A test tool")
 
-        mcp_config = MCPConfig(workflow=real_workflow, name="Test MCP", tools=[test_tool])
+        mcp_config = MCPConfig(name="Test MCP", tools=[test_tool])
 
-        assert mcp_config.workflow == real_workflow
         assert mcp_config.name == "Test MCP"
         assert len(mcp_config.tools) == 1
         assert mcp_config.tools[0].name == "test_tool"

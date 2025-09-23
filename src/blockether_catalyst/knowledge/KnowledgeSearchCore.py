@@ -304,13 +304,9 @@ class KnowledgeSearchCore:
         if top_terms.acronyms:
             logger.info(f"Top acronyms from query: {top_terms.acronyms[: self.MAX_TOP_ACRONYMS_FROM_QUERY]}")
 
-        # CRITICAL FIX: Get more results with a lower threshold for acronym/keyword matching
-        # We'll filter by the actual threshold AFTER checking for acronym/keyword matches
-        search_threshold = min(threshold, 0.3) if (top_terms.acronyms or top_terms.keywords) else threshold
-
         # Perform vector search (get more results initially for better ranking)
         # Use the lower threshold to ensure we don't miss acronym/keyword matches
-        search_results = self._similarity_search(query, k=k * 3, threshold=search_threshold)
+        search_results = self._similarity_search(query, k=k * 2, threshold=threshold)
 
         # Enhance search results with term analysis and boosting
         # The function now handles efficient top-k selection internally

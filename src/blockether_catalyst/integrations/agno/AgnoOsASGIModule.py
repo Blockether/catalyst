@@ -119,30 +119,6 @@ class ChatConfig(BaseModel):
         default=default_token_resolver, description="Token resolver function"
     )
 
-    def get_executor_type(self) -> str:
-        """Get the executor type based on runner class name."""
-        runner_class = self.assistant.runner.__class__.__name__
-        if runner_class == "Workflow":
-            return "workflows"
-        elif runner_class == "Team":
-            return "teams"
-        elif runner_class == "Agent":
-            return "agents"
-        else:
-            return "workflows"  # Default fallback
-
-    def get_session_type(self) -> str:
-        """Get the session type based on runner class name."""
-        runner_class = self.assistant.runner.__class__.__name__
-        if runner_class == "Workflow":
-            return "workflow"
-        elif runner_class == "Team":
-            return "team"
-        elif runner_class == "Agent":
-            return "agent"
-        else:
-            return "workflow"  # Default fallback
-
 
 class AgnoOsASGIModule(ASGICoreModule):
     template_dirs: Optional[Union[Path, List[Path]]] = Path(__file__).parent / "templates"
@@ -155,10 +131,8 @@ class AgnoOsASGIModule(ASGICoreModule):
     agents: List["Agent"] = []
     workflows: List["Workflow"] = []
     teams: List["Team"] = []
-    docs_enabled: bool = True
+    api: Optional[AgnoOSAPISettings] = None
     mcp: Optional[MCPConfig] = None
-    api_token: Optional[str] = None
-    cors_list: List[str] = []
 
     def model_post_init(self, __context: Any) -> None:
         if not self.chat:
@@ -169,17 +143,27 @@ class AgnoOsASGIModule(ASGICoreModule):
     def mount(self, app: FastAPI, router: APIRouter) -> None:
         """Mount the ASGI application to the main FastAPI app."""
 
+        # Use api settings if provided, otherwise use defaults
+        if self.api:
+            api_settings = AgnoAPISettings(
+                os_security_key=self.api.api_token,
+                docs_enabled=self.api.docs_enabled,
+                cors_origin_list=self.api.cors_list,
+            )
+        else:
+            api_settings = AgnoAPISettings(
+                os_security_key=None,
+                docs_enabled=True,
+                cors_origin_list=["http://localhost:*"],
+            )
+
         self._os = AgentOS(
             os_id=self.title.strip().replace(" ", "_"),
             agents=self.agents,
             version=self.version,
             workflows=self.workflows,
             teams=self.teams,
-            settings=AgnoAPISettings(
-                os_security_key=self.api_token,
-                docs_enabled=self.docs_enabled,
-                cors_origin_list=self.cors_list,
-            ),
+            settings=api_settings,
             enable_mcp=False,
             telemetry=False,
         )

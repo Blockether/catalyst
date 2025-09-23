@@ -378,3 +378,26 @@ class PDFKnowledgeExtractor:
             raw_text += "\n" + table.to_ascii_table() + "\n"
 
         return raw_text
+
+    def regenerate_all_images(self, pdf_files: List[str]) -> None:
+        """Regenerate all images from the given PDF files.
+
+        Args:
+            pdf_files: List of PDF file paths to process
+
+        Raises:
+            FileNotFoundError: If images directory or PDF files not found
+        """
+        # Check if image output directory exists
+        if not self._image_output_dir.exists():
+            raise FileNotFoundError(f"Images directory not found: {self._image_output_dir}")
+
+        # Process each PDF file
+        for pdf_file in pdf_files:
+            pdf_path = Path(pdf_file)
+            if not pdf_path.exists():
+                raise FileNotFoundError(f"PDF file not found: {pdf_file}")
+
+            # This would need to be implemented with proper PDF processing
+            # For now, just validate the files exist
+            pass

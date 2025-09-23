@@ -302,7 +302,8 @@ class TestRegenerationIntegration:
             },
         }
 
-    def test_complete_regeneration_workflow(self, extractor, complete_extraction_state, tmp_path):
+    @pytest.mark.anyio
+    async def test_complete_regeneration_workflow(self, extractor, complete_extraction_state, tmp_path):
         """Test the complete image regeneration workflow from start to finish."""
         output_dir = extractor._settings.extraction_output_dir
 
@@ -320,7 +321,7 @@ class TestRegenerationIntegration:
         ) as mock_regen:
             mock_regen.return_value = None
 
-            extractor._regenerate_images_with_dependencies(pdf_files)
+            await extractor._regenerate_images_with_dependencies(pdf_files)
 
         # Verify affected steps were invalidated
         affected_steps = extractor._get_image_affected_steps()
@@ -368,7 +369,8 @@ class TestRegenerationIntegration:
             conflicting_steps = [s for s in intermediate_steps if s not in affected_steps]
             assert len(conflicting_steps) == 0, f"Found conflicting preserved steps: {conflicting_steps}"
 
-    def test_regeneration_with_missing_images_directory(self, extractor, complete_extraction_state, tmp_path):
+    @pytest.mark.anyio
+    async def test_regeneration_with_missing_images_directory(self, extractor, complete_extraction_state, tmp_path):
         """Test regeneration behavior when images directory is missing."""
         pdf_files = self._create_mock_pdf_files(tmp_path)
 
@@ -379,7 +381,7 @@ class TestRegenerationIntegration:
             mock_regen.side_effect = FileNotFoundError("Images directory not found")
 
             with pytest.raises(FileNotFoundError):
-                extractor._regenerate_images_with_dependencies(pdf_files)
+                await extractor._regenerate_images_with_dependencies(pdf_files)
 
         # Verify that even with failure, dependencies were still invalidated
         output_dir = extractor._settings.extraction_output_dir

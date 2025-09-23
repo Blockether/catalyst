@@ -17,7 +17,7 @@ model_list:
 
   - model_name: qwen-3-4b
     litellm_params:
-      model: lmstudio/qwen/qwen3-4b-2507
+      model: lm_studio/qwen/qwen3-4b-2507
       api_base: http://localhost:1234/v1
       api_key: dummy_key
       rpm: 120

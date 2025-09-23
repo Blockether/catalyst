@@ -39,6 +39,14 @@ class TestKnowledgebaseApplication:
             result.chunk_id = f"chunk_{i + 1}"
             result.page = i + 1
             result.relevance_score = 0.9 - (i * 0.1)
+            # Configure model_dump method to return a dict with content
+            result.model_dump.return_value = {
+                "content": f"# Result {i + 1}\nMocked search result content {i + 1}",
+                "document_name": f"document_{i + 1}.pdf",
+                "chunk_id": f"chunk_{i + 1}",
+                "page": i + 1,
+                "relevance_score": 0.9 - (i * 0.1)
+            }
 
         mock.search.return_value = mock_results
         return mock
@@ -69,7 +77,7 @@ class TestKnowledgebaseApplication:
             # Verify search was called
             mock_search_module.search.assert_called_once_with(
                 query="test query",
-                k=10,  # Note: hardcoded to 10 in function
+                k=5,  # Using max_documents=5, so k=5
                 threshold=0.5,  # Updated to match actual implementation
                 max_depth=2,
                 max_cooccurrences=3,
@@ -191,7 +199,7 @@ class TestKnowledgebaseApplication:
         mcp_config = agno_asgi_module.mcp
         assert mcp_config is not None
         assert mcp_config.name == "Catalyst Knowledge MCP"
-        assert mcp_config.workflow is not None
+        assert len(mcp_config.tools) > 0
 
     def test_asgi_module_creation(self):
         """Test AgnoOsASGIModule creation."""

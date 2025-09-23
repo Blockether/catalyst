@@ -22,8 +22,8 @@ from pydantic import BaseModel, Field
 
 from blockether_catalyst.asgi.ASGICoreApplication import ASGICoreApplication
 from blockether_catalyst.integrations.agno.AgnoOsASGIModule import (
-    AgnoOSAPISettings,
     AgnoOsASGIModule,
+    AgnoOSAPISettings,
     AssistantConfig,
     ChatConfig,
     MCPConfig,
@@ -76,7 +76,7 @@ class TestAgnoOsASGIModuleIntegration:
         return agent
 
     @pytest.fixture
-    def test_workflow(self, test_agent, test_llm, test_db) -> Workflow:
+    def test_workflow(self, test_agent, test_db) -> Workflow:
         """Create a real test workflow with agent step."""
         # Create a step that uses the agent
         agent_step = Step(
@@ -199,7 +199,6 @@ class TestAgnoOsASGIModuleIntegration:
         )
 
         mcp_config = MCPConfig(
-            workflow=agent_workflow,  # Use the same workflow instance
             name="Math Agent MCP",
             tools=[math_tool],
         )
@@ -241,7 +240,6 @@ class TestAgnoOsASGIModuleIntegration:
         )
 
         mcp_config = MCPConfig(
-            workflow=test_workflow,
             name="Math Workflow MCP",
             tools=[math_tool],
         )
@@ -586,7 +584,7 @@ class TestEndToEndScenarios:
         return agent
 
     @pytest.fixture
-    def test_workflow(self, test_agent, test_llm, test_db) -> Workflow:
+    def test_workflow(self, test_agent, test_db) -> Workflow:
         """Create a real test workflow with agent step."""
         # Create a step that uses the agent
         agent_step = Step(
@@ -677,7 +675,6 @@ class TestEndToEndScenarios:
         )
 
         mcp_config = MCPConfig(
-            workflow=test_workflow,
             name="Math Workflow MCP",
             tools=[math_tool],
         )

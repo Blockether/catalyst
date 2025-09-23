@@ -202,7 +202,7 @@ class KnowledgeExtractionCore:
         """Resolve glob patterns to actual file paths.
 
         Args:
-            globs: List of glob patterns (e.g., '*.pdf', 'docs/**/*.txt')
+            globs: List of glob patterns (e.g., '*.pdf', 'docs/**/*.txt') or absolute paths
 
         Returns:
             List of resolved file paths matching the patterns
@@ -211,8 +211,15 @@ class KnowledgeExtractionCore:
 
         for pattern in globs:
             logger.info(f"Resolving glob pattern: {pattern}")
-            matched_files = list(Path().rglob(pattern))
-            all_files.update(matched_files)
+
+            # Check if it's an absolute path
+            path = Path(pattern)
+            if path.is_absolute() and path.exists():
+                all_files.add(path)
+            else:
+                # It's a glob pattern
+                matched_files = list(Path().rglob(pattern))
+                all_files.update(matched_files)
 
         return list(all_files)
 
@@ -1425,7 +1432,22 @@ class KnowledgeExtractionCore:
         Returns:
             Dictionary mapping step names to existence status
         """
-        steps = [
+        steps = self._get_extraction_steps()
+
+        status = {}
+        for step in steps:
+            pickle_path = self._output_dir / f"{step}.pkl"
+            status[step] = pickle_path.exists()
+
+        return status
+
+    def _get_extraction_steps(self) -> List[str]:
+        """Get list of extraction step names.
+
+        Returns:
+            List of extraction step names
+        """
+        return [
             "1_raw_extraction",
             "2_chunked_documents",
             "3_classified_chunks",
@@ -1438,12 +1460,18 @@ class KnowledgeExtractionCore:
             "knowledge_search",
         ]
 
-        status = {}
-        for step in steps:
-            pickle_path = self._output_dir / f"{step}.pkl"
-            status[step] = pickle_path.exists()
+    def _check_existing_state(self) -> Tuple[int, int]:
+        """Check the existing extraction state.
 
-        return status
+        Returns:
+            Tuple of (preserved_steps, total_steps) where preserved_steps is the
+            number of existing extraction files and total_steps is the total
+            number of expected steps.
+        """
+        status = self.get_extraction_status()
+        preserved = sum(1 for exists in status.values() if exists)
+        total = len(status)
+        return preserved, total
 
     def _get_step_dependencies(self) -> Dict[str, List[str]]:
         """Define dependency chain for extraction steps.

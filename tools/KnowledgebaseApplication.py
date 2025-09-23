@@ -77,13 +77,13 @@ def KnowledgeRetriever(
     # search() now returns List[NormalizedSearchResult] Pydantic models
     results: List[NormalizedSearchResult] = search_module.search(
         query=query,
-        k=max_documents or 10,
+        k=max_documents or 5,
         threshold=0.5,
         max_depth=2,
         max_cooccurrences=3
     )
 
-    return [res.model_dump() for res in results]
+    return [res.model_dump() for res in results][:5]
 
 
 knowledge_query_mcp_tool = Tool.from_function(
@@ -220,7 +220,7 @@ MainKnowledgebaseWorkflow = Workflow(
     steps=[knowledge_agent_step],  # Using the Agent step
     store_events=True,
     store_executor_outputs=True,
-    cache_session=True,
+    cache_session=True,  # Enable session caching to ensure sessions are created and tracked
 )
 
 
@@ -239,7 +239,7 @@ agno_asgi_module = AgnoOsASGIModule(
     ),
     mcp=MCPConfig(
         name="Catalyst Knowledge MCP",
-        tools=[knowledge_query],
+        tools=[knowledge_query_mcp_tool],
     ),
     statics=[
         StaticMount(
