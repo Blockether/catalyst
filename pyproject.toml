@@ -7,6 +7,7 @@ where = ["src"]
 include = ["blockether_catalyst*"]
 
 [tool.setuptools.package-data]
+"blockether_catalyst.asgi" = ["templates/**/*.j2"]
 "blockether_catalyst.integrations.agno" = ["templates/**/*.j2", "assets/**/*"]
 "blockether_catalyst" = ["assets/static_models/**/*"]
 
