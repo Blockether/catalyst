@@ -729,6 +729,70 @@ class NormalizedSearchResult(TypedPydanticModel):
         return "\n".join(lines)
 
 
+class CompactSearchResult(TypedPydanticModel):
+    """Search result without duplicated term data."""
+
+    # Core fields
+    score: float = Field(description="Relevance score")
+    content: str = Field(description="The main text content")
+    document_name: str = Field(description="Name of the document")
+    page: Optional[int] = Field(default=None, description="Page number")
+
+    # Metadata
+    author: Optional[str] = Field(default=None, description="Document author")
+    publication_date: Optional[str] = Field(default=None, description="Publication date")
+    modified_date: Optional[str] = Field(default=None, description="Modification date")
+    href: Optional[str] = Field(default=None, description="Link to document")
+
+    # References to terms by their keys
+    primary_term_keys: List[str] = Field(default_factory=list, description="Keys of primary terms")
+    related_term_keys: List[str] = Field(default_factory=list, description="Keys of related terms")
+
+    # Content that is unique per result
+    images: List[ImageInfo] = Field(default_factory=list, description="Images in the result")
+    tables: List[TableInfo] = Field(default_factory=list, description="Tables in the result")
+
+
+class OptimizedSearchResponse(TypedPydanticModel):
+    """Optimized search response with deduplicated terms."""
+
+    # Search results without duplicated term data
+    results: List[CompactSearchResult] = Field(description="Search results")
+
+    # Deduplicated terms dictionary
+    terms: Dict[str, TermInfo] = Field(default_factory=dict, description="All unique terms referenced in results")
+
+    # Search metadata
+    total_results: int = Field(description="Total number of results found")
+    query: str = Field(description="The original search query")
+    search_type: str = Field(default="hybrid", description="Type of search performed")
+
+    def to_standard_format(self) -> List[NormalizedSearchResult]:
+        """Convert back to standard format if needed for compatibility."""
+        standard_results = []
+        for result in self.results:
+            # Reconstruct the full result with term data
+            primary_terms = [self.terms[key] for key in result.primary_term_keys if key in self.terms]
+            related_terms = [self.terms[key] for key in result.related_term_keys if key in self.terms]
+
+            standard_result = NormalizedSearchResult(
+                score=result.score,
+                content=result.content,
+                document_name=result.document_name,
+                page=result.page,
+                author=result.author,
+                publication_date=result.publication_date,
+                modified_date=result.modified_date,
+                href=result.href,
+                images=result.images,
+                tables=result.tables,
+                primary_terms=primary_terms,
+                related_terms=related_terms,
+            )
+            standard_results.append(standard_result)
+        return standard_results
+
+
 # Update imports for forward references
 TermInfo.model_rebuild()
 

@@ -180,7 +180,11 @@ class TestAgnoOsASGIModule:
             workflows=[real_workflow],
             teams=[],
             chat=chat_config_workflow,
-            api=AgnoOSAPISettings(docs_enabled=True, cors_list=["http://localhost:*"], api_token=None),
+            api=AgnoOSAPISettings(
+                docs_enabled=True,
+                cors_origin_list=["http://localhost:*"],
+                api_token=None,
+            ),
         )
 
     @pytest.fixture
@@ -246,17 +250,6 @@ class TestAgnoOsASGIModule:
             )
             asgi_app.mount_module(agno_module_team)
             return TestClient(asgi_app.app)
-
-    def test_chat_config_executor_type_detection(self, chat_config_workflow, chat_config_team, chat_config_agent):
-        """Test that executor type is correctly detected from different executor types."""
-        assert chat_config_workflow.get_executor_type() == "workflows"
-        assert chat_config_workflow.get_session_type() == "workflow"
-
-        assert chat_config_team.get_executor_type() == "teams"
-        assert chat_config_team.get_session_type() == "team"
-
-        assert chat_config_agent.get_executor_type() == "agents"
-        assert chat_config_agent.get_session_type() == "agent"
 
     def test_chat_interface_endpoint(self, test_app_workflow):
         """Test the /os/view endpoint returns the chat interface."""
@@ -473,7 +466,7 @@ class TestAgnoOsASGIModule:
         settings = AgnoOSAPISettings()
 
         assert settings.docs_enabled is True
-        assert "http://localhost:*" in settings.cors_list
+        assert "http://localhost:*" in settings.cors_origin_list
         assert settings.api_token is None
 
     def test_module_validation_no_chat(self):

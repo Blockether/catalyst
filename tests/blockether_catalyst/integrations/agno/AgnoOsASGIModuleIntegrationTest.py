@@ -22,8 +22,8 @@ from pydantic import BaseModel, Field
 
 from blockether_catalyst.asgi.ASGICoreApplication import ASGICoreApplication
 from blockether_catalyst.integrations.agno.AgnoOsASGIModule import (
-    AgnoOsASGIModule,
     AgnoOSAPISettings,
+    AgnoOsASGIModule,
     AssistantConfig,
     ChatConfig,
     MCPConfig,

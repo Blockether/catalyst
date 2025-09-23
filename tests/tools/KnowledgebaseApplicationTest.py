@@ -15,7 +15,12 @@ from agno.workflow.step import Step
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "tools"))
 
 from blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore
-from blockether_catalyst.knowledge.KnowledgeTypes import NormalizedSearchResult
+from blockether_catalyst.knowledge.KnowledgeTypes import (
+    CompactSearchResult,
+    NormalizedSearchResult,
+    OptimizedSearchResponse,
+    TermInfo,
+)
 
 
 class TestKnowledgebaseApplication:
@@ -45,10 +50,44 @@ class TestKnowledgebaseApplication:
                 "document_name": f"document_{i + 1}.pdf",
                 "chunk_id": f"chunk_{i + 1}",
                 "page": i + 1,
-                "relevance_score": 0.9 - (i * 0.1)
+                "relevance_score": 0.9 - (i * 0.1),
             }
 
-        mock.search.return_value = mock_results
+        # Mock the optimized search response
+        mock_optimized_response = MagicMock(spec=OptimizedSearchResponse)
+        mock_optimized_response.model_dump.return_value = {
+            "results": [
+                {
+                    "score": 0.9,
+                    "content": "# Result 1\nMocked search result content 1",
+                    "document_name": "document_1.pdf",
+                    "page": 1,
+                    "primary_term_keys": ["API"],
+                    "related_term_keys": [],
+                },
+                {
+                    "score": 0.8,
+                    "content": "# Result 2\nMocked search result content 2",
+                    "document_name": "document_2.pdf",
+                    "page": 2,
+                    "primary_term_keys": ["API"],
+                    "related_term_keys": [],
+                },
+            ],
+            "terms": {
+                "API": {
+                    "term": "API",
+                    "meaning": "Application Programming Interface",
+                    "term_type": "acronym",
+                    "total_times_occurred_in_knowledgebase": 15,
+                }
+            },
+            "total_results": 2,
+            "query": "test query",
+            "search_type": "hybrid",
+        }
+
+        mock.search.return_value = mock_optimized_response
         return mock
 
     @pytest.fixture
@@ -72,7 +111,7 @@ class TestKnowledgebaseApplication:
             from tools.KnowledgebaseApplication import KnowledgeRetriever
 
             # Test with valid query
-            results = KnowledgeRetriever(query="test query", max_documents=5)
+            result = KnowledgeRetriever(query="test query", max_documents=5)
 
             # Verify search was called
             mock_search_module.search.assert_called_once_with(
@@ -83,21 +122,33 @@ class TestKnowledgebaseApplication:
                 max_cooccurrences=3,
             )
 
-            # Verify results format
-            assert len(results) == 2
-            assert all("content" in result for result in results)
-            assert results[0]["content"] == "# Result 1\nMocked search result content 1"
+            # Verify results format - now returns a dict with results and terms
+            assert isinstance(result, dict)
+            assert "results" in result
+            assert "terms" in result
+            assert len(result["results"]) == 2
+            assert result["results"][0]["content"] == "# Result 1\nMocked search result content 1"
 
     def test_knowledge_retriever_empty_results(self, mock_search_module):
         """Test KnowledgeRetriever with no results."""
-        mock_search_module.search.return_value = []
+        # Mock empty optimized response
+        empty_response = MagicMock(spec=OptimizedSearchResponse)
+        empty_response.model_dump.return_value = {
+            "results": [],
+            "terms": {},
+            "total_results": 0,
+            "query": "no matches",
+            "search_type": "hybrid",
+        }
+        mock_search_module.search.return_value = empty_response
 
         with patch("tools.KnowledgebaseApplication.search_module", mock_search_module):
             from tools.KnowledgebaseApplication import KnowledgeRetriever
 
-            results = KnowledgeRetriever(query="no matches", max_documents=5)
+            result = KnowledgeRetriever(query="no matches", max_documents=5)
 
-            assert results == []
+            assert result["results"] == []
+            assert result["terms"] == {}
 
     def test_knowledge_retriever_step_function(self, mock_search_module):
         """Test knowledge_retriever_step function."""
@@ -105,11 +156,12 @@ class TestKnowledgebaseApplication:
             from tools.KnowledgebaseApplication import knowledge_retriever_step
 
             # Call the step function with query
-            results = knowledge_retriever_step("test query", num_documents=5)
+            result = knowledge_retriever_step("test query", num_documents=5)
 
-            # Verify it returns the expected format
-            assert isinstance(results, list)
-            assert len(results) == 2  # Based on mock_search_module fixture
+            # Verify it returns the expected format - now a dict
+            assert isinstance(result, dict)
+            assert "results" in result
+            assert len(result["results"]) == 2  # Based on mock_search_module fixture
 
     def test_knowledge_agent_step_creation(self):
         """Test knowledge_agent_step creation."""

@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.os import AgentOS
 from agno.os.settings import AgnoAPISettings
+from agno.run.agent import RunOutput as AgentRunOutput
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -68,7 +71,7 @@ class AgnoOSAPISettings(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     docs_enabled: bool = Field(default=True, description="Enable API documentation")
-    cors_list: List[str] = Field(
+    cors_origin_list: List[str] = Field(
         default_factory=lambda: ["http://localhost:*"],
         description="CORS allowed origins",
     )
@@ -131,7 +134,7 @@ class AgnoOsASGIModule(ASGICoreModule):
     agents: List["Agent"] = []
     workflows: List["Workflow"] = []
     teams: List["Team"] = []
-    api: Optional[AgnoOSAPISettings] = None
+    api: AgnoOSAPISettings = AgnoOSAPISettings()
     mcp: Optional[MCPConfig] = None
 
     def model_post_init(self, __context: Any) -> None:
@@ -143,27 +146,13 @@ class AgnoOsASGIModule(ASGICoreModule):
     def mount(self, app: FastAPI, router: APIRouter) -> None:
         """Mount the ASGI application to the main FastAPI app."""
 
-        # Use api settings if provided, otherwise use defaults
-        if self.api:
-            api_settings = AgnoAPISettings(
-                os_security_key=self.api.api_token,
-                docs_enabled=self.api.docs_enabled,
-                cors_origin_list=self.api.cors_list,
-            )
-        else:
-            api_settings = AgnoAPISettings(
-                os_security_key=None,
-                docs_enabled=True,
-                cors_origin_list=["http://localhost:*"],
-            )
-
         self._os = AgentOS(
             os_id=self.title.strip().replace(" ", "_"),
             agents=self.agents,
             version=self.version,
             workflows=self.workflows,
             teams=self.teams,
-            settings=api_settings,
+            # settings=self.api,
             enable_mcp=False,
             telemetry=False,
         )
@@ -212,18 +201,10 @@ class AgnoOsASGIModule(ASGICoreModule):
                 user_id = request.cookies.get("user_id")
 
             # Determine the session type based on what's configured
-            session_type = "workflow"  # Default to workflow
-            executor_id = ""
+            # session_type = "workflow"  # Default to workflow
 
-            if self.workflows:
-                session_type = "workflow"
-                executor_id = self.workflows[0].id if hasattr(self.workflows[0], "id") else ""
-            elif self.agents:
-                session_type = "agent"
-                executor_id = self.agents[0].id if hasattr(self.agents[0], "id") else ""
-            elif self.teams:
-                session_type = "team"
-                executor_id = self.teams[0].id if hasattr(self.teams[0], "id") else ""
+            session_type = self.chat.assistant.runner.__class__.__name__.lower()
+            executor_id = self.chat.assistant.runner.id
 
             # Create the response using render_template which returns a TemplateResponse
             response = self.render_template(
@@ -720,10 +701,9 @@ class AgnoOsASGIModule(ASGICoreModule):
             # The UI sends FormData, so parse it as form data
             form_data = await request.form()
 
-            # Extract parameters from form data - UI sends 'message' not 'input'
-            input_text = form_data.get("message", "")
-            session_id = form_data.get("session_id")
-            user_id = form_data.get("user_id", "anonymous")
+            input_text = str(form_data.get("message", ""))
+            session_id = str(form_data.get("session_id") or uuid.uuid4())
+            user_id = str(form_data.get("user_id", "anonymous"))
 
             if not input_text:
                 return {
@@ -733,50 +713,20 @@ class AgnoOsASGIModule(ASGICoreModule):
                 }
 
             # Get the runner from the assistant config
-            runner = self.chat.assistant.runner
-
+            runner: Workflow | Agent | Team = self.chat.assistant.runner
             try:
-                # Execute based on runner type
-                if hasattr(runner, "run"):
-                    # For agents and workflows
-                    result = runner.run(input_text, session_id=session_id, user_id=user_id)
-                elif hasattr(runner, "execute"):
-                    # Alternative method name
-                    result = runner.execute(input_text, session_id=session_id, user_id=user_id)
-                else:
-                    # Fallback: just call the runner directly
-                    result = runner(input_text)
+                result = await runner.arun(input=input_text, session_id=session_id, user_id=user_id)
 
                 # Extract content and session info from result
-                content = ""
-                actual_session_id = session_id  # Default to passed session_id
-                actual_run_id = str(uuid.uuid4())  # Default run ID
-
-                # Handle different result formats
-                if hasattr(result, "content"):
-                    content = result.content
-                elif hasattr(result, "output"):
-                    content = result.output
-                elif isinstance(result, dict):
-                    content = result.get("content", result.get("output", str(result)))
-                else:
-                    content = str(result)
-
-                # Extract session_id from result if available
-                if hasattr(result, "session_id"):
-                    actual_session_id = result.session_id
-                elif isinstance(result, dict) and "session_id" in result:
-                    actual_session_id = result["session_id"]
-
-                # Extract run_id from result if available
-                if hasattr(result, "run_id"):
-                    actual_run_id = result.run_id
-                elif isinstance(result, dict) and "run_id" in result:
-                    actual_run_id = result["run_id"]
+                content = self._get_output_from_result(result)
+                actual_session_id = getattr(result, "session_id", session_id)
+                actual_run_id = getattr(result, "run_id", str(uuid.uuid4()))
+                actual_user_id = getattr(result, "user_id", "anonymous")
 
                 return {
                     "run_id": actual_run_id,
                     "session_id": actual_session_id,
+                    "user_id": actual_user_id,
                     "status": "completed",
                     "output": content,
                 }
@@ -796,88 +746,29 @@ class AgnoOsASGIModule(ASGICoreModule):
             """Get all runs for a session."""
             try:
                 # Get the runner from the assistant config
-                runner = self.chat.assistant.runner
-
-                # Check if the runner has a database
-                if not hasattr(runner, "db") or runner.db is None:
-                    logger.debug(f"No database configured for runner, returning empty list for session {session_id}")
-                    return []
-
-                # Get session type from query params if provided
-                session_type = request.query_params.get("type")
-
-                # Get the session from the database - try different session types
-                session = None
-                if session_type:
-                    # If type is specified, only try that type
-                    try:
-                        session = runner.db.get_session(session_id, session_type)
-                    except Exception:
-                        pass
-                else:
-                    # Otherwise try all types
-                    for st in ["agent", "workflow", "team"]:
-                        try:
-                            session = runner.db.get_session(session_id, st)
-                            if session:
-                                break
-                        except Exception:
-                            continue
+                runner: Workflow | Agent | Team = self.chat.assistant.runner
+                session = runner.get_session(session_id)
 
                 if not session:
                     logger.debug(f"No session found for {session_id}")
                     return []
 
+                if not session.runs:
+                    logger.debug(f"No runs found for session {session_id}")
+                    return []
+
                 # Extract runs from the session
                 runs = []
-                if hasattr(session, "agent_runs") and session.agent_runs:
-                    # For agent sessions
-                    for run in session.agent_runs:
-                        runs.append(
-                            {
-                                "run_id": run.run_id,
-                                "session_id": session_id,
-                                "input": getattr(run, "user_message", getattr(run, "input", "")),
-                                "output": getattr(run, "response", getattr(run, "output", "")),
-                                "created_at": (
-                                    run.created_at.isoformat()
-                                    if hasattr(run.created_at, "isoformat")
-                                    else str(run.created_at)
-                                ),
-                            }
-                        )
-                elif hasattr(session, "workflow_runs") and session.workflow_runs:
-                    # For workflow sessions
-                    for run in session.workflow_runs:
-                        runs.append(
-                            {
-                                "run_id": run.run_id,
-                                "session_id": session_id,
-                                "input": getattr(run, "input", getattr(run, "user_message", "")),
-                                "output": getattr(run, "output", getattr(run, "response", "")),
-                                "created_at": (
-                                    run.created_at.isoformat()
-                                    if hasattr(run.created_at, "isoformat")
-                                    else str(run.created_at)
-                                ),
-                            }
-                        )
-                elif hasattr(session, "team_runs") and session.team_runs:
-                    # For team sessions
-                    for run in session.team_runs:
-                        runs.append(
-                            {
-                                "run_id": run.run_id,
-                                "session_id": session_id,
-                                "input": getattr(run, "input", getattr(run, "user_message", "")),
-                                "output": getattr(run, "output", getattr(run, "response", "")),
-                                "created_at": (
-                                    run.created_at.isoformat()
-                                    if hasattr(run.created_at, "isoformat")
-                                    else str(run.created_at)
-                                ),
-                            }
-                        )
+                for run in session.runs:
+                    runs.append(
+                        {
+                            "run_id": run.run_id,
+                            "session_id": session_id,
+                            "input": run.input,
+                            "output": self._get_output_from_result(run),
+                            "created_at": run.created_at,
+                        }
+                    )
 
                 logger.debug(f"Retrieved {len(runs)} runs for session {session_id}")
                 return runs
@@ -888,3 +779,22 @@ class AgnoOsASGIModule(ASGICoreModule):
 
         # Add all AgentOS routes to our router
         router.routes = list(router.routes) + list(router_os.routes)
+
+    def _get_output_from_result(self, result: TeamRunOutput | WorkflowRunOutput | AgentRunOutput) -> str:
+        """Extract output from different runner result types.
+
+        Args:
+            result: The result object from agent, workflow, or team execution
+
+        Returns:
+            The extracted output as a string
+        """
+
+        if isinstance(result, TeamRunOutput):
+            return result.content or ""
+        elif isinstance(result, WorkflowRunOutput):
+            return str(result.content) if result.content else "No output generated from workflow"
+        elif isinstance(result, AgentRunOutput):
+            return result.content or "No output generated from agent"
+        else:
+            return str(result)

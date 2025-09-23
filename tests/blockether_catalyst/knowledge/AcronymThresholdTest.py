@@ -52,7 +52,8 @@ class TestAcronymThresholdBehavior:
         thresholds = [0.5, 0.6, 0.7, 0.8, 0.9]
 
         for threshold in thresholds:
-            results = search_module.search("RBI", k=10, threshold=threshold)
+            response = search_module.search("RBI", k=10, threshold=threshold)
+            results = response.results
 
             # Should always return results for acronym
             assert len(results) > 0, f"No results for RBI with threshold {threshold}"
@@ -68,7 +69,8 @@ class TestAcronymThresholdBehavior:
                 # Verify these are included due to acronym match
                 for result in below_threshold:
                     # Check that RBI is in the primary terms or content
-                    has_rbi = any(t.term == "RBI" for t in result.primary_terms) or "RBI" in result.content
+                    # Since we have CompactSearchResult, check primary_term_keys
+                    has_rbi = "RBI" in result.primary_term_keys or "RBI" in result.content
                     assert has_rbi, "Result included but doesn't contain RBI"
 
     def test_regular_search_respects_threshold(self, search_module: KnowledgeSearchCore):
@@ -77,8 +79,10 @@ class TestAcronymThresholdBehavior:
         query = "document analysis workflow process methodology"
 
         # Test with different thresholds
-        results_low = search_module.search(query, k=10, threshold=0.3)
-        results_high = search_module.search(query, k=10, threshold=0.8)
+        response_low = search_module.search(query, k=10, threshold=0.3)
+        results_low = response_low.results
+        response_high = search_module.search(query, k=10, threshold=0.8)
+        results_high = response_high.results
 
         # Higher threshold should return fewer or equal results
         assert len(results_high) <= len(results_low), "Higher threshold returned more results for regular search"
@@ -91,7 +95,8 @@ class TestAcronymThresholdBehavior:
         """Test that identified keywords also bypass threshold."""
         # Use "Credit Risk" which should be identified as important keywords
         # in financial documents
-        results_low = search_module.search("Credit Risk", k=10, threshold=0.3)
+        response_low = search_module.search("Credit Risk", k=10, threshold=0.3)
+        results_low = response_low.results
 
         # Check that we get some results even with low threshold
         assert len(results_low) > 0, "No results for 'Credit Risk' with low threshold"
@@ -102,7 +107,8 @@ class TestAcronymThresholdBehavior:
         # For regular keywords, the behavior may vary based on the vectorizer
 
         # More lenient test: just verify the acronym case works
-        rbi_results = search_module.search("RBI", k=10, threshold=0.9)
+        rbi_response = search_module.search("RBI", k=10, threshold=0.9)
+        rbi_results = rbi_response.results
         assert len(rbi_results) > 0, "Acronym RBI should bypass threshold"
 
         # Verify at least one result is below threshold (proving bypass works)
@@ -113,7 +119,8 @@ class TestAcronymThresholdBehavior:
     def test_mixed_query_behavior(self, search_module: KnowledgeSearchCore):
         """Test query with both acronym and regular terms."""
         # "RBI definicja" - RBI is acronym, definicja is regular term
-        results = search_module.search("RBI definicja", k=10, threshold=0.7)
+        response = search_module.search("RBI definicja", k=10, threshold=0.7)
+        results = response.results
 
         # Should return results due to RBI being an acronym
         assert len(results) > 0, "No results for mixed query with acronym"
@@ -122,7 +129,8 @@ class TestAcronymThresholdBehavior:
         if results:
             # Check first result contains RBI
             first_result = results[0]
-            has_rbi = any(t.term == "RBI" for t in first_result.primary_terms) or "RBI" in first_result.content
+            # Since we have CompactSearchResult, check primary_term_keys
+            has_rbi = "RBI" in first_result.primary_term_keys or "RBI" in first_result.content
             assert has_rbi, "Top result doesn't contain the acronym RBI"
 
     def test_application_function_compatibility(self, search_module: KnowledgeSearchCore):
@@ -130,10 +138,10 @@ class TestAcronymThresholdBehavior:
 
         def knowledge_retriever(query: str, threshold: float = 0.6) -> List[dict]:
             """Simulate the KnowledgebaseApplication function."""
-            results: List[NormalizedSearchResult] = search_module.search(
-                query=query, k=10, threshold=threshold, max_depth=2, max_cooccurrences=3
-            )
-            return [{"content": result.markdown()} for result in results]
+            response = search_module.search(query=query, k=10, threshold=threshold, max_depth=2, max_cooccurrences=3)
+            # Convert compact results back to standard format for markdown
+            standard_results = response.to_standard_format()
+            return [{"content": result.markdown()} for result in standard_results]
 
         # Test with original failing threshold
         results = knowledge_retriever("RBI", threshold=0.6)
@@ -153,7 +161,8 @@ class TestAcronymThresholdBehavior:
     def test_url_structure(self, search_module: KnowledgeSearchCore):
         """Test that URLs are correctly structured without double prefixes."""
         # Search for something with images
-        results = search_module.search("hierarchy", k=10, threshold=0.3)
+        response = search_module.search("hierarchy", k=10, threshold=0.3)
+        results = response.results
 
         for result in results:
             if result.images:
@@ -178,7 +187,8 @@ class TestAcronymThresholdBehavior:
         reloaded = KnowledgeSearchCore.from_pickle(new_pkl, resources_base_url=RESOURCES_URL)
 
         # Test that acronym search still works
-        results = reloaded.search("RBI", k=5, threshold=0.8)
+        response = reloaded.search("RBI", k=5, threshold=0.8)
+        results = response.results
         assert len(results) > 0, "Reloaded search module doesn't return RBI results"
 
         # Check scores are preserved
@@ -186,4 +196,11 @@ class TestAcronymThresholdBehavior:
             assert result.score < 0.8 or result.score >= 0.8, "Invalid score range"
             if result.score < 0.8:
                 # This confirms acronym matching survived persistence
-                assert any(t.term == "RBI" for t in result.primary_terms) or "RBI" in result.content
+                # Need to check primary_term_keys since we have compact results
+                terms = response.terms
+                has_rbi = False
+                for term_key in result.primary_term_keys:
+                    if term_key == "RBI" or (term_key in terms and terms[term_key].term == "RBI"):
+                        has_rbi = True
+                        break
+                assert has_rbi or "RBI" in result.content

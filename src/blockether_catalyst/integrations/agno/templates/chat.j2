@@ -718,7 +718,7 @@
         // Helper function to format timestamp
         function formatTimestamp(timestamp) {
             if (!timestamp) return '';
-            
+
             // Check if timestamp is Unix timestamp (number) or ISO string
             let date;
             if (typeof timestamp === 'number') {
@@ -727,9 +727,9 @@
             } else {
                 date = new Date(timestamp);
             }
-            
+
             if (isNaN(date.getTime())) return '';
-            
+
             // Format as readable date and time
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         }
@@ -893,7 +893,7 @@
                         if (runs && (Array.isArray(runs) ? runs.length > 0 : runs.data && runs.data.length > 0)) {
                             hasWorkflowRuns = true;
                             const runsArray = Array.isArray(runs) ? runs : (runs.data || []);
-                            
+
                             // Extract messages from workflow runs
                             runsArray.forEach(run => {
                                 // Add user message from the run (check run_input first)
@@ -904,11 +904,11 @@
                                         timestamp: run.created_at
                                     });
                                 }
-                                
+
                                 // Add workflow response from the run
                                 if (run.output || run.response || run.content) {
                                     messages.push({
-                                        role: 'assistant', 
+                                        role: 'assistant',
                                         content: run.output || run.response || run.content,
                                         timestamp: run.updated_at || run.created_at,
                                         metrics: run.metrics,
@@ -916,7 +916,7 @@
                                     });
                                 }
                             });
-                            
+
                             // Sort messages by timestamp
                             messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                         }
@@ -935,7 +935,7 @@
                         headers: getAuthHeaders(),
                         credentials: 'include'
                     });
-                    
+
                     if (response.ok) {
                         const session = await response.json();
                         if (session.chat_history && session.chat_history.length > 0) {

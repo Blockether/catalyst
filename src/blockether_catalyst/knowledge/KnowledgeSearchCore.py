@@ -21,11 +21,13 @@ from blockether_catalyst.knowledge.KnowledgeVectorizers import KnowledgeVectoriz
 
 from ..encoder.EncoderCore import EncoderCore
 from .KnowledgeTypes import (
+    CompactSearchResult,
     ImageInfo,
     KnowledgeSearchResult,
     LinkedKnowledge,
     LinkedTermInfo,
     NormalizedSearchResult,
+    OptimizedSearchResponse,
     SearchResult,
     SearchResultMetadata,
     TableInfo,
@@ -98,6 +100,54 @@ class KnowledgeSearchCore:
     NGRAM_SIZE_BOOST: float = 0.3  # Additional boost per n-gram size for keywords
     MAX_TOP_KEYWORDS_FROM_QUERY: int = 5  # Maximum number of top keywords to extract from query
     MAX_TOP_ACRONYMS_FROM_QUERY: int = 5  # Maximum number of top acronyms to extract from query
+
+    @staticmethod
+    def create_chunk_id(doc_id: str, page_num: int, chunk_idx: int) -> str:
+        """Create a standardized chunk identifier.
+
+        Args:
+            doc_id: Document identifier
+            page_num: Page number (0-based)
+            chunk_idx: Chunk index within the document
+
+        Returns:
+            Formatted chunk identifier like 'doc123_p0_c5'
+        """
+        return f"{doc_id}_p{page_num}_c{chunk_idx}"
+
+    @staticmethod
+    def parse_chunk_id(chunk_id: str) -> Optional[Tuple[str, int, int]]:
+        """Parse a chunk identifier into its components.
+
+        Args:
+            chunk_id: Chunk identifier to parse
+
+        Returns:
+            Tuple of (doc_id, page_num, chunk_idx) or None if invalid
+        """
+        import re
+
+        match = re.match(r"^(.+)_p(\d+)_c(\d+)$", chunk_id)
+        if match:
+            doc_id, page_num, chunk_idx = match.groups()
+            return (doc_id, int(page_num), int(chunk_idx))
+        return None
+
+    @staticmethod
+    def create_chunk_id_pattern(doc_id: str, page_num: Optional[int] = None) -> str:
+        """Create a chunk ID pattern for matching.
+
+        Args:
+            doc_id: Document identifier
+            page_num: Optional page number. If None, creates pattern for any page
+
+        Returns:
+            Pattern string that can be used with format() for page number
+        """
+        if page_num is not None:
+            return f"{doc_id}_p{page_num}_c{{0}}"
+        return f"{doc_id}_p{{0}}_c{{1}}"
+
     _is_initialized_from_state: bool = False
 
     def __init__(
@@ -257,7 +307,7 @@ class KnowledgeSearchCore:
         threshold: float = DEFAULT_THRESHOLD,
         max_depth: int = DEFAULT_MAX_DEPTH,
         max_cooccurrences: int = DEFAULT_MAX_COOCCURRENCES,
-    ) -> List[NormalizedSearchResult]:
+    ) -> OptimizedSearchResponse:
         """
         Perform enhanced search and return normalized results ready for consumption.
 
@@ -304,9 +354,28 @@ class KnowledgeSearchCore:
         if top_terms.acronyms:
             logger.info(f"Top acronyms from query: {top_terms.acronyms[: self.MAX_TOP_ACRONYMS_FROM_QUERY]}")
 
-        # Perform vector search (get more results initially for better ranking)
-        # Use the lower threshold to ensure we don't miss acronym/keyword matches
-        search_results = self._similarity_search(query, k=k * 2, threshold=threshold)
+        # Phase 1: Direct term-based retrieval using term_to_chunks_index
+        term_based_chunks = set()
+        if self._linked_knowledge and self._linked_knowledge.term_to_chunks_index:
+            for term_tuple in top_terms.acronyms + top_terms.keywords:
+                term = term_tuple[0]  # Get the term string from tuple
+                normalized_term = self._linked_knowledge._normalize_term(term)
+
+                # Look up chunks that contain this term
+                if normalized_term in self._linked_knowledge.term_to_chunks_index:
+                    chunk_refs = self._linked_knowledge.term_to_chunks_index[normalized_term]
+                    for doc_id, chunk_idx in chunk_refs:
+                        # Store doc_id and chunk_idx for later matching
+                        # We'll match against actual chunk IDs from search results
+                        term_based_chunks.add((doc_id, chunk_idx))
+                        logger.debug(
+                            f"Found chunk reference doc={doc_id}, idx={chunk_idx} via term index for term: {term}"
+                        )
+
+        # Phase 2: Vector similarity search
+        # Use a lower threshold (min 0.1) to get more candidates for term matching
+        effective_threshold = min(threshold, 0.1) if (top_terms.acronyms or top_terms.keywords) else threshold
+        search_results = self._similarity_search(query, k=int(k*1.2), threshold=effective_threshold)
 
         # Enhance search results with term analysis and boosting
         # The function now handles efficient top-k selection internally
@@ -316,7 +385,7 @@ class KnowledgeSearchCore:
             top_terms,
             max_depth,
             max_cooccurrences,
-            k * 2,  # Get more for filtering
+            int(k * 1.2),  # Get more for filtering
         )
 
         # Filter enhanced results based on acronym/keyword matches
@@ -351,16 +420,44 @@ class KnowledgeSearchCore:
                                 contains_query_terms = True
                                 break
 
+            # Check if this chunk was found via term index
+            from_term_index = False
+            # Check if this (doc_id, chunk_index) pair is in our term-based chunks
+            for doc_id, chunk_idx in term_based_chunks:
+                if result.document_id == doc_id and result.chunk_index == chunk_idx:
+                    from_term_index = True
+                    break
+
+            # Boost the score if contains query terms
+            if contains_query_terms or from_term_index:
+                # Apply boost to final score for sorting
+                boost = (
+                    0.2
+                    if any(
+                        term[0].lower() in query_acronyms
+                        for term in top_terms.acronyms
+                        if result.text and term[0].lower() in result.text.lower()
+                    )
+                    else 0.1
+                )
+                result.final_score = min(1.0, result.final_score + boost)
+
             # Include result if:
-            # 1. It contains query acronyms/keywords (regardless of score), OR
-            # 2. Its score meets the threshold (for non-acronym/keyword matches)
-            if contains_query_terms:
+            # 1. It was found via term index (direct term match)
+            # 2. It contains query acronyms/keywords (regardless of original score)
+            # 3. Its similarity score meets the threshold
+            if from_term_index:
+                logger.debug(f"Including result from term index with score {result.score:.3f}")
+                final_results.append(result)
+            elif contains_query_terms:
                 logger.debug(f"Including result with score {result.score:.3f} - contains query terms")
                 final_results.append(result)
             elif result.score >= threshold:
                 final_results.append(result)
             else:
-                logger.debug(f"Filtering out result with score {result.score:.3f} - below threshold and no query terms")
+                logger.debug(
+                    f"Filtering out result with score {result.score:.3f} - below threshold and no term matches"
+                )
 
         # Sort by final score and take top k
         final_results.sort(key=lambda r: r.final_score, reverse=True)
@@ -421,12 +518,56 @@ class KnowledgeSearchCore:
 
             normalized_results.append(normalized_result)
 
+        # Build deduplicated terms dictionary and compact results
+        terms_dict: Dict[str, TermInfo] = {}
+        compact_results = []
+
+        for result in normalized_results:
+            # Process primary terms
+            primary_term_keys = []
+            for term in result.primary_terms:
+                term_key = term.term  # Use term name as key
+                if term_key not in terms_dict:
+                    terms_dict[term_key] = term
+                primary_term_keys.append(term_key)
+
+            # Process related terms
+            related_term_keys = []
+            for term in result.related_terms:
+                term_key = term.term  # Use term name as key
+                if term_key not in terms_dict:
+                    terms_dict[term_key] = term
+                related_term_keys.append(term_key)
+
+            # Create compact result
+            compact_result = CompactSearchResult(
+                score=result.score,
+                content=result.content,
+                document_name=result.document_name,
+                page=result.page,
+                author=result.author,
+                publication_date=result.publication_date,
+                modified_date=result.modified_date,
+                href=result.href,
+                primary_term_keys=primary_term_keys,
+                related_term_keys=related_term_keys,
+                images=result.images,
+                tables=result.tables,
+            )
+            compact_results.append(compact_result)
+
         search_time = time.time() - start_time
         logger.info(
             f"🔍 Enhanced search took {search_time:.3f}s, returned {len(normalized_results)} results for query: '{query}'"
         )
 
-        return normalized_results
+        return OptimizedSearchResponse(
+            results=compact_results,
+            terms=terms_dict,
+            total_results=len(normalized_results),
+            query=query,
+            search_type="hybrid",
+        )
 
     def _get_top_keywords_and_acronyms(
         self,

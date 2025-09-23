@@ -53,8 +53,7 @@ class InstructorLLMCall(ArityOneTypedCall[str, T]):
             AsyncOpenAI(
                 base_url=actual_base_url,
                 api_key=actual_api_key,
-            ),
-            mode=instructor.Mode.JSON,
+            )
         )
         self.response_model = response_model
         self.model = model
