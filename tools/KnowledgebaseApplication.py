@@ -47,7 +47,7 @@ PREFIX = "/os"
 RESOURCES_URL = f"{BASE_URL}{PREFIX}"
 
 search_module = KnowledgeSearchCore.from_pickle(
-    "public/knowledge_extraction/knowledge_search.pkl",
+    "public/knowledge_extraction_old/knowledge_search.pkl",
     resources_base_url=RESOURCES_URL
 )
 

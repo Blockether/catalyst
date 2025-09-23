@@ -333,12 +333,12 @@ class TestAgnoOsASGIModuleIntegration:
     def test_agent_executor_run(self, app_with_agent):
         """Test REAL agent execution with REAL LLM response."""
         request_data = {
-            "input": "What is 15 + 27?",
+            "message": "What is 15 + 27?",
             "user_id": "test_user",
             "session_id": self.TEST_SESSION_ID,
         }
 
-        response = app_with_agent.post("/os/executor/runs", json=request_data)
+        response = app_with_agent.post("/os/executor/runs", data=request_data)
         assert response.status_code == 200, "Agent execution failed!"
 
         data = response.json()
@@ -353,12 +353,12 @@ class TestAgnoOsASGIModuleIntegration:
     def test_workflow_executor_run(self, app_with_workflow):
         """Test REAL workflow execution with REAL LLM response."""
         request_data = {
-            "input": "Calculate the area of a rectangle with width 5 and height 8",
+            "message": "Calculate the area of a rectangle with width 5 and height 8",
             "user_id": "test_user",
             "session_id": self.TEST_SESSION_ID,
         }
 
-        response = app_with_workflow.post("/os/executor/runs", json=request_data)
+        response = app_with_workflow.post("/os/executor/runs", data=request_data)
         assert response.status_code == 200, "Workflow execution failed!"
 
         data = response.json()
@@ -374,12 +374,12 @@ class TestAgnoOsASGIModuleIntegration:
     def test_team_executor_run(self, app_with_team):
         """Test REAL team collaboration with REAL LLM responses."""
         request_data = {
-            "input": "How can I improve my Python code performance?",
+            "message": "How can I improve my Python code performance?",
             "user_id": "test_user",
             "session_id": self.TEST_SESSION_ID,
         }
 
-        response = app_with_team.post("/os/executor/runs", json=request_data)
+        response = app_with_team.post("/os/executor/runs", data=request_data)
         assert response.status_code == 200, "Team execution failed!"
 
         data = response.json()
@@ -436,12 +436,12 @@ class TestAgnoOsASGIModuleIntegration:
         """Test REAL session with REAL LLM run retrieval."""
         # Create a REAL run with REAL LLM
         request_data = {
-            "input": "What is 2 + 2?",
+            "message": "What is 2 + 2?",
             "user_id": "test_user",
             "session_id": self.TEST_SESSION_ID,
         }
 
-        create_response = app_with_agent.post("/os/executor/runs", json=request_data)
+        create_response = app_with_agent.post("/os/executor/runs", data=request_data)
         assert create_response.status_code == 200, "Failed to create run with LLM"
 
         create_data = create_response.json()
@@ -483,12 +483,12 @@ class TestAgnoOsASGIModuleIntegration:
 
         # First REAL LLM interaction
         request1 = {
-            "input": "My favorite number is 42 and my favorite color is blue",
+            "message": "My favorite number is 42 and my favorite color is blue",
             "user_id": "test_user",
             "session_id": session_id,
         }
 
-        response1 = app_with_agent.post("/os/executor/runs", json=request1)
+        response1 = app_with_agent.post("/os/executor/runs", data=request1)
         assert response1.status_code == 200, "First memory message failed"
 
         # Wait for memory to be stored
@@ -496,12 +496,12 @@ class TestAgnoOsASGIModuleIntegration:
 
         # Second REAL LLM interaction - MUST remember
         request2 = {
-            "input": "What was my favorite number and color?",
+            "message": "What was my favorite number and color?",
             "user_id": "test_user",
             "session_id": session_id,
         }
 
-        response2 = app_with_agent.post("/os/executor/runs", json=request2)
+        response2 = app_with_agent.post("/os/executor/runs", data=request2)
         assert response2.status_code == 200, "Second memory message failed"
 
         data = response2.json()
@@ -740,12 +740,12 @@ class TestEndToEndScenarios:
 
         # Step 1: Create REAL run with REAL LLM
         request = {
-            "input": "Calculate the sum of first 10 natural numbers (1+2+3+...+10)",
+            "message": "Calculate the sum of first 10 natural numbers (1+2+3+...+10)",
             "user_id": "test_user",
             "session_id": session_id,
         }
 
-        create_response = app_with_workflow.post("/os/executor/runs", json=request)
+        create_response = app_with_workflow.post("/os/executor/runs", data=request)
         assert create_response.status_code == 200, "Workflow run creation failed"
 
         run_data = create_response.json()
@@ -784,12 +784,12 @@ class TestEndToEndScenarios:
     def test_team_collaboration(self, app_with_team):
         """Test REAL team collaboration with REAL multi-agent LLM responses."""
         request = {
-            "input": "Research Python async programming and provide best practices",
+            "message": "Research Python async programming and provide best practices",
             "user_id": "test_user",
             "session_id": "team_collab_" + str(time.time()),
         }
 
-        response = app_with_team.post("/os/executor/runs", json=request)
+        response = app_with_team.post("/os/executor/runs", data=request)
         assert response.status_code == 200, "Team execution failed"
 
         data = response.json()

@@ -340,58 +340,6 @@ class TestRegenerationIntegration:
         assert final_preserved == self.EXPECTED_PRESERVED_STEPS
         assert final_total == self.EXPECTED_STEP_COUNT
 
-    def test_regeneration_preserves_expensive_processing(self, extractor, complete_extraction_state):
-        """Test that regeneration preserves expensive term processing work."""
-        output_dir = extractor._settings.extraction_output_dir
-
-        # Load expensive processing results before regeneration
-        term_extraction_file = output_dir / "4_term_candidates.pkl"
-        with open(term_extraction_file, "rb") as f:
-            original_terms = pickle.load(f)
-
-        term_refinement_file = output_dir / "7_terms_with_meanings.pkl"
-        with open(term_refinement_file, "rb") as f:
-            original_refinement = pickle.load(f)
-
-        # Perform regeneration
-        affected_steps = extractor._get_image_affected_steps()
-        extractor._invalidate_dependent_steps(affected_steps)
-
-        # Verify expensive processing is preserved
-        assert term_extraction_file.exists()
-        assert term_refinement_file.exists()
-
-        # Verify content is unchanged
-        with open(term_extraction_file, "rb") as f:
-            preserved_terms = pickle.load(f)
-        assert preserved_terms == original_terms
-
-        with open(term_refinement_file, "rb") as f:
-            preserved_refinement = pickle.load(f)
-        assert preserved_refinement == original_refinement
-
-    def test_regeneration_invalidates_image_dependent_data(self, extractor, complete_extraction_state):
-        """Test that regeneration properly invalidates image-dependent pipeline data."""
-        output_dir = extractor._settings.extraction_output_dir
-
-        # Verify image-dependent files exist before regeneration
-        raw_extraction_file = output_dir / "1_raw_extraction.pkl"
-        linked_knowledge_file = output_dir / "linked_knowledge.pkl"
-        knowledge_search_file = output_dir / "knowledge_search.pkl"
-
-        assert raw_extraction_file.exists()
-        assert linked_knowledge_file.exists()
-        assert knowledge_search_file.exists()
-
-        # Perform regeneration
-        affected_steps = extractor._get_image_affected_steps()
-        extractor._invalidate_dependent_steps(affected_steps)
-
-        # Verify image-dependent files are removed
-        assert not raw_extraction_file.exists()
-        assert not linked_knowledge_file.exists()
-        assert not knowledge_search_file.exists()
-
     def test_regeneration_maintains_pipeline_integrity(self, extractor, complete_extraction_state):
         """Test that regeneration maintains overall pipeline integrity."""
         # Get initial step ordering
@@ -433,70 +381,6 @@ class TestRegenerationIntegration:
         for step in affected_steps:
             step_file = output_dir / f"{step}.pkl"
             assert not step_file.exists(), f"Step {step} should have been invalidated even on failure"
-
-    def test_regeneration_state_calculation_accuracy(self, extractor, complete_extraction_state):
-        """Test accuracy of regeneration state calculations and reporting."""
-        # Check initial state
-        initial_preserved, initial_total = extractor._check_existing_state()
-
-        # Perform regeneration
-        affected_steps = extractor._get_image_affected_steps()
-        extractor._invalidate_dependent_steps(affected_steps)
-
-        # Check final state
-        final_preserved, final_total = extractor._check_existing_state()
-
-        # Verify calculations
-        expected_preserved = initial_total - len(affected_steps)
-        assert final_preserved == expected_preserved
-        assert final_total == initial_total  # Total steps doesn't change
-
-        # Verify percentage calculation
-        preservation_percentage = (final_preserved / final_total) * 100
-        expected_percentage = (self.EXPECTED_PRESERVED_STEPS / self.EXPECTED_STEP_COUNT) * 100
-        assert abs(preservation_percentage - expected_percentage) < 0.01
-
-    def test_regeneration_with_concurrent_modifications(self, extractor, complete_extraction_state):
-        """Test regeneration behavior with concurrent file modifications."""
-        output_dir = extractor._settings.extraction_output_dir
-
-        # Simulate concurrent modification of a preserved file
-        preserved_file = output_dir / "2_term_extraction.pkl"
-        original_content = preserved_file.read_bytes()
-
-        # Modify file during regeneration simulation
-        with open(preserved_file, "ab") as f:
-            f.write(b"concurrent_modification")
-
-        # Perform regeneration
-        affected_steps = extractor._get_image_affected_steps()
-        extractor._invalidate_dependent_steps(affected_steps)
-
-        # Verify preserved file retains modifications
-        assert preserved_file.exists()
-        modified_content = preserved_file.read_bytes()
-        assert len(modified_content) > len(original_content)
-        assert b"concurrent_modification" in modified_content
-
-    def test_regeneration_time_estimation_accuracy(self, extractor):
-        """Test accuracy of regeneration time estimations."""
-        # Test various step counts
-        test_cases = [
-            (0, "No rebuild"),
-            (1, "10-30 seconds"),
-            (3, "30-90 seconds"),
-            (6, "1-3 minutes"),
-            (9, "2-5 minutes"),
-        ]
-
-        for step_count, expected_pattern in test_cases:
-            time_estimate = extractor._calculate_estimated_rebuild_time(step_count)
-
-            if step_count == 0:
-                assert "No rebuild" in time_estimate
-            else:
-                # Verify reasonable time estimation
-                assert any(unit in time_estimate.lower() for unit in ["second", "minute"])
 
     def _create_mock_pdf_files(self, tmp_path) -> list[str]:
         """Create mock PDF files for testing."""

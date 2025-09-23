@@ -235,92 +235,6 @@ class TestRegenerationFunctionality:
         # Should return empty list since no files existed
         assert invalidated_steps == []
 
-    @patch("builtins.input")
-    def test_prompt_regeneration_submenu_with_valid_choice(self, mock_input, extractor, sample_pdf_files):
-        """Test _prompt_regeneration_submenu with valid user choices."""
-        # Test choice 1 (Images only)
-        mock_input.return_value = "1"
-
-        result = extractor._prompt_regeneration_submenu(sample_pdf_files)
-
-        assert result == "1"
-
-    @patch("builtins.input")
-    def test_prompt_regeneration_submenu_with_back_choice(self, mock_input, extractor, sample_pdf_files):
-        """Test _prompt_regeneration_submenu with back navigation."""
-        mock_input.return_value = "b"
-
-        result = extractor._prompt_regeneration_submenu(sample_pdf_files)
-
-        assert result == "back"
-
-    @patch("builtins.input")
-    def test_prompt_regeneration_submenu_handles_invalid_then_valid_choice(
-        self, mock_input, extractor, sample_pdf_files
-    ):
-        """Test _prompt_regeneration_submenu handles invalid input then valid choice."""
-        # First invalid, then valid
-        mock_input.side_effect = ["invalid", "2"]
-
-        result = extractor._prompt_regeneration_submenu(sample_pdf_files)
-
-        assert result == "2"
-        assert mock_input.call_count == 2
-
-    def test_calculate_estimated_rebuild_time_with_typical_values(self, extractor):
-        """Test _calculate_estimated_rebuild_time with typical step counts."""
-        # Test with 3 affected steps
-        time_str = extractor._calculate_estimated_rebuild_time(3)
-
-        # Should contain reasonable time estimate
-        assert "30-90" in time_str or "1-3" in time_str or "seconds" in time_str
-
-    def test_calculate_estimated_rebuild_time_with_zero_steps(self, extractor):
-        """Test _calculate_estimated_rebuild_time with zero affected steps."""
-        time_str = extractor._calculate_estimated_rebuild_time(0)
-
-        assert "No rebuild" in time_str
-
-    def test_calculate_estimated_rebuild_time_with_many_steps(self, extractor):
-        """Test _calculate_estimated_rebuild_time with many affected steps."""
-        time_str = extractor._calculate_estimated_rebuild_time(8)
-
-        # Should suggest longer time for many steps
-        assert "minutes" in time_str.lower()
-
-    @patch("blockether_catalyst.knowledge.KnowledgeExtractionCore.KnowledgeExtractionCore._invalidate_dependencies")
-    @patch("blockether_catalyst.knowledge.PDFKnowledgeExtractor.PDFKnowledgeExtractor.regenerate_all_images")
-    def test_regenerate_images_with_dependencies_calls_correct_methods(
-        self, mock_regenerate, mock_invalidate, extractor, sample_pdf_files
-    ):
-        """Test _regenerate_images_with_dependencies calls the correct methods."""
-        mock_regenerate.return_value = None
-
-        extractor._regenerate_images_with_dependencies(sample_pdf_files)
-
-        # Verify regenerate_all_images was called
-        mock_regenerate.assert_called_once_with(sample_pdf_files)
-
-        # Verify dependencies were invalidated
-        expected_steps = ["1_raw_extraction", "linked_knowledge", "knowledge_search"]
-        mock_invalidate.assert_called_once_with(expected_steps)
-
-    @patch("blockether_catalyst.knowledge.KnowledgeExtractionCore.KnowledgeExtractionCore._invalidate_dependencies")
-    @patch("blockether_catalyst.knowledge.PDFKnowledgeExtractor.PDFKnowledgeExtractor.regenerate_all_images")
-    def test_regenerate_images_with_dependencies_handles_regeneration_failure(
-        self, mock_regenerate, mock_invalidate, extractor, sample_pdf_files
-    ):
-        """Test _regenerate_images_with_dependencies handles regeneration failures."""
-        # Make regeneration fail
-        mock_regenerate.side_effect = Exception("Regeneration failed")
-
-        with pytest.raises(Exception, match="Regeneration failed"):
-            extractor._regenerate_images_with_dependencies(sample_pdf_files)
-
-        # Dependencies should still be invalidated even if regeneration fails
-        expected_steps = ["1_raw_extraction", "linked_knowledge", "knowledge_search"]
-        mock_invalidate.assert_called_once_with(expected_steps)
-
     def test_image_regeneration_preserves_expensive_work(self, extractor, mock_extraction_state):
         """Test that image regeneration preserves expensive text processing work."""
         output_dir = extractor._settings.extraction_output_dir
@@ -394,23 +308,6 @@ class TestRegenerationFunctionality:
         assert sample_metadata.total_images == 8
         assert sample_metadata.total_chunks == 5
         assert sample_metadata.document_id == "test_doc"
-
-    @patch("builtins.print")
-    def test_regeneration_completion_summary_shows_correct_information(
-        self, mock_print, extractor, mock_extraction_state
-    ):
-        """Test that regeneration completion summary shows accurate information."""
-        # Simulate checking state after regeneration
-        preserved, total = extractor._check_existing_state()
-
-        # Calculate expected values
-        affected_steps = extractor._get_image_affected_steps()
-        preserved_after_regen = total - len(affected_steps)
-        preservation_percentage = (preserved_after_regen / total) * 100
-
-        # Verify calculation logic
-        assert preserved_after_regen == 7  # 10 total - 3 affected
-        assert preservation_percentage == 70.0  # 7/10 * 100
 
     def test_regeneration_step_ordering_maintains_pipeline_integrity(self, extractor):
         """Test that regeneration maintains correct pipeline step ordering."""

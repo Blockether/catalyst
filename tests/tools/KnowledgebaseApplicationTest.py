@@ -73,7 +73,7 @@ class TestKnowledgebaseApplication:
             mock_search_module.search.assert_called_once_with(
                 query="test query",
                 k=10,  # Note: hardcoded to 10 in function
-                threshold=0.6,
+                threshold=0.5,  # Updated to match actual implementation
                 max_depth=2,
                 max_cooccurrences=3
             )

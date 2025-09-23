@@ -818,8 +818,16 @@ class AgnoOsASGIModule(ASGICoreModule):
                     logger.debug(f"No database configured for runner, returning empty list for session {session_id}")
                     return []
                 
-                # Get the session from the database
-                session = runner.db.get_session(session_id)
+                # Get the session from the database - try different session types
+                session = None
+                for session_type in ["workflow", "agent", "team"]:
+                    try:
+                        session = runner.db.get_session(session_id, session_type)
+                        if session:
+                            break
+                    except Exception:
+                        continue
+
                 if not session:
                     logger.debug(f"No session found for {session_id}")
                     return []
