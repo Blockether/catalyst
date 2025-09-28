@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pydantic import Field
 
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
 from blockether_catalyst.consensus.VotingComparison import BaseModelWithReasoning
 from blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
@@ -79,11 +79,11 @@ class TestFirstRoundThreshold:
     @pytest.mark.anyio
     async def test_first_round_requires_super_majority(self) -> None:
         """Test that first round requires 75% agreement to converge."""
-        core = ConsensusCore()
+        manager = ConsensusManager(FirstRoundResponse)
 
         # Create 3 models where only 2 agree (66.7% < 75%)
         models = [
-            core.model(
+            manager.model(
                 id=f"model-{i}",
                 executor=DiverseResponseCall(f"model-{i}"),
                 perspective=f"As model {i}",
@@ -98,13 +98,13 @@ class TestFirstRoundThreshold:
         )
 
         # Create a judge for tie-breaking
-        judge = core.model(
+        judge = manager.model(
             id="judge",
             executor=DiverseResponseCall("judge"),
             perspective="As a judge",
         )
 
-        consensus = core.consensus(models=models, judge=judge.executor, settings=settings)
+        consensus = manager.consensus(models=models, judge=judge.executor, settings=settings)
         result = await consensus.call("Test query")
 
         # With 3 models, first_round_threshold auto-adjusts to 0.633 (< 66.7%)
@@ -117,11 +117,11 @@ class TestFirstRoundThreshold:
     @pytest.mark.anyio
     async def test_first_round_converges_with_super_majority(self) -> None:
         """Test that first round converges when 75% threshold is met."""
-        core = ConsensusCore()
+        manager = ConsensusManager(FirstRoundResponse)
 
         # Create 5 models where 4 agree (80% > 75% threshold)
         models = [
-            core.model(
+            manager.model(
                 id=f"model-{i}",
                 executor=SuperMajorityCall(f"model-{i}"),
                 perspective=f"As model {i}",
@@ -136,13 +136,13 @@ class TestFirstRoundThreshold:
         )
 
         # Create a judge for tie-breaking
-        judge = core.model(
+        judge = manager.model(
             id="judge",
             executor=SuperMajorityCall("judge"),
             perspective="As a judge",
         )
 
-        consensus = core.consensus(models=models, judge=judge.executor, settings=settings)
+        consensus = manager.consensus(models=models, judge=judge.executor, settings=settings)
         result = await consensus.call("Test query")
 
         # Should converge in first round (exactly 75% agreement)
@@ -153,11 +153,11 @@ class TestFirstRoundThreshold:
     @pytest.mark.anyio
     async def test_custom_first_round_threshold(self) -> None:
         """Test that custom first round threshold can be configured."""
-        core = ConsensusCore()
+        manager = ConsensusManager(FirstRoundResponse)
 
         # Create 3 models where 2 agree (66.7%)
         models = [
-            core.model(
+            manager.model(
                 id=f"model-{i}",
                 executor=DiverseResponseCall(f"model-{i}"),
                 perspective=f"As model {i}",
@@ -173,13 +173,13 @@ class TestFirstRoundThreshold:
         )
 
         # Create a judge for tie-breaking
-        judge = core.model(
+        judge = manager.model(
             id="judge",
             executor=DiverseResponseCall("judge"),
             perspective="As a judge",
         )
 
-        consensus = core.consensus(models=models, judge=judge.executor, settings=settings)
+        consensus = manager.consensus(models=models, judge=judge.executor, settings=settings)
         result = await consensus.call("Test query")
 
         # Should converge in first round (66.7% > 60%)
@@ -190,7 +190,7 @@ class TestFirstRoundThreshold:
     @pytest.mark.anyio
     async def test_unanimous_first_round(self) -> None:
         """Test that unanimous agreement always converges in first round."""
-        core = ConsensusCore()
+        manager = ConsensusManager(FirstRoundResponse)
 
         # All models agree
         class UnanimousCall(ArityOneTypedCall[str, FirstRoundResponse]):
@@ -202,7 +202,7 @@ class TestFirstRoundThreshold:
                 )
 
         models = [
-            core.model(
+            manager.model(
                 id=f"model-{i}",
                 executor=UnanimousCall(),
                 perspective=f"As model {i}",
@@ -217,13 +217,13 @@ class TestFirstRoundThreshold:
         )
 
         # Create a judge for tie-breaking
-        judge = core.model(
+        judge = manager.model(
             id="judge",
             executor=UnanimousCall(),
             perspective="As a judge",
         )
 
-        consensus = core.consensus(models=models, judge=judge.executor, settings=settings)
+        consensus = manager.consensus(models=models, judge=judge.executor, settings=settings)
         result = await consensus.call("Test query")
 
         # Should converge in first round with unanimous agreement
@@ -234,7 +234,7 @@ class TestFirstRoundThreshold:
     @pytest.mark.anyio
     async def test_first_round_threshold_higher_than_normal(self) -> None:
         """Test that first round threshold is indeed higher barrier."""
-        core = ConsensusCore()
+        manager = ConsensusManager(FirstRoundResponse)
 
         # Create models with 60% agreement
         class SixtyPercentCall(ArityOneTypedCall[str, FirstRoundResponse]):
@@ -257,7 +257,7 @@ class TestFirstRoundThreshold:
                 )
 
         models = [
-            core.model(
+            manager.model(
                 id=f"model-{i}",
                 executor=SixtyPercentCall(f"model-{i}"),
                 perspective=f"As model {i}",
@@ -272,13 +272,13 @@ class TestFirstRoundThreshold:
         )
 
         # Create a judge for tie-breaking
-        judge = core.model(
+        judge = manager.model(
             id="judge",
             executor=SixtyPercentCall("judge"),
             perspective="As a judge",
         )
 
-        consensus = core.consensus(models=models, judge=judge.executor, settings=settings)
+        consensus = manager.consensus(models=models, judge=judge.executor, settings=settings)
         result = await consensus.call("Test query")
 
         # With 5 models, first_round_threshold auto-adjusts to 0.570

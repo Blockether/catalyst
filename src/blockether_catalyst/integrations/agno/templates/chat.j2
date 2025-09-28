@@ -44,8 +44,49 @@
             margin-bottom: 0 !important;
             margin-top: 0.75rem !important;
         }
-        .markdown-content p:first-child {
+        .markdown-content p:first-child,
+        .markdown-content li > p:first-child {
             margin-top: 0 !important;
+        }
+
+        /* Add extra spacing when headers follow other headers */
+        .markdown-content h1 + h1,
+        .markdown-content h1 + h2,
+        .markdown-content h1 + h3,
+        .markdown-content h1 + h4,
+        .markdown-content h1 + h5,
+        .markdown-content h1 + h6,
+        .markdown-content h2 + h1,
+        .markdown-content h2 + h2,
+        .markdown-content h2 + h3,
+        .markdown-content h2 + h4,
+        .markdown-content h2 + h5,
+        .markdown-content h2 + h6,
+        .markdown-content h3 + h1,
+        .markdown-content h3 + h2,
+        .markdown-content h3 + h3,
+        .markdown-content h3 + h4,
+        .markdown-content h3 + h5,
+        .markdown-content h3 + h6,
+        .markdown-content h4 + h1,
+        .markdown-content h4 + h2,
+        .markdown-content h4 + h3,
+        .markdown-content h4 + h4,
+        .markdown-content h4 + h5,
+        .markdown-content h4 + h6,
+        .markdown-content h5 + h1,
+        .markdown-content h5 + h2,
+        .markdown-content h5 + h3,
+        .markdown-content h5 + h4,
+        .markdown-content h5 + h5,
+        .markdown-content h5 + h6,
+        .markdown-content h6 + h1,
+        .markdown-content h6 + h2,
+        .markdown-content h6 + h3,
+        .markdown-content h6 + h4,
+        .markdown-content h6 + h5,
+        .markdown-content h6 + h6 {
+            margin-top: 2rem !important;
         }
 
         /* Code block styling that can't be done inline */
@@ -139,6 +180,97 @@
                 transform: translateY(-10px);
             }
         }
+
+        /* Quality indicator positioning */
+        .quality-indicator {
+            position: absolute !important;
+            top: 8px !important;
+            right: 8px !important;
+            z-index: 10 !important;
+            font-size: 12px !important;
+            line-height: 1.2 !important;
+            pointer-events: auto !important;
+        }
+
+        .quality-indicator summary {
+            cursor: pointer !important;
+            list-style: none !important;
+            outline: none !important;
+            padding: 4px 8px !important;
+            background: rgba(255, 255, 255, 0.9) !important;
+            border-radius: 6px !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+            border: 1px solid rgba(0, 0, 0, 0.1) !important;
+            font-weight: 600 !important;
+            color: #374151 !important;
+        }
+
+        .quality-indicator summary:hover {
+            background: rgba(255, 255, 255, 1) !important;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+        }
+
+        .quality-indicator details {
+            position: relative !important;
+        }
+
+        .quality-indicator details[open] summary {
+            border-bottom-left-radius: 0 !important;
+            border-bottom-right-radius: 0 !important;
+        }
+
+        .quality-indicator .quality-details-content {
+            position: absolute !important;
+            top: 100% !important;
+            right: 0 !important;
+            min-width: 300px !important;
+            max-width: 400px !important;
+            background: white !important;
+            border: 1px solid rgba(0, 0, 0, 0.1) !important;
+            border-radius: 6px !important;
+            border-top-right-radius: 0 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+            padding: 12px !important;
+            z-index: 20 !important;
+            font-size: 11px !important;
+        }
+
+        /* Hide the original quality indicators in content */
+        .markdown-content #quality_details,
+        .markdown-content div[id="quality_details"] {
+            display: none !important;
+        }
+
+        /* Follow-up question styling */
+        .markdown-content details summary {
+            cursor: pointer;
+            font-size: 0.875rem;
+            color: #6B7280;
+            user-select: none;
+            margin-top: 0.5rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            transition: all 0.2s ease;
+            display: inline-block;
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        .markdown-content details summary:hover {
+            background: rgba(0, 0, 0, 0.1);
+            color: #374151;
+        }
+
+        .markdown-content details[open] summary {
+            margin-bottom: 0.75rem;
+            background: rgba(0, 0, 0, 0.1);
+            color: #374151;
+        }
+
+        .markdown-content details > *:not(summary) {
+            padding-left: 1rem;
+            border-left: 2px solid #E5E7EB;
+            margin-left: 0.5rem;
+        }
 </style>
 {% endblock %}
 
@@ -215,20 +347,6 @@
                     id="chat-messages"
                     class="h-full overflow-y-auto custom-scrollbar p-3 sm:p-4 md:p-6 space-y-3 sm:space-y-4"
                 >
-                    <!-- Welcome message -->
-                    <div class="flex items-start gap-2 sm:gap-3">
-                        <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-[#FFCC00] flex items-center justify-center text-white text-xs sm:text-sm font-bold flex-shrink-0">
-                            W
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <div class="text-xs text-gray-500 mb-1">Workflow Assistant</div>
-                            <div class="bg-gray-100 rounded-xl sm:rounded-2xl rounded-tl-none px-3 sm:px-4 py-2 sm:py-3 max-w-full sm:max-w-3xl">
-                                <div class="markdown-content">
-                                    Welcome! I'm ready to help you. Send me a message to get started.
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -339,15 +457,17 @@
             let html = marked.parse(content);
 
             // Add Tailwind classes to HTML elements
-            html = html.replace(/<h1>/g, '<h1 class="text-2xl font-bold mt-4 mb-2 text-gray-900">');
-            html = html.replace(/<h2>/g, '<h2 class="text-xl font-bold mt-3 mb-2 text-gray-800">');
-            html = html.replace(/<h3>/g, '<h3 class="text-lg font-semibold mt-2 mb-1 text-gray-800">');
-            html = html.replace(/<h4>/g, '<h4 class="text-base font-semibold mt-2 mb-1 text-gray-700">');
-            html = html.replace(/<h5>/g, '<h5 class="text-sm font-semibold mt-1 mb-1 text-gray-700">');
-            html = html.replace(/<h6>/g, '<h6 class="text-sm font-medium mt-1 mb-1 text-gray-600">');
+            html = html.replace(/<h1>/g, '<h1 class="text-2xl font-bold mt-6 mb-3 text-gray-900">');
+            html = html.replace(/<h2>/g, '<h2 class="text-xl font-bold mt-5 mb-3 text-gray-800">');
+            html = html.replace(/<h3>/g, '<h3 class="text-lg font-semibold mt-4 mb-2 text-gray-800">');
+            html = html.replace(/<h4>/g, '<h4 class="text-base font-semibold mt-3 mb-2 text-gray-700">');
+            html = html.replace(/<h5>/g, '<h5 class="text-sm font-semibold mt-2 mb-1 text-gray-700">');
+            html = html.replace(/<h6>/g, '<h6 class="text-sm font-medium mt-2 mb-1 text-gray-600">');
             html = html.replace(/<p>/g, '<p class="mb-3 text-gray-700">');
             html = html.replace(/<ul>/g, '<ul class="list-disc list-inside mb-3 ml-4 text-gray-700">');
             html = html.replace(/<ol>/g, '<ol class="list-decimal list-inside mb-3 ml-4 text-gray-700">');
+            html = html.replace(/<details>/g, '<details class="mt-6 mb-3 text-gray-700">');
+            html = html.replace(/<summary>/g, '<summary class="cursor-pointer font-semibold hover:text-gray-900">');
             html = html.replace(/<li>/g, '<li class="mb-1">');
             html = html.replace(/<blockquote>/g, '<blockquote class="border-l-4 border-[#FFCC00] pl-4 py-2 my-3 italic text-gray-600 bg-gray-50">');
             html = html.replace(/<hr>/g, '<hr class="my-4 border-gray-300">');
@@ -456,7 +576,62 @@
                         document.body.appendChild(modal);
                     };
                 });
+
+                // Process quality indicators - move them to top-right corner
+                processQualityIndicators(el);
             });
+        }
+
+        // Function to extract and reposition quality indicators
+        function processQualityIndicators(messageElement) {
+            // Find the quality_details div in the processed content
+            const qualityDiv = messageElement.querySelector('#quality_details, div[id="quality_details"]');
+
+            if (qualityDiv && qualityDiv.innerHTML.trim()) {
+                // Find the parent message container (the one with 'relative' class)
+                const messageContainer = messageElement.closest('.relative');
+
+                if (messageContainer) {
+                    // Extract the quality content
+                    const qualityContent = qualityDiv.innerHTML;
+
+                    // Create a new quality indicator in the top-right
+                    const qualityIndicator = document.createElement('div');
+                    qualityIndicator.className = 'quality-indicator';
+
+                    // Parse the quality content to extract summary and details
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = qualityContent;
+
+                    // Look for summary and details elements
+                    const summaryEl = tempDiv.querySelector('summary');
+                    const detailsContent = tempDiv.querySelector('details');
+
+                    if (summaryEl && detailsContent) {
+                        // Extract the summary text (e.g., "🟢 Quality: 85%")
+                        const summaryText = summaryEl.textContent.trim();
+
+                        // Extract the details content (everything inside details but not summary)
+                        const detailsHTML = detailsContent.innerHTML.replace(summaryEl.outerHTML, '').trim();
+
+                        // Create the repositioned quality indicator
+                        qualityIndicator.innerHTML = `
+                            <details>
+                                <summary>${summaryText}</summary>
+                                <div class="quality-details-content">
+                                    ${detailsHTML}
+                                </div>
+                            </details>
+                        `;
+
+                        // Add the quality indicator to the message container
+                        messageContainer.appendChild(qualityIndicator);
+
+                        // Hide the original quality div
+                        qualityDiv.style.display = 'none';
+                    }
+                }
+            }
         }
 
         // Send message to workflow API
@@ -628,10 +803,10 @@
                 <!-- Loading indicator -->
                 <div id="loading-${messageId}" class="flex items-start gap-2 sm:gap-3">
                     <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-[#FFCC00] flex items-center justify-center text-white text-xs sm:text-sm font-bold flex-shrink-0">
-                        W
+                        {{ assistant_avatar | default('W') }}
                     </div>
                     <div class="flex-1 min-w-0">
-                        <div class="text-xs text-gray-500 mb-1">Workflow Assistant</div>
+                        <div class="text-xs text-gray-500 mb-1">{{ assistant_name | default('Assistant') }}</div>
                         <div class="bg-gray-100 rounded-xl sm:rounded-2xl rounded-tl-none px-3 sm:px-4 py-2 sm:py-3 max-w-full sm:max-w-3xl">
                             <div class="typing-indicator">
                                 <span></span>
@@ -739,6 +914,8 @@
         const API_PREFIX = '{{ api_prefix }}';
         const SESSION_TYPE = '{{ session_type }}';
         const EXECUTOR_ID = '{{ executor_id }}';
+        const ASSISTANT_NAME = '{{ assistant_name | default("Assistant") }}';
+        const ASSISTANT_AVATAR = '{{ assistant_avatar | default("W") }}';
 
         // Session Management Variables
         let currentSessionId = '{{ session_id }}' || '';  // Empty string means no session yet
@@ -1008,11 +1185,11 @@
                             const assistantHtml = `
                                 <div class="flex items-start gap-2 sm:gap-3">
                                     <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-[#FFCC00] flex items-center justify-center text-white text-xs sm:text-sm font-bold flex-shrink-0">
-                                        W
+                                        ${ASSISTANT_AVATAR}
                                     </div>
                                     <div class="flex-1 min-w-0">
                                         <div class="text-xs text-gray-500 mb-1">
-                                            Workflow Assistant${statusIndicator}${timestamp ? ` • ${timestamp}` : ''}
+                                            ${ASSISTANT_NAME}${statusIndicator}${timestamp ? ` • ${timestamp}` : ''}
                                         </div>
                                         <div class="bg-gray-100 rounded-xl sm:rounded-2xl rounded-tl-none px-3 sm:px-4 py-2 sm:py-3 max-w-full sm:max-w-3xl">
                                             <div class="markdown-raw">${message.content}</div>
@@ -1024,23 +1201,6 @@
                             chatMessages.insertAdjacentHTML('beforeend', assistantHtml);
                         }
                     });
-                } else {
-                    // Show welcome message if no messages
-                    chatMessages.innerHTML = `
-                        <div class="flex items-start gap-2 sm:gap-3">
-                            <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-[#FFCC00] flex items-center justify-center text-white text-xs sm:text-sm font-bold flex-shrink-0">
-                                W
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <div class="text-xs text-gray-500 mb-1">Workflow Assistant</div>
-                                <div class="bg-gray-100 rounded-xl sm:rounded-2xl rounded-tl-none px-3 sm:px-4 py-2 sm:py-3 max-w-full sm:max-w-3xl">
-                                    <div class="markdown-content">
-                                        Welcome! I'm ready to help you. Send me a message to get started.
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
                 }
 
                 // Process markdown and scroll to bottom
@@ -1064,21 +1224,7 @@
             document.getElementById('user-id').value = currentUserId;
 
             // Clear chat and show welcome message
-            document.getElementById('chat-messages').innerHTML = `
-                <div class="flex items-start gap-2 sm:gap-3">
-                    <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-[#FFCC00] flex items-center justify-center text-white text-xs sm:text-sm font-bold flex-shrink-0">
-                        W
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="text-xs text-gray-500 mb-1">Workflow Assistant</div>
-                        <div class="bg-gray-100 rounded-xl sm:rounded-2xl rounded-tl-none px-3 sm:px-4 py-2 sm:py-3 max-w-full sm:max-w-3xl">
-                            <div class="markdown-content">
-                                Welcome! I'm ready to help you. Send me a message to get started.
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
+            document.getElementById('chat-messages').innerHTML = ``;
 
             // Update sessions list to remove highlighting
             loadSessions();

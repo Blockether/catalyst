@@ -9,19 +9,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import anyio
 import pytest
 
-from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+from blockether_catalyst.knowledge.extraction.ExtractionCore import (
+    KnowledgeExtractionCore,
+)
+from blockether_catalyst.knowledge.extraction.internal.KnowledgeExtractionCallBase import (
     BaseChunkContentClassificationCall,
     BaseDocumentChunkingCall,
     BaseTermExtractionCall,
     ExtractionCallsSettings,
 )
-from blockether_catalyst.knowledge.KnowledgeExtractionCore import (
-    KnowledgeExtractionCore,
-)
 from blockether_catalyst.knowledge.KnowledgeTypes import (
-    KnowledgeChunk,
     KnowledgeExtractionResultWithChunks,
     KnowledgeProcessorSettings,
+    RawKnowledgeChunk,
 )
 
 
@@ -68,7 +68,7 @@ class TestKnowledgeExtractionCore:
             document_metadata=DocumentMetadata(document_path="test_acronyms.pdf"),
             source_type="pdf",
             chunks=[
-                KnowledgeChunk(
+                RawKnowledgeChunk(
                     document_id="test-acronyms",
                     document_name="test_acronyms.pdf",
                     doc_id="test-acronyms-1-0",
@@ -123,7 +123,7 @@ class TestKnowledgeExtractionCore:
             document_metadata=DocumentMetadata(document_path="test_empty_text.pdf"),
             source_type="pdf",
             chunks=[
-                KnowledgeChunk(
+                RawKnowledgeChunk(
                     document_id="test-empty-text",
                     document_name="test_empty_text.pdf",
                     doc_id="test-empty-text-1-0",
@@ -131,7 +131,7 @@ class TestKnowledgeExtractionCore:
                     page=1,
                     text="",  # Empty text
                 ),
-                KnowledgeChunk(
+                RawKnowledgeChunk(
                     document_id="test-empty-text",
                     document_name="test_empty_text.pdf",
                     doc_id="test-empty-text-1-1",
@@ -160,7 +160,7 @@ class TestKnowledgeExtractionCore:
             document_metadata=DocumentMetadata(document_path="test_mixed.pdf"),
             source_type="pdf",
             chunks=[
-                KnowledgeChunk(
+                RawKnowledgeChunk(
                     document_id="test-mixed",
                     document_name="test_mixed.pdf",
                     doc_id="test-mixed-1-0",
@@ -200,7 +200,7 @@ class TestKnowledgeExtractionCore:
             document_metadata=DocumentMetadata(document_path="test_special.pdf"),
             source_type="pdf",
             chunks=[
-                KnowledgeChunk(
+                RawKnowledgeChunk(
                     document_id="test-special",
                     document_name="test_special.pdf",
                     doc_id="test-special-1-0",
@@ -212,7 +212,6 @@ class TestKnowledgeExtractionCore:
         )
 
         terms = await extractor._extract_terms_from_document(document)
-        print(terms)
         assert isinstance(terms, list)
         # Should handle acronyms with hyphens and underscores
         acronyms = [t for t in terms if t.type == "acronym"]
@@ -227,7 +226,7 @@ class TestKnowledgeExtractionCore:
         chunks = []
         for i in range(10):
             chunks.append(
-                KnowledgeChunk(
+                RawKnowledgeChunk(
                     document_id="test-large",
                     document_name="test_large.pdf",
                     doc_id=f"test-large-{i + 1}-{i}",

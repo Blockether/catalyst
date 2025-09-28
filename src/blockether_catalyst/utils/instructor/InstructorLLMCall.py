@@ -6,10 +6,9 @@ that uses the Instructor library to make structured LLM calls to a local API.
 """
 
 import os
-from typing import Optional, Type, TypeVar
+from typing import Literal, Optional, Type, TypeVar, cast
 
 import instructor
-from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from ..TypedCalls import ArityOneTypedCall
@@ -29,7 +28,8 @@ class InstructorLLMCall(ArityOneTypedCall[str, T]):
     def __init__(
         self,
         response_model: Type[T],
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
+        completion_type: Optional[Literal["openai", "litellm"]] = None,
         temperature: float = 0.7,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -47,16 +47,41 @@ class InstructorLLMCall(ArityOneTypedCall[str, T]):
         # Use provided values or fall back to environment variables or defaults
         actual_base_url = base_url or os.environ.get("INSTRUCTOR_API_BASE_URL", "http://localhost:3005/v1")
         actual_api_key = api_key or os.environ.get("INSTRUCTOR_API_KEY", "nothing")
+        actual_model = model or os.environ.get("INSTRUCTOR_MODEL", "gpt-4o")
+        actual_completion_type = completion_type or os.environ.get("INSTRUCTOR_COMPLETION_TYPE", "litellm")
 
-        # Create the completion client
-        completion = instructor.from_openai(
-            AsyncOpenAI(
+        print(f"Using Instructor LLM at {actual_base_url} with model {actual_model}")
+
+        if actual_completion_type not in ("openai", "litellm"):
+            raise ValueError("completion_type must be 'openai' or 'litellm'")
+
+        # Type narrowing - after the check above, we know it's one of the literals
+        actual_completion_type = cast(Literal["openai", "litellm"], actual_completion_type)
+
+        completion = None
+        if actual_completion_type == "litellm":
+            from litellm import acompletion
+
+            completion = instructor.from_litellm(
+                acompletion,
                 base_url=actual_base_url,
                 api_key=actual_api_key,
             )
-        )
+
+        if actual_completion_type == "openai":
+            from openai import AsyncOpenAI
+
+            completion = instructor.from_openai(
+                AsyncOpenAI(
+                    base_url=actual_base_url,
+                    api_key=actual_api_key,
+                )
+            )
+
+        completion = cast(instructor.AsyncInstructor, completion)
+
         self.response_model = response_model
-        self.model = model
+        self.model = actual_model
         self.temperature = temperature
         self._client = completion
 

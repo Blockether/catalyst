@@ -6,13 +6,39 @@ to localhost:3005/v1 using the InstructorLLMCall implementation.
 
 Run with: pytest -m integration
 Skip with: pytest -m "not integration"
+
+Note: These tests require asyncio backend due to litellm/instructor compatibility.
 """
+
+import os
+import sys
+
+# Force asyncio backend for litellm/instructor compatibility - must be set before ANY async imports
+os.environ["ANYIO_BACKEND"] = "asyncio"
+
+# Import anyio early to force backend selection
+import anyio
+
+# Verify we got asyncio backend
+try:
+    import sniffio
+
+    def _verify_backend() -> None:
+        try:
+            backend = sniffio.current_async_library()
+            if backend != "asyncio":
+                print(f"WARNING: Expected asyncio backend but got {backend}")
+        except Exception:
+            pass  # Not running in async context yet
+
+except ImportError:
+    pass
 
 from typing import Any, List, Literal, Optional
 
 import pytest
 
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
 from blockether_catalyst.consensus.VotingComparison import (
     BaseModelWithReasoning,
@@ -24,6 +50,8 @@ from blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
 # Skip these tests if local LLM server is not available
 pytestmark = pytest.mark.integration
+
+# Using pytest-asyncio instead of pytest-anyio for litellm/instructor compatibility
 
 
 class MathResponse(BaseModelWithReasoning):
@@ -204,18 +232,19 @@ class TestRealLLMConsensus:
     @pytest.fixture
     def math_models(self) -> List[Any]:
         """Create deterministic math models that guarantee consensus."""
+        manager = ConsensusManager(MathResponse)
         return [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=DeterministicMathModel(answer=150.0, unit="miles", method="distance_formula"),
                 perspective="Calculate distance using standard formula",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=DeterministicMathModel(answer=150.0, unit="miles", method="distance_formula"),
                 perspective="Apply distance calculation method",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=DeterministicMathModel(answer=150.0, unit="miles", method="distance_formula"),
                 perspective="Use mathematical approach for distance",
@@ -225,8 +254,9 @@ class TestRealLLMConsensus:
     @pytest.fixture
     def classification_models(self) -> List[Any]:
         """Create deterministic classification models that guarantee consensus."""
+        manager = ConsensusManager(ClassificationResponse)
         return [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=DeterministicClassificationModel(
                     category="Technology",
@@ -235,7 +265,7 @@ class TestRealLLMConsensus:
                 ),
                 perspective="Classify with technical focus",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=DeterministicClassificationModel(
                     category="Technology",
@@ -244,7 +274,7 @@ class TestRealLLMConsensus:
                 ),
                 perspective="Classify with systematic approach",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=DeterministicClassificationModel(
                     category="Technology",
@@ -258,8 +288,9 @@ class TestRealLLMConsensus:
     @pytest.fixture
     def analysis_models(self) -> List[Any]:
         """Create deterministic analysis models that guarantee consensus."""
+        manager = ConsensusManager(AnalysisResponse)
         return [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=DeterministicAnalysisModel(
                     sentiment="positive",
@@ -272,7 +303,7 @@ class TestRealLLMConsensus:
                 ),
                 perspective="Analyze with objective focus",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=DeterministicAnalysisModel(
                     sentiment="positive",
@@ -285,7 +316,7 @@ class TestRealLLMConsensus:
                 ),
                 perspective="Analyze with balanced view",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=DeterministicAnalysisModel(
                     sentiment="positive",
@@ -300,12 +331,13 @@ class TestRealLLMConsensus:
             ),
         ]
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_math_consensus_with_real_llms(self, math_models: List[Any]) -> None:
         """Test mathematical problem solving consensus with deterministic models."""
+        manager = ConsensusManager(MathResponse)
         judge = DeterministicMathModel(answer=150.0, unit="miles", method="distance_formula")
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=math_models,
             judge=judge,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -324,16 +356,17 @@ class TestRealLLMConsensus:
         assert result.metrics.total_model_calls == 3  # All models called once
         assert len(result.participating_models) == 3  # All models participated
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_classification_consensus_with_real_llms(self, classification_models: List[Any]) -> None:
         """Test classification consensus with deterministic models."""
+        manager = ConsensusManager(ClassificationResponse)
         judge = DeterministicClassificationModel(
             category="Technology",
             confidence=0.95,
             subcategories=["AI", "Machine Learning"],
         )
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=classification_models,
             judge=judge,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -357,16 +390,17 @@ class TestRealLLMConsensus:
         assert result.metrics.total_model_calls == 3  # All models called once
         assert len(result.participating_models) == 3  # All models participated
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_analysis_consensus_with_real_llms(self, analysis_models: List[Any]) -> None:
         """Test text analysis consensus with deterministic models."""
+        manager = ConsensusManager(AnalysisResponse)
         judge = DeterministicAnalysisModel(
             sentiment="positive",
             key_points=["AI advancement", "healthcare improvement", "early detection"],
             summary="AI breakthrough promises healthcare transformation",
         )
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=analysis_models,
             judge=judge,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -391,35 +425,33 @@ class TestRealLLMConsensus:
         assert result.metrics.total_model_calls == 3  # All models called once
         assert len(result.participating_models) == 3  # All models participated
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_disagreement_with_real_llms(self) -> None:
         """Test how consensus handles disagreements between real LLM responses."""
+        manager = ConsensusManager(MathResponse)
 
         # Create models with different perspectives to encourage disagreement
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="conservative",
                 executor=InstructorLLMCall(
                     response_model=MathResponse,
-                    model="gpt-4o",
                     temperature=0.1,
                 ),
                 perspective="Provide the most conservative estimate using minimal assumptions",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="moderate",
                 executor=InstructorLLMCall(
                     response_model=MathResponse,
-                    model="gpt-4o",
                     temperature=0.5,
                 ),
                 perspective="Provide a reasonable estimate based on typical scenarios",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="aggressive",
                 executor=InstructorLLMCall(
                     response_model=MathResponse,
-                    model="gpt-4o",
                     temperature=0.9,
                 ),
                 perspective="Provide an upper-bound estimate considering maximum possible values",
@@ -428,11 +460,10 @@ class TestRealLLMConsensus:
 
         judge = InstructorLLMCall(
             response_model=MathResponse,
-            model="gpt-4o",
             temperature=0.1,
         )
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -452,34 +483,32 @@ class TestRealLLMConsensus:
         assert result.total_rounds >= 1
         assert len(result.participating_models) == 3
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_consensus_convergence_with_real_llms(self) -> None:
         """Test that models can converge through iterative refinement."""
+        manager = ConsensusManager(ClassificationResponse)
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=InstructorLLMCall(
                     response_model=ClassificationResponse,
-                    model="gpt-4o",
                     temperature=0.3,
                 ),
                 perspective="Focus on technical accuracy in classification",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=InstructorLLMCall(
                     response_model=ClassificationResponse,
-                    model="gpt-4o",
                     temperature=0.3,
                 ),
                 perspective="Focus on practical applications in classification",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=InstructorLLMCall(
                     response_model=ClassificationResponse,
-                    model="gpt-4o",
                     temperature=0.3,
                 ),
                 perspective="Focus on theoretical foundations in classification",
@@ -488,11 +517,10 @@ class TestRealLLMConsensus:
 
         judge = InstructorLLMCall(
             response_model=ClassificationResponse,
-            model="gpt-4o",
             temperature=0.1,
         )
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -509,35 +537,33 @@ class TestRealLLMConsensus:
         assert result.metrics.total_model_calls >= 3  # At least initial round
         assert result.convergence_score >= 0.0  # Should have some convergence metric
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_error_recovery_with_real_llms(self) -> None:
         """Test that consensus handles LLM errors gracefully."""
+        manager = ConsensusManager(ClassificationResponse)
 
         # Mix of reliable and potentially failing models
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="reliable1",
                 executor=InstructorLLMCall(
-                    response_model=AnalysisResponse,
-                    model="gpt-4o",
+                    response_model=ClassificationResponse,
                     temperature=0.3,
                 ),
                 perspective="Provide thorough analysis",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="reliable2",
                 executor=InstructorLLMCall(
-                    response_model=AnalysisResponse,
-                    model="gpt-4o",
+                    response_model=ClassificationResponse,
                     temperature=0.3,
                 ),
                 perspective="Provide comprehensive analysis",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="reliable3",
                 executor=InstructorLLMCall(
-                    response_model=AnalysisResponse,
-                    model="gpt-4o",
+                    response_model=ClassificationResponse,
                     temperature=0.3,
                 ),
                 perspective="Provide detailed analysis",
@@ -545,12 +571,11 @@ class TestRealLLMConsensus:
         ]
 
         judge = InstructorLLMCall(
-            response_model=AnalysisResponse,
-            model="gpt-4o",
+            response_model=ClassificationResponse,
             temperature=0.1,
         )
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -562,28 +587,28 @@ class TestRealLLMConsensus:
 
         # Should get a result even if some models might have issues
         assert result.final_response is not None
-        assert result.final_response.sentiment is not None
-        assert isinstance(result.final_response.key_points, list)
+        assert result.final_response.category is not None
+        assert isinstance(result.final_response.confidence, float)
+        assert isinstance(result.final_response.subcategories, list)
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_consensus_core_integration_with_real_llms(self) -> None:
         """Test ConsensusCore facade with real LLM calls for deterministic math problems."""
-        from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+        from blockether_catalyst.consensus.Consensus import ConsensusManager
 
         # Create ConsensusCore instance
-        core = ConsensusCore()
+        manager = ConsensusManager(MathResponse)
 
         # Create models using real LLMs with deterministic math problem
         models = [
-            core.model(
+            manager.model(
                 id=f"math_model_{i}",
                 executor=InstructorLLMCall(
                     response_model=MathResponse,
-                    model="gpt-4o",
                     temperature=0.1,  # Low temperature for consistency
                 ),
                 perspective=f"As a mathematician {i}, solve step by step",
-                weight_multiplier=1.0,
+                weight=1.0,
             )
             for i in range(3)
         ]
@@ -591,17 +616,16 @@ class TestRealLLMConsensus:
         # Create judge with real LLM
         judge_executor = InstructorLLMCall(
             response_model=MathResponse,
-            model="gpt-4o",
             temperature=0.1,
         )
-        judge_model = core.model(
+        judge_model = manager.model(
             id="judge",
             executor=judge_executor,
             perspective="As a judge, determine the most accurate mathematical solution",
         )
 
         # Create consensus with real LLMs
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_model.executor,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -619,17 +643,17 @@ class TestRealLLMConsensus:
         assert result.total_rounds >= 1
         assert len(result.participating_models) == 3
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_consensus_core_classification_with_real_llms(self) -> None:
         """Test ConsensusCore facade with real LLM calls for deterministic classification."""
+        manager = ConsensusManager(ClassificationResponse)
 
         # Create models for classification task
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id=f"classifier_{i}",
                 executor=InstructorLLMCall(
                     response_model=ClassificationResponse,
-                    model="gpt-4o",
                     temperature=0.1,
                 ),
                 perspective=f"As a classifier {i}, categorize precisely",
@@ -637,17 +661,16 @@ class TestRealLLMConsensus:
             for i in range(3)
         ]
 
-        judge_model = ConsensusCore.model(
+        judge_model = manager.model(
             id="classification_judge",
             executor=InstructorLLMCall(
                 response_model=ClassificationResponse,
-                model="gpt-4o",
                 temperature=0.1,
             ),
             perspective="As a judge, determine the best classification",
         )
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_model.executor,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -672,20 +695,19 @@ class TestRealLLMConsensus:
         assert len(result.final_response.subcategories) > 0
         assert result.total_rounds >= 1
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_consensus_core_analysis_with_real_llms(self) -> None:
         """Test ConsensusCore facade with real LLM calls for deterministic text analysis."""
-        from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+        from blockether_catalyst.consensus.Consensus import ConsensusManager
 
-        core = ConsensusCore()
+        manager = ConsensusManager(AnalysisResponse)
 
         # Create models for analysis
         models = [
-            core.model(
+            manager.model(
                 id=f"analyzer_{i}",
                 executor=InstructorLLMCall(
                     response_model=AnalysisResponse,
-                    model="gpt-4o",
                     temperature=0.1,
                 ),
                 perspective=f"As an analyzer {i}, provide thorough analysis",
@@ -693,17 +715,16 @@ class TestRealLLMConsensus:
             for i in range(3)
         ]
 
-        judge_model = core.model(
+        judge_model = manager.model(
             id="analysis_judge",
             executor=InstructorLLMCall(
                 response_model=AnalysisResponse,
-                model="gpt-4o",
                 temperature=0.1,
             ),
             perspective="As a judge, synthesize the most accurate analysis",
         )
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_model.executor,  # Pass executor directly, not ModelConfiguration
             settings=ConsensusSettings(
@@ -723,7 +744,7 @@ class TestRealLLMConsensus:
         assert "renewable" in result.final_response.summary.lower() or "energy" in result.final_response.summary.lower()
         assert result.total_rounds >= 1
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_consensus_bug_reasoning_field_ignored(self) -> None:
         """Test bug where consensus fails despite all models agreeing on voting fields.
 
@@ -788,19 +809,22 @@ class TestRealLLMConsensus:
                     reasoning=f"Model {self.model_id} specific reasoning: This is different for each model but should be ignored for voting. {x}",
                 )
 
+        # Create the consensus manager
+        manager = ConsensusManager(SimpleConsensusResponse)
+
         # Create 3 models with same voting values but different reasoning
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=DeterministicConsensusModel("model1"),
                 perspective="Conservative perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=DeterministicConsensusModel("model2"),
                 perspective="Balanced perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=DeterministicConsensusModel("model3"),
                 perspective="Liberal perspective",
@@ -811,7 +835,7 @@ class TestRealLLMConsensus:
         judge = DeterministicConsensusModel("judge")
 
         # Create consensus with settings that match the user's scenario
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(

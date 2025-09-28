@@ -72,10 +72,10 @@ class TestPrincipleBasedAlignmentStrategy:
             overall_assessment="Needs work to improve clarity and specificity",
             specific_issues=[],
             improvement_suggestions=[
-                SemanticString(value="Should include more specific details"),
-                SemanticString(value="Must provide clear context"),
-                SemanticString(value="Ensure examples are relevant"),
-                SemanticString(value="Always clarify technical terminology"),
+                SemanticString(root="Should include more specific details"),
+                SemanticString(root="Must provide clear context"),
+                SemanticString(root="Ensure examples are relevant"),
+                SemanticString(root="Always clarify technical terminology"),
             ],
             principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.75,
@@ -97,10 +97,10 @@ class TestPrincipleBasedAlignmentStrategy:
         feedback = AlignmentFeedback(
             overall_assessment="Has issues that need to be addressed",
             specific_issues=[
-                SemanticString(value="Prompt lacks clarity"),
-                SemanticString(value="Too vague about requirements"),
-                SemanticString(value="Missing context"),
-                SemanticString(value="No examples provided"),
+                SemanticString(root="Prompt lacks clarity"),
+                SemanticString(root="Too vague about requirements"),
+                SemanticString(root="Missing context"),
+                SemanticString(root="No examples provided"),
             ],
             improvement_suggestions=[],
             principles_to_apply=AlignmentPrincipleList(principles=[]),
@@ -313,8 +313,8 @@ class TestPrincipleBasedAlignmentStrategy:
 
     def test_max_principles_limit(self, strategy: PrincipleBasedAlignmentStrategy) -> None:
         """Test that principle extraction respects the maximum limit."""
-        many_issues = [SemanticString(value=f"Issue {i}") for i in range(20)]
-        many_suggestions = [SemanticString(value=f"Should fix issue {i}") for i in range(20)]
+        many_issues = [SemanticString(root=f"Issue {i}") for i in range(20)]
+        many_suggestions = [SemanticString(root=f"Should fix issue {i}") for i in range(20)]
 
         feedback = AlignmentFeedback(
             overall_assessment="Many issues to address for proper alignment",

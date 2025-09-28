@@ -10,7 +10,7 @@ from typing import Any, List
 import pytest
 from pydantic import Field
 
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
 from blockether_catalyst.consensus.VotingComparison import (
     BaseModelWithReasoning,
@@ -88,9 +88,11 @@ class TestStrongAssertions:
             range_value=self.CONSENSUS_FLOAT,
         )
 
+        manager = ConsensusManager(PreciseResponse)
+
         # Create 3 models with identical values
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockModelWithExactValues(
                     exact_number=self.CONSENSUS_NUMBER,
@@ -100,7 +102,7 @@ class TestStrongAssertions:
                 ),
                 perspective="First model perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockModelWithExactValues(
                     exact_number=self.CONSENSUS_NUMBER,
@@ -110,7 +112,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Second model perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockModelWithExactValues(
                     exact_number=self.CONSENSUS_NUMBER,
@@ -122,7 +124,7 @@ class TestStrongAssertions:
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(
@@ -149,6 +151,7 @@ class TestStrongAssertions:
 
     async def test_exact_consensus_threshold_70_percent(self) -> None:
         """Test that exactly 70% agreement meets the 0.7 threshold."""
+        manager = ConsensusManager(PreciseResponse)
 
         # Create judge executor with consensus values
         judge_executor = MockModelWithExactValues(
@@ -164,7 +167,7 @@ class TestStrongAssertions:
         # 7 models with consensus values (77.8%)
         for i in range(7):
             models.append(
-                ConsensusCore.model(
+                manager.model(
                     id=f"agree_{i}",
                     executor=MockModelWithExactValues(
                         exact_number=100,
@@ -179,7 +182,7 @@ class TestStrongAssertions:
         # 2 models with different values (22.2%)
         for i in range(2):
             models.append(
-                ConsensusCore.model(
+                manager.model(
                     id=f"disagree_{i}",
                     executor=MockModelWithExactValues(
                         exact_number=200 + i,
@@ -191,7 +194,7 @@ class TestStrongAssertions:
                 )
             )
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(
@@ -215,6 +218,7 @@ class TestStrongAssertions:
 
     async def test_exact_tie_requires_judge(self) -> None:
         """Test that an exact 50-50 tie triggers judge decision."""
+        manager = ConsensusManager(PreciseResponse)
 
         # Judge decides for option A
         judge_executor = MockModelWithExactValues(
@@ -226,7 +230,7 @@ class TestStrongAssertions:
 
         # Create 5 models: 2 with value A, 2 with value B, 1 with value C
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="team_a_1",
                 executor=MockModelWithExactValues(
                     exact_number=1,
@@ -236,7 +240,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Team A first",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="team_a_2",
                 executor=MockModelWithExactValues(
                     exact_number=1,
@@ -246,7 +250,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Team A second",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="team_b_1",
                 executor=MockModelWithExactValues(
                     exact_number=2,
@@ -256,7 +260,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Team B first",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="team_b_2",
                 executor=MockModelWithExactValues(
                     exact_number=2,
@@ -266,7 +270,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Team B second",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="team_c_1",
                 executor=MockModelWithExactValues(
                     exact_number=3,
@@ -279,7 +283,7 @@ class TestStrongAssertions:
         ]
 
         # Judge decides for option A
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(
@@ -303,6 +307,7 @@ class TestStrongAssertions:
 
     async def test_semantic_similarity_exact_match(self) -> None:
         """Test that different semantic strings create separate voting groups."""
+        manager = ConsensusManager(PreciseResponse)
 
         # Judge agrees with semantic consensus
         judge_executor = MockModelWithExactValues(
@@ -314,7 +319,7 @@ class TestStrongAssertions:
 
         # Models with different semantic strings (not using SEMANTIC comparison)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockModelWithExactValues(
                     exact_number=50,
@@ -324,7 +329,7 @@ class TestStrongAssertions:
                 ),
                 perspective="First perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockModelWithExactValues(
                     exact_number=50,
@@ -334,7 +339,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Second perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockModelWithExactValues(
                     exact_number=50,
@@ -346,7 +351,7 @@ class TestStrongAssertions:
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(
@@ -372,6 +377,7 @@ class TestStrongAssertions:
 
     async def test_range_tolerance_exact_boundaries(self) -> None:
         """Test that range tolerance of 0.01 means values within 1% match."""
+        manager = ConsensusManager(PreciseResponse)
 
         # Base value is 100.0, tolerance is 0.01 (1%)
         # So 99.0 to 101.0 should match
@@ -385,7 +391,7 @@ class TestStrongAssertions:
         )
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -395,7 +401,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Lower bound",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -405,7 +411,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Exact value",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -417,7 +423,7 @@ class TestStrongAssertions:
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(
@@ -441,6 +447,7 @@ class TestStrongAssertions:
 
     async def test_failed_consensus_exact_values(self) -> None:
         """Test that below-threshold agreement uses gossip to reach consensus."""
+        manager = ConsensusManager(PreciseResponse)
 
         # Judge would pick the minority values but won't be reached due to max_rounds
         judge_executor = MockModelWithExactValues(
@@ -456,7 +463,7 @@ class TestStrongAssertions:
         # 5 models with consensus values (55.6%)
         for i in range(5):
             models.append(
-                ConsensusCore.model(
+                manager.model(
                     id=f"agree_{i}",
                     executor=MockModelWithExactValues(
                         exact_number=777,
@@ -471,7 +478,7 @@ class TestStrongAssertions:
         # 4 models with different values (44.4%)
         for i in range(4):
             models.append(
-                ConsensusCore.model(
+                manager.model(
                     id=f"disagree_{i}",
                     executor=MockModelWithExactValues(
                         exact_number=111 * (i + 1),
@@ -484,7 +491,7 @@ class TestStrongAssertions:
             )
 
         # Judge will pick the majority view
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(
@@ -513,6 +520,7 @@ class TestStrongAssertions:
 
     async def test_range_within_tolerance_groups_together(self) -> None:
         """Test that values within range tolerance are grouped together."""
+        manager = ConsensusManager(PreciseResponse)
 
         # Judge with base value
         judge_executor = MockModelWithExactValues(
@@ -524,7 +532,7 @@ class TestStrongAssertions:
 
         # Create models with values all within 1% tolerance
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -534,7 +542,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Base value",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -544,7 +552,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Slightly higher",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -556,7 +564,7 @@ class TestStrongAssertions:
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(
@@ -582,6 +590,7 @@ class TestStrongAssertions:
 
     async def test_range_outside_tolerance_creates_groups(self) -> None:
         """Test that values outside range tolerance create separate groups."""
+        manager = ConsensusManager(PreciseResponse)
 
         # Judge with consensus value
         judge_executor = MockModelWithExactValues(
@@ -593,7 +602,7 @@ class TestStrongAssertions:
 
         # Create models with one value outside tolerance
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -603,7 +612,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Base value",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -613,7 +622,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Same value",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockModelWithExactValues(
                     exact_number=10,
@@ -625,7 +634,7 @@ class TestStrongAssertions:
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(
@@ -661,6 +670,7 @@ class TestStrongAssertions:
 
     async def test_semantic_threshold_properly_extracted(self) -> None:
         """Test that semantic threshold is properly extracted from Field."""
+        manager = ConsensusManager(PreciseResponse)
 
         # Judge with positive sentiment
         judge_executor = MockModelWithExactValues(
@@ -673,7 +683,7 @@ class TestStrongAssertions:
         # Test with different semantic similarities
         # "good" vs "bad" should have low similarity
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockModelWithExactValues(
                     exact_number=50,
@@ -683,7 +693,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Positive",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockModelWithExactValues(
                     exact_number=50,
@@ -693,7 +703,7 @@ class TestStrongAssertions:
                 ),
                 perspective="Negative",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockModelWithExactValues(
                     exact_number=50,
@@ -705,7 +715,7 @@ class TestStrongAssertions:
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_executor,
             settings=ConsensusSettings(

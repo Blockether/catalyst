@@ -14,24 +14,24 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import anyio
 import pytest
 
-from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+from blockether_catalyst.knowledge.extraction.ExtractionCore import (
+    KnowledgeExtractionCore,
+)
+from blockether_catalyst.knowledge.extraction.internal.KnowledgeExtractionCallBase import (
     BaseChunkContentClassificationCall,
     BaseDocumentChunkingCall,
     BaseTermExtractionCall,
     ExtractionCallsSettings,
 )
-from blockether_catalyst.knowledge.KnowledgeExtractionCore import (
-    KnowledgeExtractionCore,
-)
 from blockether_catalyst.knowledge.KnowledgeTypes import (
     DocumentMetadata,
     ImageMetadata,
-    KnowledgeChunk,
     KnowledgeChunkWithTerms,
     KnowledgeExtractionResultWithChunks,
     KnowledgeProcessorSettings,
     LinkedKnowledge,
     NormalizedDocumentMetadata,
+    RawKnowledgeChunk,
     TermOccurrence,
     TermWithLinks,
 )
@@ -142,7 +142,7 @@ class TestRegenerationIntegration:
             "2_chunked_documents": {
                 "chunks": {
                     "doc1_hash": [
-                        KnowledgeChunk(
+                        RawKnowledgeChunk(
                             document_id="doc1_hash",
                             document_name="technical_guide.pdf",
                             doc_id="doc1_hash_p5_c3",

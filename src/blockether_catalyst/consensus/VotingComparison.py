@@ -11,7 +11,10 @@ from typing import Any, Callable, Dict, Optional, TypeVar, Union, overload
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
+from pydantic import RootModel
 from pydantic.fields import FieldInfo
+
+from ..encoder.PotionEightEncoder import PotionEightEncoder
 
 
 class ComparisonStrategy(str, Enum):
@@ -35,6 +38,9 @@ class ComparisonStrategy(str, Enum):
     # BaseModel - recursive field comparison using each field's strategy
     DERIVED = "derived"
 
+    # Unordered sequence comparison with semantic matching
+    DERIVED_UNORDERED = "derived_unordered"
+
 
 class VotingMetadata(BaseModel):
     """Metadata for field voting comparison."""
@@ -55,7 +61,7 @@ class VotingMetadata(BaseModel):
         default=None,
         description="For numeric comparisons, number of decimal places to consider",
     )
-    custom_comparator: Optional[Callable[[Any, Any], bool]] = PydanticField(
+    custom_comparator_fn: Optional[Callable[[Any, Any], bool]] = PydanticField(
         default=None,
         description="For CUSTOM strategy, the comparison function",
     )
@@ -72,7 +78,7 @@ class FieldComparator:
         tolerance: Optional[float] = None,
         decimal_places: Optional[int] = None,
         threshold: Optional[float] = None,
-        custom_comparator: Optional[Callable[[Any, Any], bool]] = None,
+        custom_comparator_fn: Optional[Callable[[Any, Any], bool]] = None,
     ) -> bool:
         """
         Compare two field values according to the specified strategy.
@@ -83,7 +89,7 @@ class FieldComparator:
             strategy: Comparison strategy to use
             tolerance: For RANGE strategy, the acceptable difference
             threshold: For SEMANTIC and derived strategies, similarity threshold
-            custom_comparator: For CUSTOM strategy, the comparison function
+            custom_comparator_fn: For CUSTOM strategy, the comparison function
 
         Returns:
             True if values are considered equal according to strategy
@@ -102,24 +108,25 @@ class FieldComparator:
             return abs(value1 - value2) <= tolerance * max(abs(value1), abs(value2), 1)
 
         if strategy == ComparisonStrategy.CUSTOM:
-            if custom_comparator:
-                return custom_comparator(value1, value2)
+            if custom_comparator_fn:
+                return custom_comparator_fn(value1, value2)
             return bool(value1 == value2)
 
         if strategy == ComparisonStrategy.SEMANTIC:
             # For semantic comparison using embeddings
             if isinstance(value1, str) and isinstance(value2, str):
-                from blockether_catalyst.encoder.EncoderCore import EncoderCore
-
-                emb1 = EncoderCore.encode_single(value1)
-                emb2 = EncoderCore.encode_single(value2)
-                similarity = EncoderCore.cosine_similarity(emb1, emb2)
+                emb1 = PotionEightEncoder.encode_single(value1)
+                emb2 = PotionEightEncoder.encode_single(value2)
+                similarity = PotionEightEncoder.cosine_similarity(emb1, emb2)
 
                 return similarity >= (threshold or 0.7)
             return bool(value1 == value2)
 
         if strategy == ComparisonStrategy.DERIVED:
             return FieldComparator._compare_model_derived(value1, value2, threshold or 0.8)
+
+        if strategy == ComparisonStrategy.DERIVED_UNORDERED:
+            return FieldComparator._compare_sequence_unordered_derived(value1, value2, threshold or 0.8)
 
         # Default to exact comparison
         return bool(value1 == value2)
@@ -145,7 +152,11 @@ class FieldComparator:
 
     @staticmethod
     def _compare_sequence_unordered_derived(seq1: Any, seq2: Any, threshold: float) -> bool:
-        """Compare two sequences ignoring order, finding best matches using recursive comparison."""
+        """Compare two sequences ignoring order, finding best matches using semantic comparison.
+
+        Uses a bipartite matching algorithm to find the best alignment between items
+        in two sequences, handling different lengths gracefully.
+        """
         if not isinstance(seq1, (list, tuple)) or not isinstance(seq2, (list, tuple)):
             return bool(seq1 == seq2)
 
@@ -154,31 +165,84 @@ class FieldComparator:
         if not seq1 or not seq2:
             return False
 
-        # Find best matches using Hungarian-style algorithm
-        matches = 0
-        used_indices = set()
-
+        # Calculate similarity matrix
+        similarity_matrix = []
         for item1 in seq1:
-            best_match_score = 0.0
-            best_match_idx = -1
+            row = []
+            for item2 in seq2:
+                # Use recursive comparison which will use SemanticString's comparison if applicable
+                similarity = FieldComparator._calculate_item_similarity(item1, item2)
+                row.append(similarity)
+            similarity_matrix.append(row)
 
-            for idx, item2 in enumerate(seq2):
-                if idx in used_indices:
-                    continue
+        # Find best matches using greedy approach (could be optimized with Hungarian algorithm)
+        matched_indices_2 = set()
+        total_score = 0
+        matched_count = 0
 
-                if FieldComparator._compare_items_recursively(item1, item2, threshold):
-                    score = FieldComparator._get_similarity_score(item1, item2, threshold)
-                    if score > best_match_score:
-                        best_match_score = score
-                        best_match_idx = idx
+        for i, row in enumerate(similarity_matrix):
+            best_j = -1
+            best_score = threshold  # Only consider matches above threshold
 
-            if best_match_score >= threshold and best_match_idx >= 0:
-                matches += 1
-                used_indices.add(best_match_idx)
+            for j, score in enumerate(row):
+                if j not in matched_indices_2 and score > best_score:
+                    best_j = j
+                    best_score = score
 
-        # Return True if enough items matched
-        total = max(len(seq1), len(seq2))
-        return (matches / total) >= threshold if total > 0 else True
+            if best_j >= 0:
+                matched_indices_2.add(best_j)
+                total_score += best_score
+                matched_count += 1
+
+        # Calculate final score considering unmatched items
+        max_possible_matches = max(len(seq1), len(seq2))
+        if max_possible_matches == 0:
+            return True
+
+        # Penalize for unmatched items
+        final_score = total_score / max_possible_matches
+        return final_score >= threshold
+
+    @staticmethod
+    def _calculate_item_similarity(item1: Any, item2: Any) -> float:
+        """Calculate similarity score between two items (0.0 to 1.0)."""
+        # Handle SemanticString comparison
+        if hasattr(item1, "__class__") and hasattr(item2, "__class__"):
+            if item1.__class__.__name__ == "SemanticString" and item2.__class__.__name__ == "SemanticString":
+                # Use semantic comparison for SemanticString
+                if hasattr(item1, "root") and hasattr(item2, "root"):
+                    # Encode strings first, then calculate similarity
+                    emb1 = PotionEightEncoder.encode(str(item1))
+                    emb2 = PotionEightEncoder.encode(str(item2))
+                    similarity = PotionEightEncoder.cosine_similarity(emb1, emb2)
+                    return similarity
+
+        # Handle BaseModel comparison recursively
+        if isinstance(item1, BaseModel) and isinstance(item2, BaseModel):
+            if type(item1) is type(item2):
+                # Compare all fields and average their similarity
+                total_similarity = 0
+                field_count = 0
+                for field_name in item1.model_fields:
+                    if hasattr(item2, field_name):
+                        val1 = getattr(item1, field_name)
+                        val2 = getattr(item2, field_name)
+                        # Recursively compare field values
+                        if FieldComparator._compare_items_recursively(val1, val2, 0.7):
+                            total_similarity += 1.0
+                        field_count += 1
+                return total_similarity / field_count if field_count > 0 else 0.0
+            return 0.0
+
+        # Handle string comparison
+        if isinstance(item1, str) and isinstance(item2, str):
+            # Encode strings first, then calculate similarity
+            emb1 = PotionEightEncoder.encode(item1)
+            emb2 = PotionEightEncoder.encode(item2)
+            return PotionEightEncoder.cosine_similarity(emb1, emb2)
+
+        # Exact comparison for other types
+        return 1.0 if item1 == item2 else 0.0
 
     @staticmethod
     def _compare_model_derived(obj1: Any, obj2: Any, threshold: float) -> bool:
@@ -202,7 +266,7 @@ class FieldComparator:
                     tolerance=voting_meta.tolerance,
                     threshold=voting_meta.threshold,
                     decimal_places=voting_meta.decimal_places,
-                    custom_comparator=voting_meta.custom_comparator,
+                    custom_comparator_fn=voting_meta.custom_comparator_fn,
                 )
             # Fallback to direct comparison
             return FieldComparator._compare_items_recursively(obj1.root, obj2.root, threshold)
@@ -246,10 +310,7 @@ class FieldComparator:
     @staticmethod
     def _compare_items_recursively(item1: Any, item2: Any, threshold: float) -> bool:
         """Compare two items recursively based on their type."""
-        # Import here to avoid circular dependency
-        from pydantic import BaseModel, RootModel
 
-        # RootModel is also a BaseModel, so check for it first
         if isinstance(item1, RootModel) and isinstance(item2, RootModel):
             return FieldComparator._compare_model_derived(item1, item2, threshold)
         elif isinstance(item1, BaseModel) and isinstance(item2, BaseModel):
@@ -272,27 +333,54 @@ class FieldComparator:
         """Extract voting metadata from field info."""
         voting_meta = VotingMetadata()  # Default values
 
-        if field_info and field_info.json_schema_extra:
-            extra = field_info.json_schema_extra
-            if isinstance(extra, dict) and "voting_comparison" in extra:
-                voting_comparison = extra["voting_comparison"]
-                if isinstance(voting_comparison, dict):
-                    # Parse the dict into VotingMetadata - safely extract fields
-                    voting_meta_kwargs: dict[str, Any] = {}
-                    if "strategy" in voting_comparison and isinstance(voting_comparison["strategy"], (str, int)):
-                        voting_meta_kwargs["strategy"] = ComparisonStrategy(voting_comparison["strategy"])
-                    if "tolerance" in voting_comparison and isinstance(voting_comparison["tolerance"], (int, float)):
-                        voting_meta_kwargs["tolerance"] = voting_comparison["tolerance"]
-                    if "decimal_places" in voting_comparison and isinstance(
-                        voting_comparison["decimal_places"], (int, float)
-                    ):
-                        voting_meta_kwargs["decimal_places"] = voting_comparison["decimal_places"]
-                    if "threshold" in voting_comparison and isinstance(voting_comparison["threshold"], (int, float)):
-                        voting_meta_kwargs["threshold"] = voting_comparison["threshold"]
-                    if "custom_comparator" in voting_comparison and callable(voting_comparison["custom_comparator"]):
-                        voting_meta_kwargs["custom_comparator"] = voting_comparison["custom_comparator"]
+        # Extract from the metadata list where VotingField stores it
+        if field_info and field_info.metadata:
+            for metadata_item in field_info.metadata:
+                # Check both direct dict and nested json_schema_extra
+                if isinstance(metadata_item, dict):
+                    # First check for voting_comparison directly
+                    if "voting_comparison" in metadata_item:
+                        voting_comparison = metadata_item["voting_comparison"]
+                    # Also check in json_schema_extra (where VotingField stores it for non-model types)
+                    elif "json_schema_extra" in metadata_item and isinstance(metadata_item["json_schema_extra"], dict):
+                        json_extra = metadata_item["json_schema_extra"]
+                        if "voting_comparison" in json_extra:
+                            voting_comparison = json_extra["voting_comparison"]
+                        else:
+                            continue
+                    else:
+                        continue
 
-                    voting_meta = VotingMetadata(**voting_meta_kwargs)
+                    if isinstance(voting_comparison, dict):
+                        # Parse the dict into VotingMetadata - safely extract fields
+                        voting_meta_kwargs: dict[str, Any] = {}
+                        if "strategy" in voting_comparison and isinstance(
+                            voting_comparison["strategy"], (str, ComparisonStrategy)
+                        ):
+                            voting_meta_kwargs["strategy"] = ComparisonStrategy(voting_comparison["strategy"])
+                        if "tolerance" in voting_comparison and isinstance(
+                            voting_comparison["tolerance"], (int, float)
+                        ):
+                            voting_meta_kwargs["tolerance"] = voting_comparison["tolerance"]
+                        if "decimal_places" in voting_comparison and isinstance(
+                            voting_comparison["decimal_places"], (int, float)
+                        ):
+                            voting_meta_kwargs["decimal_places"] = voting_comparison["decimal_places"]
+                        if "threshold" in voting_comparison and isinstance(
+                            voting_comparison["threshold"], (int, float)
+                        ):
+                            voting_meta_kwargs["threshold"] = voting_comparison["threshold"]
+                        if "custom_comparator_fn" in voting_comparison and callable(
+                            voting_comparison["custom_comparator_fn"]
+                        ):
+                            voting_meta_kwargs["custom_comparator_fn"] = voting_comparison["custom_comparator_fn"]
+                        elif "custom_comparator" in voting_comparison and callable(
+                            voting_comparison["custom_comparator"]
+                        ):
+                            voting_meta_kwargs["custom_comparator_fn"] = voting_comparison["custom_comparator"]
+
+                        voting_meta = VotingMetadata(**voting_meta_kwargs)
+                        break  # Found our metadata, stop looking
 
         return voting_meta
 
@@ -309,7 +397,7 @@ def VotingField(
     tolerance: Optional[float] = ...,
     threshold: Optional[float] = ...,
     decimal_places: Optional[int] = ...,
-    custom_comparator: Optional[Callable[[Any, Any], bool]] = ...,
+    custom_comparator_fn: Optional[Callable[[Any, Any], bool]] = ...,
     **kwargs: Any,
 ) -> _T: ...
 
@@ -322,7 +410,7 @@ def VotingField(
     tolerance: Optional[float] = ...,
     threshold: Optional[float] = ...,
     decimal_places: Optional[int] = ...,
-    custom_comparator: Optional[Callable[[Any, Any], bool]] = ...,
+    custom_comparator_fn: Optional[Callable[[Any, Any], bool]] = ...,
     **kwargs: Any,
 ) -> _T: ...
 
@@ -334,7 +422,7 @@ def VotingField(
     tolerance: Optional[float] = ...,
     threshold: Optional[float] = ...,
     decimal_places: Optional[int] = ...,
-    custom_comparator: Optional[Callable[[Any, Any], bool]] = ...,
+    custom_comparator_fn: Optional[Callable[[Any, Any], bool]] = ...,
     **kwargs: Any,
 ) -> Any: ...
 
@@ -345,7 +433,7 @@ def VotingField(
     tolerance: Optional[float] = None,
     threshold: Optional[float] = None,
     decimal_places: Optional[int] = None,
-    custom_comparator: Optional[Callable[[Any, Any], bool]] = None,
+    custom_comparator_fn: Optional[Callable[[Any, Any], bool]] = None,
     **kwargs: Any,
 ) -> Any:
     """
@@ -359,7 +447,7 @@ def VotingField(
         comparison: How this field should be compared during voting (default: EXACT)
         tolerance: For RANGE strategy, the bin width (e.g., 0.2 for 20% bins, allows ~10% variance)
         threshold: For SEMANTIC strategy, minimum cosine similarity (e.g., 0.8 for 80%)
-        custom_comparator: For CUSTOM strategy, a function(value1, value2) -> bool
+        custom_comparator_fn: For CUSTOM strategy, a function(value1, value2) -> bool
         **kwargs: All standard Pydantic Field keyword arguments
 
     Usage:
@@ -380,8 +468,77 @@ def VotingField(
                 description="Semantic string"
             )
     """
-    # Store comparison metadata in the field's json_schema_extra
-    json_schema_extra: Dict[str, Any] = kwargs.get("json_schema_extra", {})  # Field expects Any for json_schema_extra
+    import inspect
+    import logging
+    from typing import get_args, get_origin
+
+    # Check if description is provided for List[ComplexType] or model references and warn
+    if "description" in kwargs:
+        # Get the calling frame to identify which field we're currently processing
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            # We're in a class definition, try to get the field name from the calling context
+            caller_frame = frame.f_back
+            caller_locals = caller_frame.f_locals
+
+            # Try to get the current field name by checking what's being assigned
+            # This is a heuristic - look at the line being executed
+            try:
+                import linecache
+
+                filename = caller_frame.f_code.co_filename
+                lineno = caller_frame.f_lineno
+                line = linecache.getline(filename, lineno).strip()
+
+                # Extract field name from assignment line like "field_name: Type = VotingField(...)"
+                if ":" in line and "=" in line:
+                    field_part = line.split(":")[0].strip()
+                    field_name = field_part.split()[-1] if " " in field_part else field_part
+
+                    # Check the field's type annotation
+                    annotations = caller_locals.get("__annotations__", {})
+                    if field_name in annotations:
+                        annotation = annotations[field_name]
+                        origin = get_origin(annotation)
+
+                        # Check if this field is a List[ComplexType]
+                        is_list_of_models = False
+                        if origin is list or (hasattr(origin, "__name__") and origin.__name__ == "list"):
+                            type_args = get_args(annotation)
+                            if type_args:
+                                inner_type = type_args[0]
+                                try:
+                                    if issubclass(inner_type, (BaseModel, RootModel)):
+                                        logger = logging.getLogger(__name__)
+                                        logger.warning(
+                                            f"VotingField with description used for List[{inner_type.__name__}] field '{field_name}'. "
+                                            f"OpenAI JSON Schema does not allow descriptions on $ref fields. "
+                                            f"Consider moving description to agent instructions for array length preferences. "
+                                            f"Description: '{kwargs['description']}'"
+                                        )
+                                        is_list_of_models = True
+                                except TypeError:
+                                    # Not a class, skip
+                                    pass
+
+                        # Check if this field directly references a BaseModel/RootModel (not wrapped in List)
+                        if not is_list_of_models and origin is None:  # No generic wrapper, direct type reference
+                            try:
+                                # Check if the annotation is a class that inherits from BaseModel or RootModel
+                                if isinstance(annotation, type) and issubclass(annotation, (BaseModel, RootModel)):
+                                    logger = logging.getLogger(__name__)
+                                    logger.warning(
+                                        f"VotingField with description used for {annotation.__name__} field '{field_name}'. "
+                                        f"OpenAI JSON Schema does not allow descriptions on $ref fields. "
+                                        f"Move the description to the {annotation.__name__} model's fields or docstring. "
+                                        f"Description: '{kwargs['description']}'"
+                                    )
+                            except (TypeError, AttributeError):
+                                # Not a BaseModel/RootModel, this is fine
+                                pass
+            except Exception:
+                # If anything fails in the heuristic, skip the warning
+                pass
 
     # Build metadata dict with only non-None values
     voting_comparison: Dict[str, Union[ComparisonStrategy, float, int, Optional[Callable]]] = {"strategy": comparison}
@@ -389,13 +546,19 @@ def VotingField(
     voting_comparison["tolerance"] = tolerance
     voting_comparison["threshold"] = threshold
     voting_comparison["decimal_places"] = decimal_places
-    voting_comparison["custom_comparator"] = custom_comparator
+    voting_comparison["custom_comparator_fn"] = custom_comparator_fn
 
-    json_schema_extra["voting_comparison"] = voting_comparison
-    kwargs["json_schema_extra"] = json_schema_extra
+    # Create the field with standard Pydantic Field
+    field = PydanticField(*args, **kwargs)
 
-    # Pass through to standard Field with all arguments
-    return PydanticField(*args, **kwargs)
+    # Add our voting metadata to the field's metadata list
+    # This is the proper way to attach custom metadata to a FieldInfo object
+    # The metadata list is designed for this purpose and won't affect JSON schema
+    if not field.metadata:
+        field.metadata = []
+    field.metadata.append({"voting_comparison": voting_comparison})
+
+    return field
 
 
 class BaseModelWithReasoning(BaseModel):
@@ -411,9 +574,10 @@ class BaseModelWithReasoning(BaseModel):
     """
 
     reasoning: str = VotingField(
-        min_length=150,
+        # Enforce minimum length to ensure detailed reasoning while balancing thoroughness with clarity.
+        # The 100-character requirement compensates for LLMs' character counting limitations without encouraging verbosity.
+        min_length=30,
         comparison=ComparisonStrategy.IGNORE,
-        threshold=0.80,
         description=dedent(
             """
             Before answering, work through this step-by-step:
@@ -423,6 +587,29 @@ class BaseModelWithReasoning(BaseModel):
             3. REASON: What logical connections can I make?
             4. SYNTHESIZE: How do these elements combine?
             5. CONCLUDE: What is the most accurate/helpful response?
+
+            IMPORTANT: This reasoning field must be at least 100 characters long.
+            Provide detailed explanations and avoid abbreviated responses.
             """
         ),
     )
+
+
+class SemanticString(RootModel[str]):
+    root: str = VotingField(
+        comparison=ComparisonStrategy.SEMANTIC,
+        threshold=0.75,
+        description="Semantic similarity for the string",
+    )
+
+    def __repr__(self) -> str:
+        return self.root
+
+    def __str__(self) -> str:
+        """Convert SemanticString to regular string."""
+        return self.root
+
+    @property
+    def value(self) -> str:
+        """Backwards compatibility alias for the root string value."""
+        return self.root

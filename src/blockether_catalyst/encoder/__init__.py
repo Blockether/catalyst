@@ -1,5 +1,5 @@
 """Encoder module for text embeddings."""
 
-from .EncoderCore import EncoderCore
+from .PotionEightEncoder import PotionEightEncoder
 
-__all__ = ["EncoderCore"]
+__all__ = ["PotionEightEncoder"]

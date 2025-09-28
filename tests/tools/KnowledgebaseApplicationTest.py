@@ -14,27 +14,26 @@ from agno.workflow.step import Step
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "tools"))
 
-from blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore
 from blockether_catalyst.knowledge.KnowledgeTypes import (
     CompactSearchResult,
-    NormalizedSearchResult,
     OptimizedSearchResponse,
     TermInfo,
 )
+from blockether_catalyst.knowledge.search.SearchCore import KnowledgeSearchCore
 
 
 class TestKnowledgebaseApplication:
     """Test suite for KnowledgebaseApplication workflow."""
 
     @pytest.fixture
-    def mock_search_module(self):
+    def mock_search_module(self) -> MagicMock:
         """Create mock KnowledgeSearchCore."""
         mock = MagicMock(spec=KnowledgeSearchCore)
 
         # Create mock search results
         mock_results = [
-            MagicMock(spec=NormalizedSearchResult),
-            MagicMock(spec=NormalizedSearchResult),
+            MagicMock(spec=CompactSearchResult),
+            MagicMock(spec=CompactSearchResult),
         ]
 
         # Configure mock results
@@ -91,12 +90,12 @@ class TestKnowledgebaseApplication:
         return mock
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock SqliteDb."""
         return MagicMock(spec=SqliteDb)
 
     @pytest.fixture
-    def mock_model(self):
+    def mock_model(self) -> MagicMock:
         """Create mock OpenAI model."""
         model = MagicMock(spec=OpenAILike)
         model.api_key = "dummy"
@@ -104,7 +103,7 @@ class TestKnowledgebaseApplication:
         model.id = "gpt-4o"
         return model
 
-    def test_knowledge_retriever_function(self, mock_search_module):
+    def test_knowledge_retriever_function(self, mock_search_module: MagicMock) -> None:
         """Test the KnowledgeRetriever function."""
         # Import here to use mocked module
         with patch("tools.KnowledgebaseApplication.search_module", mock_search_module):
@@ -129,7 +128,7 @@ class TestKnowledgebaseApplication:
             assert len(result["results"]) == 2
             assert result["results"][0]["content"] == "# Result 1\nMocked search result content 1"
 
-    def test_knowledge_retriever_empty_results(self, mock_search_module):
+    def test_knowledge_retriever_empty_results(self, mock_search_module: MagicMock) -> None:
         """Test KnowledgeRetriever with no results."""
         # Mock empty optimized response
         empty_response = MagicMock(spec=OptimizedSearchResponse)
@@ -138,7 +137,6 @@ class TestKnowledgebaseApplication:
             "terms": {},
             "total_results": 0,
             "query": "no matches",
-            "search_type": "hybrid",
         }
         mock_search_module.search.return_value = empty_response
 
@@ -150,7 +148,7 @@ class TestKnowledgebaseApplication:
             assert result["results"] == []
             assert result["terms"] == {}
 
-    def test_knowledge_retriever_step_function(self, mock_search_module):
+    def test_knowledge_retriever_step_function(self, mock_search_module: MagicMock) -> None:
         """Test knowledge_retriever_step function."""
         with patch("tools.KnowledgebaseApplication.search_module", mock_search_module):
             from tools.KnowledgebaseApplication import knowledge_retriever_step
@@ -163,7 +161,7 @@ class TestKnowledgebaseApplication:
             assert "results" in result
             assert len(result["results"]) == 2  # Based on mock_search_module fixture
 
-    def test_knowledge_agent_step_creation(self):
+    def test_knowledge_agent_step_creation(self) -> None:
         """Test knowledge_agent_step creation."""
         from tools.KnowledgebaseApplication import knowledge_agent_step
 
@@ -172,7 +170,7 @@ class TestKnowledgebaseApplication:
         assert knowledge_agent_step.name == "knowledge_agent"
         assert knowledge_agent_step.agent is not None
 
-    def test_main_agent_creation(self):
+    def test_main_agent_creation(self) -> None:
         """Test MainKnowledgebaseAgent creation."""
         from tools.KnowledgebaseApplication import MainKnowledgebaseAgent
 
@@ -182,7 +180,7 @@ class TestKnowledgebaseApplication:
         assert MainKnowledgebaseAgent.id == "MainKnowledgebaseAgent"
         assert MainKnowledgebaseAgent.tools is not None
 
-    def test_main_workflow_creation(self):
+    def test_main_workflow_creation(self) -> None:
         """Test MainKnowledgebaseWorkflow creation."""
         from tools.KnowledgebaseApplication import MainKnowledgebaseWorkflow
 
@@ -192,7 +190,7 @@ class TestKnowledgebaseApplication:
         assert MainKnowledgebaseWorkflow.id == "MainKnowledgebaseWorkflow"
 
     @patch("agno.workflow.Workflow.run")
-    def test_workflow_execution(self, mock_run):
+    def test_workflow_execution(self, mock_run: Mock) -> None:
         """Test the complete workflow execution."""
         # Mock the workflow execution
         mock_run.return_value = {
@@ -211,7 +209,7 @@ class TestKnowledgebaseApplication:
         assert result["status"] == "completed"
         assert "response" in result
 
-    def test_agno_module_configuration(self):
+    def test_agno_module_configuration(self) -> None:
         """Test the AgnoOsASGIModule configuration."""
         from tools.KnowledgebaseApplication import agno_asgi_module
 
@@ -221,7 +219,7 @@ class TestKnowledgebaseApplication:
         assert agno_asgi_module.chat.assistant.name == "Catalyst KnowledgeProvider"
         assert agno_asgi_module.mcp is not None
 
-    def test_chat_configuration(self):
+    def test_chat_configuration(self) -> None:
         """Test the chat configuration."""
         from tools.KnowledgebaseApplication import agno_asgi_module
 
@@ -231,7 +229,7 @@ class TestKnowledgebaseApplication:
         assert chat_config.assistant is not None
         assert chat_config.assistant.name == "Catalyst KnowledgeProvider"
 
-    def test_error_handling_in_retriever(self, mock_search_module):
+    def test_error_handling_in_retriever(self, mock_search_module: MagicMock) -> None:
         """Test error handling in KnowledgeRetriever."""
         # Simulate search failure
         mock_search_module.search.side_effect = Exception("Search failed")
@@ -243,7 +241,7 @@ class TestKnowledgebaseApplication:
             with pytest.raises(Exception, match="Search failed"):
                 KnowledgeRetriever(query="test", max_documents=5)
 
-    def test_mcp_config(self):
+    def test_mcp_config(self) -> None:
         """Test MCP configuration."""
         from tools.KnowledgebaseApplication import agno_asgi_module
 
@@ -253,7 +251,7 @@ class TestKnowledgebaseApplication:
         assert mcp_config.name == "Catalyst Knowledge MCP"
         assert len(mcp_config.tools) > 0
 
-    def test_asgi_module_creation(self):
+    def test_asgi_module_creation(self) -> None:
         """Test AgnoOsASGIModule creation."""
         from tools.KnowledgebaseApplication import agno_asgi_module
 

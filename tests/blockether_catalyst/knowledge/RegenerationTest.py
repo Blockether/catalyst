@@ -12,22 +12,22 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import anyio
 import pytest
 
-from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+from blockether_catalyst.knowledge.extraction.ExtractionCore import (
+    KnowledgeExtractionCore,
+)
+from blockether_catalyst.knowledge.extraction.internal.KnowledgeExtractionCallBase import (
     BaseChunkContentClassificationCall,
     BaseDocumentChunkingCall,
     BaseTermExtractionCall,
     ExtractionCallsSettings,
 )
-from blockether_catalyst.knowledge.KnowledgeExtractionCore import (
-    KnowledgeExtractionCore,
-)
 from blockether_catalyst.knowledge.KnowledgeTypes import (
     DocumentMetadata,
-    KnowledgeChunk,
     KnowledgeExtractionResultWithChunks,
     KnowledgeProcessorSettings,
     LinkedKnowledge,
     NormalizedDocumentMetadata,
+    RawKnowledgeChunk,
 )
 
 
@@ -264,7 +264,7 @@ class TestRegenerationFunctionality:
         # 4. Search indices include image content
 
         # For now, test the logic that would verify this
-        sample_chunk = KnowledgeChunk(
+        sample_chunk = RawKnowledgeChunk(
             document_id="test_doc",
             document_name="test.pdf",
             doc_id="test_chunk",

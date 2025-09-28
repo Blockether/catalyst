@@ -1,18 +1,17 @@
 """
--Inspired Consensus Mechanism for Reliable Multi-Model Reasoning
+Inspired Consensus Mechanism for Reliable Multi-Model Reasoning
 
 This implementation provides a consensus mechanism for combining outputs from multiple
 reasoning models (RMs) to reduce hallucinations and improve accuracy by treating models
-like nodes in a distributed network, inspired by the Hashgraph consensus algorithm.
+like nodes in a distributed network.
 
 """
 
-import hashlib
-import json
 import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import (
+    TYPE_CHECKING,
     Any,
     Coroutine,
     DefaultDict,
@@ -20,7 +19,7 @@ from typing import (
     Generic,
     List,
     Optional,
-    Set,
+    Tuple,
     Type,
     TypeVar,
     Union,
@@ -28,9 +27,9 @@ from typing import (
 )
 
 import anyio
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel
 
-from blockether_catalyst.encoder.EncoderCore import EncoderCore
+from blockether_catalyst.encoder.PotionEightEncoder import PotionEightEncoder
 from blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
 
 from .ConsensusTypes import (
@@ -42,7 +41,6 @@ from .ConsensusTypes import (
     FieldChangeValue,
     GossipHistory,
     ModelConfiguration,
-    ModelMetrics,
     ModelResponse,
     ResponseEvolution,
     ResponseMetadata,
@@ -55,6 +53,12 @@ from .VotingComparison import (
     FieldComparator,
 )
 
+if TYPE_CHECKING:
+    from agno.agent import Agent
+    from agno.models.base import Model
+    from agno.team import Team
+    from agno.workflow import Workflow
+
 # Type variable for structured outputs
 T = TypeVar("T", bound=BaseModelWithReasoning)
 
@@ -63,7 +67,7 @@ logger = logging.getLogger(__name__)
 
 class Consensus(
     Generic[T],
-    ArityOneTypedCall[str, ConsensusResult[T]],
+    ArityOneTypedCall[Any, ConsensusResult[T]],
 ):
     """
     -inspired consensus mechanism for multi-model reasoning.
@@ -146,7 +150,7 @@ class Consensus(
         """Get the list of model configurations."""
         return self._models
 
-    async def call(self, x: str) -> ConsensusResult[T]:
+    async def call(self, x: Any) -> ConsensusResult[T]:
         """
         Execute the  consensus algorithm (ArityOneTypedCall implementation).
 
@@ -253,6 +257,7 @@ class Consensus(
 
     async def _execute_initial_round(self, query: str) -> ConsensusRound[T]:
         """Execute the initial round where models respond independently."""
+        round_start_time = datetime.now(timezone.utc)
         responses = []
 
         # Create tasks for parallel execution with concurrency control
@@ -265,7 +270,10 @@ class Consensus(
             tasks.append(coro)
 
         # Execute with controlled concurrency
+        model_response_start = datetime.now(timezone.utc)
         results = await self._execute_with_concurrency_limit(tasks)
+        model_response_end = datetime.now(timezone.utc)
+        model_response_phase_ms = (model_response_end - model_response_start).total_seconds() * 1000
 
         # Process results
         for model_config, result in zip(model_configs, results):
@@ -273,14 +281,15 @@ class Consensus(
                 logger.error(f"Model {model_config.id} failed: {result}")
                 continue
 
-            # At this point, result is guaranteed to be T (not Exception)
+            # At this point, result is guaranteed to be (T, float) (not Exception)
             # Cast is safe here because we checked for Exception above
-            result_typed = cast(T, result)
+            result_typed = cast(Tuple[T, float], result)
+            model_response_content, response_time_ms = result_typed
 
             response = ModelResponse[T](
                 id=model_config.id,
                 round_number=0,
-                content=result_typed,
+                content=model_response_content,
                 metadata=ResponseMetadata(initial_response=True),
                 gossip_history=[
                     GossipHistory(
@@ -289,17 +298,29 @@ class Consensus(
                         peer_models_seen=[],
                     )
                 ],
+                response_time_ms=response_time_ms,
             )
             responses.append(response)
 
-        # Analyze initial disagreements
+        # Consensus processing phase
+        consensus_processing_start = datetime.now(timezone.utc)
         disagreement_analysis = self._analyze_disagreements(responses)
+        consensus_processing_end = datetime.now(timezone.utc)
+        consensus_processing_phase_ms = (consensus_processing_end - consensus_processing_start).total_seconds() * 1000
+
+        # Calculate total round duration
+        round_end_time = datetime.now(timezone.utc)
+        round_duration_ms = (round_end_time - round_start_time).total_seconds() * 1000
 
         return ConsensusRound(
             round_number=0,
             responses=responses,
             information_flow={},
             disagreement_analysis=disagreement_analysis,
+            round_start_time=round_start_time,
+            round_duration_ms=round_duration_ms,
+            model_response_phase_ms=model_response_phase_ms,
+            consensus_processing_phase_ms=consensus_processing_phase_ms,
         )
 
     async def _execute_gossip_round(
@@ -309,6 +330,7 @@ class Consensus(
         round_num: int,
     ) -> ConsensusRound:
         """Execute a gossip round where models see each other's responses."""
+        round_start_time = datetime.now(timezone.utc)
         responses = []
         round_evolutions = []  # Initialize evolution tracking at the start
         previous_responses = previous_rounds[-1].responses
@@ -343,7 +365,10 @@ class Consensus(
 
         # Execute all refinement tasks with controlled concurrency
         task_list = [t[1] for t in tasks]
+        model_response_start = datetime.now(timezone.utc)
         results = await self._execute_with_concurrency_limit(task_list)
+        model_response_end = datetime.now(timezone.utc)
+        model_response_phase_ms = (model_response_end - model_response_start).total_seconds() * 1000
 
         # Process results
         for (model_config, _, prev_response, peer_responses), result in zip(tasks, results):
@@ -352,9 +377,10 @@ class Consensus(
                     logger.error(f"Model {model_config.id} refinement failed: {result}")
                     continue
 
-                # Ensure result is BaseModel (not Exception) and cast to T
-                assert isinstance(result, BaseModel)
-                result_typed = cast(T, result)
+                # Ensure result is (T, float) (not Exception) and extract content and timing
+                assert not isinstance(result, Exception)
+                result_typed = cast(Tuple[T, float], result)
+                model_response_content, response_time_ms = result_typed
 
                 # Update gossip history
                 new_history = prev_response.gossip_history.copy()
@@ -369,9 +395,10 @@ class Consensus(
                 response = ModelResponse[T](
                     id=model_config.id,
                     round_number=round_num,
-                    content=result_typed,
+                    content=model_response_content,
                     metadata=ResponseMetadata(refined=True, round=round_num),
                     gossip_history=new_history,
+                    response_time_ms=response_time_ms,
                 )
                 responses.append(response)
 
@@ -385,8 +412,15 @@ class Consensus(
             except Exception as e:
                 logger.error(f"Model {model_config.id} processing failed: {e}")
 
-        # Analyze disagreements
+        # Consensus processing phase
+        consensus_processing_start = datetime.now(timezone.utc)
         disagreement_analysis = self._analyze_disagreements(responses)
+        consensus_processing_end = datetime.now(timezone.utc)
+        consensus_processing_phase_ms = (consensus_processing_end - consensus_processing_start).total_seconds() * 1000
+
+        # Calculate total round duration
+        round_end_time = datetime.now(timezone.utc)
+        round_duration_ms = (round_end_time - round_start_time).total_seconds() * 1000
 
         return ConsensusRound(
             round_number=round_num,
@@ -394,15 +428,28 @@ class Consensus(
             information_flow=self._calculate_information_flow(responses),
             response_evolutions=round_evolutions,
             disagreement_analysis=disagreement_analysis,
+            round_start_time=round_start_time,
+            round_duration_ms=round_duration_ms,
+            model_response_phase_ms=model_response_phase_ms,
+            consensus_processing_phase_ms=consensus_processing_phase_ms,
         )
 
-    async def _get_model_response(self, model_config: ModelConfiguration[T], prompt: str) -> T:
-        """Get a structured response from a specific model."""
+    async def _get_model_response(self, model_config: ModelConfiguration[T], prompt: str) -> Tuple[T, float]:
+        """Get a structured response from a specific model.
+
+        Returns:
+            Tuple of (response, response_time_ms)
+        """
+        start_time = datetime.now(timezone.utc)
         try:
             response = await model_config.executor.call(prompt)
-            return response
+            end_time = datetime.now(timezone.utc)
+            response_time_ms = (end_time - start_time).total_seconds() * 1000
+            return response, response_time_ms
         except Exception as e:
-            logger.error(f"Error calling model {model_config.id}: {e}")
+            end_time = datetime.now(timezone.utc)
+            response_time_ms = (end_time - start_time).total_seconds() * 1000
+            logger.error(f"Error calling model {model_config.id}: {e} (took {response_time_ms:.1f}ms)")
             raise
 
     def _create_refinement_prompt(
@@ -690,11 +737,40 @@ Provide a response in the same JSON format as the tied responses above.
             rounds,
         )
 
+        # Calculate detailed timing information
+        total_model_response_time_ms = 0.0
+        total_consensus_processing_time_ms = 0.0
+        model_response_times: Dict[str, List[float]] = defaultdict(list)
+        round_durations_ms = []
+
+        # Aggregate timing info from all rounds
+        for round_data in rounds:
+            if round_data.round_duration_ms > 0:
+                round_durations_ms.append(round_data.round_duration_ms)
+
+            if round_data.model_response_phase_ms > 0:
+                total_model_response_time_ms += round_data.model_response_phase_ms
+
+            if round_data.consensus_processing_phase_ms > 0:
+                total_consensus_processing_time_ms += round_data.consensus_processing_phase_ms
+
+            # Collect individual model response times
+            for response in round_data.responses:
+                if response.response_time_ms > 0:
+                    model_response_times[response.id].append(response.response_time_ms)
+
+        # Calculate average model response time
+        total_model_calls = sum(len(r.responses) for r in rounds)
+        all_response_times = [time for times in model_response_times.values() for time in times]
+        average_model_response_time_ms = (
+            sum(all_response_times) / len(all_response_times) if all_response_times else 0.0
+        )
+
         # Create strongly typed metrics
         metrics = ConsensusMetrics(
             duration_ms=duration_ms,
             rounds_to_convergence=len(rounds),
-            total_model_calls=sum(len(r.responses) for r in rounds),
+            total_model_calls=total_model_calls,
             convergence_achieved=final_round.consensus_achieved,
             dissent_rate=(len(dissenting_models) / len(self._models) if self._models else 0),
             model_contributions=model_contributions,
@@ -704,6 +780,12 @@ Provide a response in the same JSON format as the tied responses above.
             avg_refinements_per_round=total_refinements / len(rounds) if rounds else 0,
             information_flows=[round.information_flow for round in rounds],
             fallback_method=fallback_method,
+            # Detailed timing information
+            total_model_response_time_ms=total_model_response_time_ms,
+            consensus_processing_time_ms=total_consensus_processing_time_ms,
+            average_model_response_time_ms=average_model_response_time_ms,
+            model_response_times=dict(model_response_times),
+            round_durations_ms=round_durations_ms,
         )
 
         # Generate reasoning based on the consensus process
@@ -1143,7 +1225,9 @@ Provide a response in the same JSON format as the tied responses above.
                 tolerance=voting_meta.tolerance,
                 threshold=voting_meta.threshold,
                 decimal_places=voting_meta.decimal_places,
-                custom_comparator=voting_meta.custom_comparator if hasattr(voting_meta, "custom_comparator") else None,
+                custom_comparator_fn=(
+                    voting_meta.custom_comparator_fn if hasattr(voting_meta, "custom_comparator_fn") else None
+                ),
             )
 
             if not fields_match:
@@ -1262,7 +1346,7 @@ Provide a response in the same JSON format as the tied responses above.
                             tolerance=voting_meta.tolerance,
                             threshold=voting_meta.threshold,
                             decimal_places=voting_meta.decimal_places,
-                            custom_comparator=getattr(voting_meta, "custom_comparator", None),
+                            custom_comparator_fn=getattr(voting_meta, "custom_comparator_fn", None),
                         ):
                             all_same = False
                             break
@@ -1421,7 +1505,7 @@ Provide a response in the same JSON format as the tied responses above.
             embeddings = []
             for value in unique_values:
                 truncated = value[:1000] if len(value) > 1000 else value
-                embedding = EncoderCore.encode_single(truncated)
+                embedding = PotionEightEncoder.encode_single(truncated)
                 embeddings.append(embedding)
 
             # Calculate pairwise similarity matrix
@@ -1779,6 +1863,51 @@ Provide a response in the same JSON format as the tied responses above.
         # Add data rows
         for metric, value in table_data:
             log_lines.append(f"   {metric:<{max_metric_width}}  {value:<{max_value_width}}")
+
+        # Add detailed timing breakdown if available
+        if result.metrics and result.metrics.duration_ms > 0:
+            log_lines.append("")  # Add spacing
+            log_lines.append("⏱️  TIMING BREAKDOWN:")
+
+            # Calculate percentages
+            model_response_pct = (
+                (result.metrics.total_model_response_time_ms / result.metrics.duration_ms * 100)
+                if result.metrics.duration_ms > 0
+                else 0
+            )
+            consensus_pct = (
+                (result.metrics.consensus_processing_time_ms / result.metrics.duration_ms * 100)
+                if result.metrics.duration_ms > 0
+                else 0
+            )
+
+            log_lines.append(
+                f"   • Model Response Time: {result.metrics.total_model_response_time_ms:.1f}ms ({model_response_pct:.1f}%)"
+            )
+            log_lines.append(
+                f"   • Consensus Processing: {result.metrics.consensus_processing_time_ms:.1f}ms ({consensus_pct:.1f}%)"
+            )
+            log_lines.append(f"   • Average per Model Call: {result.metrics.average_model_response_time_ms:.1f}ms")
+
+            # Per-model timing details if available
+            if result.metrics.model_response_times:
+                log_lines.append("")
+                log_lines.append("   📊 Per-Model Response Times:")
+                for model_id, times in sorted(result.metrics.model_response_times.items()):
+                    if times:
+                        avg_time = sum(times) / len(times)
+                        min_time = min(times)
+                        max_time = max(times)
+                        log_lines.append(
+                            f"      • {model_id}: avg={avg_time:.1f}ms, min={min_time:.1f}ms, max={max_time:.1f}ms ({len(times)} calls)"
+                        )
+
+            # Round-by-round timing if available
+            if result.metrics.round_durations_ms:
+                log_lines.append("")
+                log_lines.append("   🔄 Round Durations:")
+                for i, duration in enumerate(result.metrics.round_durations_ms):
+                    log_lines.append(f"      • Round {i + 1}: {duration:.1f}ms")
 
         # Detailed voting breakdown for all rounds (or just final if only one)
         if result.rounds:
@@ -2146,7 +2275,7 @@ Provide a response in the same JSON format as the tied responses above.
             for value in unique_values:
                 # Truncate very long values for embedding
                 truncated = value[:1000] if len(value) > 1000 else value
-                embedding = EncoderCore.encode_single(truncated)
+                embedding = PotionEightEncoder.encode_single(truncated)
                 embeddings.append(embedding)
 
             # Calculate pairwise similarities
@@ -2183,3 +2312,138 @@ Provide a response in the same JSON format as the tied responses above.
         # Fallback to basic calculation
         similarity = 1.0 - ((len(unique_values) - 1) / len(values))
         return similarity
+
+
+class ConsensusManager(Generic[T]):
+    """Manager class for creating and configuring consensus instances.
+
+    This class provides a type-safe way to create consensus instances with
+    proper type information flowing through the generic parameter T.
+    """
+
+    def __init__(self, response_type: Type[T]):
+        """Initialize the ConsensusManager with a specific response type.
+
+        Args:
+            response_type: The type of response that the consensus will produce.
+                          Must be a subclass of BaseModelWithReasoning.
+        """
+        self._response_type = response_type
+
+    def consensus(
+        self,
+        models: List[ModelConfiguration[T]],
+        judge: ArityOneTypedCall[str, T],
+        settings: Optional[ConsensusSettings] = None,
+    ) -> Consensus[T]:
+        """Create a consensus instance with majority voting.
+
+        Args:
+            models: Model configurations for consensus (all must return type T)
+            judge: REQUIRED judge TypedCall[Any, T] for tie-breaking. Will be used
+                  to resolve ties when models have equal votes after all rounds.
+                  Must return the same type T as the models' executors
+            settings: Consensus settings (optional)
+
+        Returns:
+            Consensus[T] instance configured with majority voting and judge-based tie-breaking
+        """
+        return Consensus[T](
+            models=models,
+            judge=judge,
+            settings=settings,
+        )
+
+    def agno_consensus(
+        self,
+        runner: Union["Agent", "Team", "Workflow"],
+        ids: list[str],
+        perspectives: list[str],
+        weights: list[float],
+        runner_settings: List[dict],
+        consensus_settings: Optional[dict] = None,
+    ) -> Consensus[T]:
+        """Create an agno-based consensus configuration.
+
+        Args:
+            runner: The Agent, Team, or Workflow instance to use
+            ids: List of unique identifiers for each model
+            perspectives: List of perspectives for each model
+            weights: List of weights for each model
+            runner_settings: List of settings dicts for each model's runner. Each dict should contain
+                            'model' and any other runner-specific settings. If fewer settings are provided
+                            than models, the last setting will be reused for remaining models.
+            consensus_settings: Optional consensus settings
+
+        Returns:
+            Configured Consensus[T] instance
+
+        Example:
+            runner_settings = [
+                {"model": gpt4_model, "temperature": 0.7},
+                {"model": claude_model, "temperature": 0.5}
+            ]
+            # If you have 3 models but only 2 settings, the 3rd model will use the 2nd setting
+        """
+        from ..utils.TypedCalls import AgnoRunnerToArityTypedCallAdapter
+
+        if not (len(ids) == len(perspectives) == len(weights)):
+            raise ValueError("ids, perspectives, and weights must have the same length")
+
+        if not runner_settings:
+            raise ValueError("runner_settings must contain at least one configuration")
+
+        num_models = len(ids)
+
+        # Extend runner_settings by repeating the last element if needed
+        if len(runner_settings) < num_models:
+            last_setting = runner_settings[-1]
+            extended_settings = runner_settings + [last_setting] * (num_models - len(runner_settings))
+        else:
+            extended_settings = runner_settings[:num_models]  # Trim if too many provided
+
+        # Validate that each setting has a model
+        for i, setting in enumerate(extended_settings):
+            if "model" not in setting:
+                raise ValueError(f"runner_settings[{i}] must contain a 'model' key")
+
+        configurations = [
+            self.model(
+                id=ids[i],
+                executor=AgnoRunnerToArityTypedCallAdapter.create_typed_call(runner=runner, **extended_settings[i]),
+                perspective=perspectives[i],
+                weight=weights[i],
+            )
+            for i in range(num_models)
+        ]
+
+        # Use the first setting for the judge (or the only setting if there's just one)
+        judge = AgnoRunnerToArityTypedCallAdapter.create_typed_call(runner=runner, **extended_settings[0])
+
+        return self.consensus(configurations, judge=judge, **(consensus_settings or {}))
+
+    def model(
+        self,
+        id: str,
+        executor: ArityOneTypedCall[Any, T],
+        perspective: str,
+        weight: float = 1.0,
+    ) -> ModelConfiguration[T]:
+        """Create a model configuration - simplified without capabilities.
+
+        Args:
+            id: Unique identifier for the model
+            executor: The typed call implementation for this model returning type T
+            perspective: REQUIRED - The perspective/role the model should take
+                        (e.g., 'As a mathematician', 'From a security perspective')
+            weight: Weight for this model's vote (default: 1.0)
+
+        Returns:
+            ModelConfiguration[T] properly typed
+        """
+        return ModelConfiguration[T](
+            id=id,
+            executor=executor,
+            perspective=perspective,
+            weight=weight,
+        )

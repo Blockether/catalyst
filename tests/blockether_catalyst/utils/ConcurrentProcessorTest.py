@@ -40,7 +40,7 @@ class TestConcurrentProcessor:
 
         result = await processor.process(
             items=[],
-            processor_func=process_func,
+            processor_fn=process_func,
         )
 
         assert result == []
@@ -54,7 +54,7 @@ class TestConcurrentProcessor:
 
         result = await processor.process(
             items=["hello"],
-            processor_func=process_func,
+            processor_fn=process_func,
         )
 
         assert result == ["HELLO"]
@@ -70,7 +70,7 @@ class TestConcurrentProcessor:
         items = ["Hello", "World", "Test"]
         result = await processor.process(
             items=items,
-            processor_func=process_func,
+            processor_fn=process_func,
         )
 
         expected = ["HELLO", "hello", "WORLD", "world", "TEST", "test"]
@@ -88,7 +88,7 @@ class TestConcurrentProcessor:
         items = ["Hello", "skip", "World"]
         result = await processor.process(
             items=items,
-            processor_func=process_func,
+            processor_fn=process_func,
         )
 
         # None values should be filtered out
@@ -114,7 +114,7 @@ class TestConcurrentProcessor:
 
         result = await processor.process(
             items=items,
-            processor_func=process_func,
+            processor_fn=process_func,
         )
 
         assert len(result) == 6
@@ -137,7 +137,7 @@ class TestConcurrentProcessor:
 
         result = await processor.process(
             items=["test"],
-            processor_func=flaky_processor,
+            processor_fn=flaky_processor,
         )
 
         assert result == ["TEST"]
@@ -157,7 +157,7 @@ class TestConcurrentProcessor:
         with pytest.raises((RetryError, ExceptionGroup)):
             await processor.process(
                 items=["test"],
-                processor_func=always_fails,
+                processor_fn=always_fails,
             )
 
         # Should have tried max_retries times
@@ -186,7 +186,7 @@ class TestConcurrentProcessor:
 
         result = await processor.process(
             items=["test"],
-            processor_func=raises_value_error,
+            processor_fn=raises_value_error,
         )
 
         assert result == ["test"]
@@ -200,7 +200,7 @@ class TestConcurrentProcessor:
         with pytest.raises((RuntimeError, ExceptionGroup)):
             await processor.process(
                 items=["test"],
-                processor_func=raises_runtime_error,
+                processor_fn=raises_runtime_error,
             )
 
     @pytest.mark.anyio
@@ -214,7 +214,7 @@ class TestConcurrentProcessor:
 
         items = ["a", "b", "c", "d", "e", "f", "g", "h"]
 
-        result = await processor.process(items=items, processor_func=process_func)
+        result = await processor.process(items=items, processor_fn=process_func)
 
         assert len(result) == 8
         assert all(item.upper() in result for item in items)
@@ -229,7 +229,7 @@ class TestConcurrentProcessor:
 
         result = await processor.process(
             items=["hello"],
-            processor_func=process_func,
+            processor_fn=process_func,
         )
 
         assert result == ["HELLO"]
@@ -251,7 +251,7 @@ class TestConcurrentProcessor:
 
         result = await processor.process(
             items=input_items,
-            processor_func=process_with_random_delay,
+            processor_fn=process_with_random_delay,
         )
 
         # Verify order is preserved (flattened results)
@@ -279,7 +279,7 @@ class TestConcurrentProcessor:
 
         result = await processor.process(
             items=input_items,
-            processor_func=flaky_processor,
+            processor_fn=flaky_processor,
         )
 
         # Verify order is preserved despite retries
@@ -301,7 +301,7 @@ class TestConcurrentProcessor:
         items = ["hello", "empty", "none", "world"]
         result = await processor.process(
             items=items,
-            processor_func=process_func,
+            processor_fn=process_func,
         )
 
         # Empty lists and None should result in no output for those items
@@ -324,7 +324,7 @@ class TestConcurrentProcessor:
         items = ["single", "list", "none", "empty"]
         result = await processor.process(
             items=items,
-            processor_func=process_func,
+            processor_fn=process_func,
         )
 
         # Should handle all types correctly
@@ -346,7 +346,7 @@ class TestConcurrentProcessor:
 
         items = ["hello", "skip", "world", "empty", "mixed", "test"]
 
-        result = await processor.process(items=items, processor_func=process_item)
+        result = await processor.process(items=items, processor_fn=process_item)
 
         # Verify the result
         expected = ["HELLO", "WORLD", "valid", "another", "TEST"]

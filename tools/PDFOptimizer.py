@@ -10,18 +10,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List
 
-from blockether_catalyst.knowledge.PDFOptimizer import PDFOptimizer
+from blockether_catalyst.knowledge.optimization.PDFOptimizer import PDFOptimizer
+
 
 def main() -> None:
     """Main entry point for the script."""
-    parser = argparse.ArgumentParser(
-        description='Recursively optimize PNG images in place'
-    )
-    parser.add_argument(
-        'directory',
-        type=str,
-        help='Directory to recursively search for PNG images'
-    )
+    parser = argparse.ArgumentParser(description="Recursively optimize PNG images in place")
+    parser.add_argument("directory", type=str, help="Directory to recursively search for PNG images")
     args = parser.parse_args()
 
     directory = Path(args.directory)
@@ -37,5 +32,5 @@ def main() -> None:
     optimizer.optimize()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

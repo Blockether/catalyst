@@ -10,7 +10,7 @@ from typing import Any, List
 
 import pytest
 
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
 from blockether_catalyst.consensus.VotingComparison import (
     BaseModelWithReasoning,
@@ -44,7 +44,7 @@ class FlexibleResponse(BaseModelWithReasoning):
     # Category compared using CUSTOM comparator for case-insensitive matching
     category: str = VotingField(
         comparison=ComparisonStrategy.CUSTOM,
-        custom_comparator=lambda x, y: x.lower() == y.lower(),
+        custom_comparator_fn=lambda x, y: x.lower() == y.lower(),
         description="Category name with case-insensitive matching",
     )
 
@@ -97,19 +97,20 @@ class TestFlexibleVoting:
             tags=["algebra", "basic"],
             reasoning="I believe the answer is 50 based on my interpretation of the problem and alternative analytical approach to the equation. This perspective considers different factors that may have been overlooked, leading to a different but equally valid mathematical conclusion.",
         )
+        manager = ConsensusManager(FlexibleResponse)
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockFlexibleCall(response1),
                 perspective="High confidence perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockFlexibleCall(response2),
                 perspective="Low confidence perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockFlexibleCall(response3),
                 perspective="Alternative perspective",
@@ -127,7 +128,7 @@ class TestFlexibleVoting:
         )
         mock_judge = MockFlexibleCall(judge_response)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=mock_judge,
             settings=ConsensusSettings(max_rounds=1),
@@ -154,7 +155,7 @@ class TestFlexibleVoting:
         # Find groups with answer=42 and answer=50
         group_42 = None
         group_50 = None
-        for group_key, models_in_group in vote_groups.items():
+        for group_key, models_in_group in (vote_groups or {}).items():
             if models_in_group:
                 answer = models_in_group[0].content.answer
                 if answer == 42:
@@ -176,7 +177,9 @@ class TestFlexibleVoting:
         )
 
         # Verify we have exactly 2 models with answer=42 (models 1 and 2 per our setup)
-        assert len(group_42) == 2, f"Should have 2 models with answer=42, got {len(group_42)}"
+        assert (
+            group_42 and len(group_42) == 2
+        ), f"Should have 2 models with answer=42, got {len(group_42) if group_42 else 0}"
 
         # Verify model3 is alone with answer=50
         assert (
@@ -211,18 +214,20 @@ class TestFlexibleVoting:
             reasoning="Calculated score of 70 which indicates a different performance level suggesting areas requiring improvement. This lower score reflects specific challenges in meeting certain criteria and represents a distinct tier of performance compared to higher-scoring alternatives.",
         )
 
+        manager = ConsensusManager(FlexibleResponse)
+
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockFlexibleCall(response1),
                 perspective="First scorer",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockFlexibleCall(response2),
                 perspective="Second scorer",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockFlexibleCall(response3),
                 perspective="Third scorer",
@@ -240,7 +245,7 @@ class TestFlexibleVoting:
         )
         mock_judge = MockFlexibleCall(judge_response)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=mock_judge,
             settings=ConsensusSettings(max_rounds=1),
@@ -284,18 +289,20 @@ class TestFlexibleVoting:
             reasoning="Category is Science which is a different field of study altogether encompassing natural phenomena and empirical investigation. This broader classification differs fundamentally from mathematics and represents an alternative disciplinary framework for understanding and analyzing problems.",
         )
 
+        manager = ConsensusManager(FlexibleResponse)
+
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockFlexibleCall(response1),
                 perspective="Title case",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockFlexibleCall(response2),
                 perspective="Upper case",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockFlexibleCall(response3),
                 perspective="Different category",
@@ -313,7 +320,7 @@ class TestFlexibleVoting:
         )
         mock_judge = MockFlexibleCall(judge_response)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=mock_judge,
             settings=ConsensusSettings(max_rounds=1),

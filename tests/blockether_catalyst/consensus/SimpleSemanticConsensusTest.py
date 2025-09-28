@@ -12,7 +12,7 @@ from typing import List, Optional
 
 import pytest
 
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
 from blockether_catalyst.consensus.VotingComparison import (
     BaseModelWithReasoning,
@@ -139,6 +139,7 @@ class TestSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_semantic_list_achieves_consensus(self):
+        manager = ConsensusManager(TopicsResponse)
         """Test that semantic strings with different cases achieve consensus."""
 
         # Create topics with same content but different case
@@ -190,19 +191,19 @@ class TestSemanticConsensus:
             topics=topics3,
             reasoning="Comprehensive review confirms machine learning and artificial intelligence as primary topics through systematic content analysis and validation with multiple verification steps.",
         )
+        manager = ConsensusManager(SemanticString)
 
-        # Create models
         models = [
-            ConsensusCore.model(id="model1", executor=MockTypedCall(response1), perspective="Analysis A"),
-            ConsensusCore.model(id="model2", executor=MockTypedCall(response2), perspective="Analysis B"),
-            ConsensusCore.model(id="model3", executor=MockTypedCall(response3), perspective="Analysis C"),
+            manager.model(id="model1", executor=MockTypedCall(response1), perspective="Analysis A"),
+            manager.model(id="model2", executor=MockTypedCall(response2), perspective="Analysis B"),
+            manager.model(id="model3", executor=MockTypedCall(response3), perspective="Analysis C"),
         ]
 
         # Create judge
         judge = MockTypedCall(response1)
 
         # Run consensus with low threshold to ensure we get consensus
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=0.6),
@@ -217,6 +218,7 @@ class TestSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_empty_semantic_lists(self):
+        manager = ConsensusManager(TopicsResponse)
         """Test consensus with empty semantic lists."""
 
         # Create responses with empty lists
@@ -227,7 +229,7 @@ class TestSemanticConsensus:
 
         # Create models
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id=f"model{i}",
                 executor=MockTypedCall(response),
                 perspective=f"Analysis {i}",
@@ -239,7 +241,7 @@ class TestSemanticConsensus:
         judge = MockTypedCall(response)
 
         # Run consensus
-        consensus = ConsensusCore.consensus(models=models, judge=judge, settings=ConsensusSettings(max_rounds=1))
+        consensus = manager.consensus(models=models, judge=judge, settings=ConsensusSettings(max_rounds=1))
 
         result = await consensus.call("Extract topics from empty doc")
 
@@ -250,6 +252,7 @@ class TestSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_model_with_semantic_chunks(self):
+        manager = ConsensusManager(ResponseWithChunks)
         """Test consensus with model containing semantic document chunks."""
 
         # Create responses with document chunks
@@ -294,17 +297,17 @@ class TestSemanticConsensus:
 
         # Create models
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockTypedCall(response1),
                 perspective="Extraction method A",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockTypedCall(response2),
                 perspective="Extraction method B",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockTypedCall(response3),
                 perspective="Extraction method C",
@@ -315,7 +318,7 @@ class TestSemanticConsensus:
         judge = MockTypedCall(response1)
 
         # Run consensus
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=0.6),
@@ -330,6 +333,7 @@ class TestSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_deeply_nested_semantic_lists(self):
+        manager = ConsensusManager(Book)
         """Test consensus with deeply nested models containing semantic lists."""
 
         # Create a book with chapters and semantic sections
@@ -425,17 +429,17 @@ class TestSemanticConsensus:
 
         # Create models
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockTypedCall(book1),
                 perspective="Academic review",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockTypedCall(book2),
                 perspective="Technical analysis",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockTypedCall(book3),
                 perspective="Content evaluation",
@@ -446,7 +450,7 @@ class TestSemanticConsensus:
         judge = MockTypedCall(book1)
 
         # Run consensus
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=0.6),
@@ -463,6 +467,7 @@ class TestSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_semantic_list_with_different_items(self):
+        manager = ConsensusManager(TopicsResponse)
         """Test consensus when semantic lists have different items."""
 
         response1 = TopicsResponse(
@@ -525,17 +530,17 @@ class TestSemanticConsensus:
 
         # Create models
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockTypedCall(response1),
                 perspective="Comprehensive analysis",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockTypedCall(response2),
                 perspective="Core concepts",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockTypedCall(response3),
                 perspective="Applied perspective",
@@ -563,7 +568,7 @@ class TestSemanticConsensus:
         judge = MockTypedCall(judge_response)
 
         # Run consensus
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=2, threshold=0.6),

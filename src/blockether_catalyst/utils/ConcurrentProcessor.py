@@ -69,7 +69,7 @@ class ConcurrentProcessor(Generic[TInput, TOutput]):
     async def _process_concurrently(
         self,
         items: Sequence[TInput],
-        processor_func: Callable[[TInput], Coroutine[Any, Any, Sequence[TOutput | None]]],
+        processor_fn: Callable[[TInput], Coroutine[Any, Any, Sequence[TOutput | None]]],
     ) -> Sequence[TOutput]:
         """
         Process items concurrently with retry logic and controlled parallelism.
@@ -79,7 +79,7 @@ class ConcurrentProcessor(Generic[TInput, TOutput]):
 
         Args:
             items: Sequence of items to process
-            processor_func: Async function to process each item individually
+            processor_fn: Async function to process each item individually
         Returns:
             List of processed results in the same order as inputs (flattened if requested)
         """
@@ -98,7 +98,7 @@ class ConcurrentProcessor(Generic[TInput, TOutput]):
         @retry_decorator
         async def process_with_retry(item: TInput) -> Sequence[TOutput | None]:
             try:
-                return await processor_func(item)
+                return await processor_fn(item)
             except Exception as e:
                 logger.error(f"Error processing item: {e}")
                 raise
@@ -133,7 +133,7 @@ class ConcurrentProcessor(Generic[TInput, TOutput]):
     async def process(
         self,
         items: Sequence[TInput],
-        processor_func: Callable[[TInput], Coroutine[Any, Any, Sequence[TOutput | None] | TOutput | None]],
+        processor_fn: Callable[[TInput], Coroutine[Any, Any, Sequence[TOutput | None] | TOutput | None]],
     ) -> Sequence[TOutput]:
         """
         Process items with configurable concurrency.
@@ -143,14 +143,14 @@ class ConcurrentProcessor(Generic[TInput, TOutput]):
 
         Args:
             items: Sequence of all items to process
-            processor_func: Async function to process each item
+            processor_fn: Async function to process each item
 
         Returns:
             List of all processed results
         """
 
         async def _wrapped_call(x: TInput) -> Sequence[TOutput | None]:
-            result = await processor_func(x)
+            result = await processor_fn(x)
             if result is None:
                 return []
             # Check for string specifically since str is also a Sequence

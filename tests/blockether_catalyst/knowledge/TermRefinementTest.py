@@ -8,16 +8,16 @@ from typing import Any, Dict, List, Literal, cast
 import pytest
 
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusResult
-from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+from blockether_catalyst.knowledge.extraction.ExtractionCore import (
+    KnowledgeExtractionCore,
+)
+from blockether_catalyst.knowledge.extraction.internal.KnowledgeExtractionCallBase import (
     BaseTermExtractionCall,
     ExtractionCallsSettings,
 )
-from blockether_catalyst.knowledge.KnowledgeExtractionCore import (
-    KnowledgeExtractionCore,
-)
 from blockether_catalyst.knowledge.KnowledgeTypes import (
-    KnowledgeChunk,
     KnowledgeProcessorSettings,
+    RawKnowledgeChunk,
     Term,
     TermMeaningExtractionResponse,
     TermOccurrence,
@@ -387,7 +387,7 @@ class TestTermRefinement:
     async def test_term_refinement_with_chunks(self, real_term_extraction_call: RealTermExtractionCall) -> None:
         """Test term refinement using actual chunks."""
         chunks = [
-            KnowledgeChunk(
+            RawKnowledgeChunk(
                 document_id="test-doc",
                 document_name="test.pdf",
                 doc_id="test-doc-1-0",
@@ -397,7 +397,7 @@ class TestTermRefinement:
                 content_types=["text"],
                 semantic_types=["explanation"],
             ),
-            KnowledgeChunk(
+            RawKnowledgeChunk(
                 document_id="test-doc",
                 document_name="test.pdf",
                 doc_id="test-doc-1-1",

@@ -25,11 +25,11 @@ class ModelConfiguration(BaseModel, Generic[T]):
     """Configuration for a model in the consensus system."""
 
     id: str = Field(description="Unique identifier for the model")
-    executor: ArityOneTypedCall[str, T] = Field(description="The typed call implementation for this model")
+    executor: ArityOneTypedCall[Any, T] = Field(description="The typed call implementation for this model")
     perspective: str = Field(
         description="The perspective or role the model should take (e.g., 'As a mathematician', 'From a security perspective')",
     )
-    weight_multiplier: float = Field(
+    weight: float = Field(
         default=1.0,
         ge=0.0,
         description="Weight multiplier for this model's vote in consensus",
@@ -150,6 +150,7 @@ class ModelResponse(BaseModel, Generic[T]):
         description="When the response was generated",
     )
     gossip_history: List[GossipHistory] = Field(default_factory=list, description="History of information flow")
+    response_time_ms: float = Field(default=0.0, description="Time taken to generate this response in milliseconds")
 
 
 class ConsensusRound(BaseModel, Generic[T]):
@@ -173,6 +174,15 @@ class ConsensusRound(BaseModel, Generic[T]):
         default=None,
         description="Computed vote groups for this round (group_key -> responses)",
     )
+
+    # Timing information for this round
+    round_start_time: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When this round started",
+    )
+    round_duration_ms: float = Field(default=0.0, description="Total duration of this round in milliseconds")
+    model_response_phase_ms: float = Field(default=0.0, description="Time spent waiting for model responses")
+    consensus_processing_phase_ms: float = Field(default=0.0, description="Time spent on consensus processing")
 
 
 class ModelMetrics(BaseModel):
@@ -206,6 +216,22 @@ class ConsensusMetrics(BaseModel):
         default=None,
         description="Fallback method used if consensus not achieved (judge/majority/none)",
     )
+
+    # Detailed timing information
+    total_model_response_time_ms: float = Field(
+        default=0.0,
+        description="Total time spent waiting for model responses across all rounds",
+    )
+    consensus_processing_time_ms: float = Field(
+        default=0.0,
+        description="Time spent on consensus processing (excluding model response time)",
+    )
+    average_model_response_time_ms: float = Field(default=0.0, description="Average time per model response call")
+    model_response_times: Dict[str, List[float]] = Field(
+        default_factory=dict,
+        description="Response times per model per round (model_id -> [round_times])",
+    )
+    round_durations_ms: List[float] = Field(default_factory=list, description="Duration of each round in milliseconds")
 
 
 class ConsensusResult(BaseModelWithReasoning, Generic[T]):

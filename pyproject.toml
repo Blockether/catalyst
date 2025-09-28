@@ -7,7 +7,7 @@ where = ["src"]
 include = ["blockether_catalyst*"]
 
 [tool.setuptools.package-data]
-"blockether_catalyst" = ["assets/static_models/**/*", "**/**.j2"]
+"blockether_catalyst" = ["assets/static_models/**/*", "assets/knowledge/**/**.j2"]
 
 [project]
 name = "blockether-catalyst"
@@ -38,10 +38,6 @@ dependencies = [
     "tenacity>=9.1.2",
     "trio>=0.30.0",
     "sqlalchemy>=2.0.43",
-    "python-markdown>=0.1.0",
-    "markdown-it-py>=3.0.0",
-    "rich>=14.1.0",
-    "mdformat>=0.7.22",
 ]
 
 [project.urls]
@@ -52,9 +48,19 @@ Issues = "https://github.com/Blockether/catalyst/issues"
 Changelog = "https://github.com/Blockether/catalyst/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-api = ["fastapi>=0.116.1", "fastmcp>=2.12.3", "agno @ git+https://github.com/agno-agi/agno.git#subdirectory=libs/agno"]
+api = ["fastapi>=0.116.1", "fastmcp>=2.12.3", "agno>=2.0.11", "mdformat>=0.7.22"]
 
-extraction = ["pdfplumber>=0.11.7", "scikit-learn>=1.7.1", "rapidfuzz>=3.14.1", "pyoxipng>=9.1.1", "pypdf>=6.0.0"]
+extraction = [
+    "pdfplumber>=0.11.7",
+    "scikit-learn>=1.7.1",
+    "rapidfuzz>=3.14.1",
+    "pyoxipng>=9.1.1",
+    "pypdf>=6.0.0",
+    "rich>=14.1.0",
+    "celery>=5.5.3",
+    "redis>=6.4.0",
+    "flower>=2.0.1",
+]
 
 [dependency-groups]
 test = [
@@ -62,6 +68,7 @@ test = [
     "pytest-cov>=6.2.1",
     "pytest-timeout>=2.4.0",
     "pytest-randomly>=3.16.0",
+    "pytest-asyncio>=0.24.0",
     "mangum>=0.19.0",
     "anyio>=4.10.0",
 ]
@@ -79,6 +86,8 @@ dev = [
     "pyright>=1.1.405",
     "blockether-peekle",
     "mangum>=0.19.0",
+    "litellm>=1.77.3",
+    "celery-types>=0.23.0",
 ]
 
 # Documentation generation
@@ -103,7 +112,9 @@ markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "anyio: marks tests as async tests with anyio",
+    "asyncio: marks tests as async tests with pytest-asyncio",
 ]
+asyncio_mode = "auto"
 
 [tool.mypy]
 ignore_missing_imports = true
@@ -137,14 +148,13 @@ format-isort = "uv run isort src/ tests/"
 format = ["format-ruff", "format-black", "format-isort"]
 
 # Testing
-test = "uv run python3 -m pytest"
-test-cov = "uv run python3 -m pytest --cov=src --cov-report=html"
-test-cov-check = "uv run python3 -m pytest --cov=src --cov-report=term-missing --cov-fail-under=85"
+test = { cmd = "uv run python3 -m pytest", env = { ANYIO_BACKEND = "asyncio" } }
+test-cov = { cmd = "uv run python3 -m pytest --cov=src --cov-report=html", env = { ANYIO_BACKEND = "asyncio" } }
+test-cov-check = { cmd = "uv run python3 -m pytest --cov=src --cov-report=term-missing --cov-fail-under=85", env = { ANYIO_BACKEND = "asyncio" } }
 
 # Documentation
 docs-serve = "uv run mkdocs serve"
 docs-build = "uv run mkdocs build"
-check-docs = { shell = "if [ -d docs/examples ]; then echo '❌ ERROR: docs/examples/ folder is prohibited! Examples should be embedded in markdown files within docs/modules/'; exit 1; else echo '✅ Documentation structure is valid'; fi" }
 
 # Cleaning tasks
 clean-cache = "uv cache clean"
@@ -152,10 +162,10 @@ clean-pyc = { shell = "find . -type f -name '*.pyc' -delete && find . -type d -n
 clean = ["clean-pyc", "clean-cache"]
 
 # LiteLLM Proxy Server
-proxy = "uvx --with 'litellm[proxy]' litellm --config config.yml --port 3005"
+litellm_proxy = "uvx --with 'litellm[proxy]' litellm --config config.yml --port 3005"
 
 # Complete workflow
-check = ["format", "verify", "test-cov-check", "check-docs"]
+check = ["format", "verify", "test-cov-check"]
 
 [tool.uv.sources]
 blockether-peekle = { git = "https://github.com/Blockether/peekle.git" }

@@ -40,13 +40,13 @@ class TestPromptAlignmentCoreEnhanced:
         evaluation_result = EvaluationResult(
             alignment_score=0.85,
             feedback="Good alignment",
-            strengths=[SemanticString(value=s) for s in ["Clear"]],
-            weaknesses=[SemanticString(value=s) for s in []],
-            suggested_improvements=[SemanticString(value=s) for s in []],
+            strengths=[SemanticString(root=s) for s in ["Clear"]],
+            weaknesses=[SemanticString(root=s) for s in []],
+            suggested_improvements=[SemanticString(root=s) for s in []],
             reasoning="The prompt aligns exceptionally well with the target behavior and produces quality responses consistently across multiple evaluation dimensions. The clarity of instruction and specificity of requirements ensure robust and reliable model outputs that meet all defined criteria.",
         )
         mock.call = AsyncMock(
-            return_value=ConsensusResult(
+            return_root=ConsensusResult(
                 reasoning="Consensus achieved through comprehensive evaluation of multiple model responses and careful consideration of all perspectives. The models demonstrated strong agreement on the optimal approach, with consistent reasoning across all participants. This consensus represents a well-validated solution that incorporates diverse analytical viewpoints and methodologies.",
                 consensus_achieved=True,
                 final_response=evaluation_result,
@@ -66,8 +66,8 @@ class TestPromptAlignmentCoreEnhanced:
         mock = MagicMock(spec=Consensus)
         alignment_feedback = AlignmentFeedback(
             overall_assessment="Excellent prompt structure that can be learned from",
-            specific_issues=[SemanticString(value=s) for s in []],
-            improvement_suggestions=[SemanticString(value=s) for s in []],
+            specific_issues=[SemanticString(root=s) for s in []],
+            improvement_suggestions=[SemanticString(root=s) for s in []],
             principles_to_apply=AlignmentPrincipleList(
                 principles=[
                     AlignmentPrinciple(
@@ -84,7 +84,7 @@ class TestPromptAlignmentCoreEnhanced:
             reasoning="This interaction demonstrates effective prompt construction that should be captured as reusable principles. The prompt shows excellent structure with specific domain examples and clear definitions. These patterns can be extracted and reused across similar prompts to ensure consistent quality and alignment with user expectations.",
         )
         mock.call = AsyncMock(
-            return_value=ConsensusResult(
+            return_root=ConsensusResult(
                 reasoning="Consensus achieved on alignment feedback through multi-model evaluation. All participating models agreed on the assessment of the prompt's structure and the principles that should be extracted. The feedback represents a well-balanced view incorporating diverse perspectives on prompt improvement strategies.",
                 consensus_achieved=True,
                 final_response=alignment_feedback,
@@ -177,9 +177,9 @@ class TestPromptAlignmentCoreEnhanced:
                 final_response=EvaluationResult(
                     alignment_score=0.4,
                     feedback="Needs improvement",
-                    strengths=[SemanticString(value=s) for s in []],
-                    weaknesses=[SemanticString(value=s) for s in ["Too vague"]],
-                    suggested_improvements=[SemanticString(value=s) for s in ["Be more specific"]],
+                    strengths=[SemanticString(root=s) for s in []],
+                    weaknesses=[SemanticString(root=s) for s in ["Too vague"]],
+                    suggested_improvements=[SemanticString(root=s) for s in ["Be more specific"]],
                     reasoning="The prompt lacks the specificity required for quality responses. It needs more detailed instructions about the expected output format, the level of detail required, and clear context about the task. Without these elements, the model cannot reliably produce the desired results.",
                 ),
                 rounds=[],
@@ -193,9 +193,9 @@ class TestPromptAlignmentCoreEnhanced:
                 final_response=EvaluationResult(
                     alignment_score=0.9,
                     feedback="Much better",
-                    strengths=[SemanticString(value=s) for s in ["Specific"]],
-                    weaknesses=[SemanticString(value=s) for s in []],
-                    suggested_improvements=[SemanticString(value=s) for s in []],
+                    strengths=[SemanticString(root=s) for s in ["Specific"]],
+                    weaknesses=[SemanticString(root=s) for s in []],
+                    suggested_improvements=[SemanticString(root=s) for s in []],
                     reasoning="The prompt now demonstrates excellent specificity through the application of stored and refined principles, addressing all previously identified weaknesses and incorporating structured improvements that align with target behavior requirements.",
                 ),
                 rounds=[],
@@ -209,9 +209,9 @@ class TestPromptAlignmentCoreEnhanced:
                 final_response=EvaluationResult(
                     alignment_score=0.9,
                     feedback="Final check",
-                    strengths=[SemanticString(value=s) for s in ["Specific"]],
-                    weaknesses=[SemanticString(value=s) for s in []],
-                    suggested_improvements=[SemanticString(value=s) for s in []],
+                    strengths=[SemanticString(root=s) for s in ["Specific"]],
+                    weaknesses=[SemanticString(root=s) for s in []],
+                    suggested_improvements=[SemanticString(root=s) for s in []],
                     reasoning="The prompt successfully aligns with the specified requirements and demonstrates good structure through systematic application of learned principles, incorporating domain-specific patterns and maintaining clarity throughout the refinement process to achieve optimal alignment.",
                 ),
                 rounds=[],

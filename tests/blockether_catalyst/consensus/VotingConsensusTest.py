@@ -14,7 +14,7 @@ import anyio
 import pytest
 from pydantic import Field
 
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
@@ -68,18 +68,19 @@ class TestVotingConsensus:
             reasoning="My analysis suggests a different value of 200 based on alternative interpretation of the underlying data patterns. This assessment considers different weighting factors and alternative analytical approaches. While this differs from the majority view, it represents a valid alternative perspective based on thorough examination.",
         )
 
+        manager = ConsensusManager(VotingTestResponse)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockTypedCall(majority_response),  # 2 models have majority
                 perspective="From a mathematical perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockTypedCall(majority_response),
                 perspective="From a statistical perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockTypedCall(outlier_response),  # 1 outlier
                 perspective="From an alternative perspective",
@@ -87,7 +88,7 @@ class TestVotingConsensus:
         ]
 
         # Create consensus with judge
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=mock_judge,
             settings=ConsensusSettings(max_rounds=1),
@@ -105,6 +106,7 @@ class TestVotingConsensus:
     @pytest.mark.anyio
     async def test_tie_with_judge(self, mock_judge) -> None:
         """Test that judge is invoked when no clear majority exists."""
+        manager = ConsensusManager(VotingTestResponse)
         # Create 3 models with different responses (no majority)
         response1 = VotingTestResponse(
             value=100,
@@ -123,17 +125,17 @@ class TestVotingConsensus:
         )
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockTypedCall(response1),
                 perspective="Standard analysis",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockTypedCall(response2),
                 perspective="Alternative analysis",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockTypedCall(response3),
                 perspective="Specialized analysis",
@@ -145,7 +147,7 @@ class TestVotingConsensus:
         judge_mock.call.return_value = response1
 
         # Create consensus with judge
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge_mock,
             settings=ConsensusSettings(max_rounds=3),
@@ -161,6 +163,7 @@ class TestVotingConsensus:
     @pytest.mark.anyio
     async def test_plurality_consensus(self, mock_judge) -> None:
         """Test that plurality (not majority) can achieve consensus with threshold."""
+        manager = ConsensusManager(VotingTestResponse)
         # Create 5 models: 3 vote A, 1 votes B, 1 votes C
         response_a = VotingTestResponse(
             value=100,
@@ -179,19 +182,19 @@ class TestVotingConsensus:
         )
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id=f"model_a_{i}",
                 executor=MockTypedCall(response_a),
                 perspective=f"Perspective A variant {i}",
             )
             for i in range(3)
         ] + [
-            ConsensusCore.model(
+            manager.model(
                 id="model_b",
                 executor=MockTypedCall(response_b),
                 perspective="Perspective B",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model_c",
                 executor=MockTypedCall(response_c),
                 perspective="Perspective C",
@@ -199,7 +202,7 @@ class TestVotingConsensus:
         ]
 
         # With threshold of 0.6, 3/5 votes (60%) should achieve consensus
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=mock_judge,
         )
@@ -213,6 +216,7 @@ class TestVotingConsensus:
     @pytest.mark.anyio
     async def test_no_consensus_fallback(self, mock_judge) -> None:
         """Test fallback to voting when consensus not achieved after max rounds."""
+        manager = ConsensusManager(VotingTestResponse)
         # Create 3 models with all different responses
         responses = [
             VotingTestResponse(
@@ -224,7 +228,7 @@ class TestVotingConsensus:
         ]
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id=f"model{i}",
                 executor=MockTypedCall(responses[i]),
                 perspective=f"Unique perspective {i}",
@@ -233,7 +237,7 @@ class TestVotingConsensus:
         ]
 
         # High threshold, low rounds - consensus unlikely
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=mock_judge,
         )
@@ -250,9 +254,10 @@ class TestVotingConsensus:
     @pytest.mark.anyio
     async def test_reasoning_field_ignored_in_consensus(self, mock_judge) -> None:
         """Test that reasoning field is properly ignored during consensus voting."""
+        manager = ConsensusManager(VotingTestResponse)
         # Create 3 models with identical data but completely different reasoning
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=MockTypedCall(
                     VotingTestResponse(
@@ -263,7 +268,7 @@ class TestVotingConsensus:
                 ),
                 perspective="First perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=MockTypedCall(
                     VotingTestResponse(
@@ -274,7 +279,7 @@ class TestVotingConsensus:
                 ),
                 perspective="Second perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=MockTypedCall(
                     VotingTestResponse(
@@ -287,7 +292,7 @@ class TestVotingConsensus:
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=mock_judge,
         )
@@ -316,6 +321,7 @@ class TestVotingConsensus:
     @pytest.mark.anyio
     async def test_convergence_through_rounds(self) -> None:
         """Test that models can converge over multiple rounds."""
+        manager = ConsensusManager(VotingTestResponse)
         # This is a simplified test - in reality, models would adjust based on peer responses
 
         # Round 0: All different
@@ -364,7 +370,7 @@ class TestVotingConsensus:
                     )
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id=f"model{i}",
                 executor=AdaptiveTypedCall(f"model{i}"),
                 perspective=f"Perspective {i}",
@@ -380,7 +386,7 @@ class TestVotingConsensus:
         )
         mock_judge = MockTypedCall(judge_response)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=mock_judge,
             settings=ConsensusSettings(max_rounds=3, threshold=0.8),

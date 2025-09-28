@@ -13,7 +13,7 @@ from typing import List
 import pytest
 from pydantic import Field
 
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
 from blockether_catalyst.consensus.VotingComparison import (
     BaseModelWithReasoning,
@@ -30,7 +30,7 @@ class SimpleResponse(BaseModelWithReasoning):
     category: str = VotingField(
         default="",
         comparison=ComparisonStrategy.CUSTOM,
-        custom_comparator=lambda v1, v2: v1.lower().strip() == v2.lower().strip(),
+        custom_comparator_fn=lambda v1, v2: v1.lower().strip() == v2.lower().strip(),
     )
 
     # Exact field - must match exactly
@@ -55,6 +55,7 @@ class TestActualSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_semantic_normalization_makes_different_text_vote_same(self):
+        manager = ConsensusManager(SimpleResponse)
         """Test that SEMANTIC fields with different case/whitespace vote the same."""
 
         # These should all vote together despite differences
@@ -79,18 +80,19 @@ class TestActualSemanticConsensus:
             reasoning="This response determines MACHINE LEARNING as the primary category after thorough examination of content distribution, keyword frequency, and conceptual relationships between various technical topics discussed throughout the comprehensive document.",
         )
 
+        manager = ConsensusManager(SimpleResponse)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=StaticMockCall(response1),
                 perspective="Title case model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=StaticMockCall(response2),
                 perspective="Lowercase model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=StaticMockCall(response3),
                 perspective="Uppercase model",
@@ -100,7 +102,7 @@ class TestActualSemanticConsensus:
         # Judge not needed - all should agree
         judge = StaticMockCall(response1)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=1.0),  # Require 100% agreement
@@ -117,6 +119,7 @@ class TestActualSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_exact_fields_must_match_exactly(self):
+        manager = ConsensusManager(SimpleResponse)
         """Test that EXACT fields require exact matching and different values don't group together."""
 
         # Same category but different codes - tests EXACT field comparison
@@ -143,14 +146,14 @@ class TestActualSemanticConsensus:
 
         # Use 3 models with a threshold of 66% (which is achievable with 2/3)
         models = [
-            ConsensusCore.model(id="model1", executor=StaticMockCall(response1), perspective="Code 100"),
-            ConsensusCore.model(id="model2", executor=StaticMockCall(response2), perspective="Code 200"),
-            ConsensusCore.model(id="model3", executor=StaticMockCall(response3), perspective="Code 100"),
+            manager.model(id="model1", executor=StaticMockCall(response1), perspective="Code 100"),
+            manager.model(id="model2", executor=StaticMockCall(response2), perspective="Code 200"),
+            manager.model(id="model3", executor=StaticMockCall(response3), perspective="Code 100"),
         ]
 
         judge = StaticMockCall(response1)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=0.66),  # 66% threshold
@@ -169,6 +172,7 @@ class TestActualSemanticConsensus:
         if result.rounds:
             vote_groups = result.rounds[0].vote_groups
             # Should have exactly 2 groups (one for code=100, one for code=200)
+            assert vote_groups is not None
             assert len(vote_groups) == 2
             # One group should have 2 members, the other should have 1
             group_sizes = sorted([len(group) for group in vote_groups.values()])
@@ -176,6 +180,7 @@ class TestActualSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_ignored_fields_dont_affect_voting(self):
+        manager = ConsensusManager(SimpleResponse)
         """Test that IGNORE fields don't affect consensus."""
 
         # All same except metadata (which is ignored)
@@ -201,17 +206,17 @@ class TestActualSemanticConsensus:
         )
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=StaticMockCall(response1),
                 perspective="Metadata 1",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=StaticMockCall(response2),
                 perspective="Metadata 2",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=StaticMockCall(response3),
                 perspective="Metadata 3",
@@ -220,7 +225,7 @@ class TestActualSemanticConsensus:
 
         judge = StaticMockCall(response1)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=1.0),  # Need 100% agreement
@@ -235,6 +240,7 @@ class TestActualSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_threshold_determines_consensus(self):
+        manager = ConsensusManager(SimpleResponse)
         """Test that threshold percentage actually determines consensus."""
 
         # 3 say A, 2 say B
@@ -253,17 +259,17 @@ class TestActualSemanticConsensus:
         )
 
         models = [
-            ConsensusCore.model(id="a1", executor=StaticMockCall(responseA), perspective="A1"),
-            ConsensusCore.model(id="a2", executor=StaticMockCall(responseA), perspective="A2"),
-            ConsensusCore.model(id="a3", executor=StaticMockCall(responseA), perspective="A3"),
-            ConsensusCore.model(id="b1", executor=StaticMockCall(responseB), perspective="B1"),
-            ConsensusCore.model(id="b2", executor=StaticMockCall(responseB), perspective="B2"),
+            manager.model(id="a1", executor=StaticMockCall(responseA), perspective="A1"),
+            manager.model(id="a2", executor=StaticMockCall(responseA), perspective="A2"),
+            manager.model(id="a3", executor=StaticMockCall(responseA), perspective="A3"),
+            manager.model(id="b1", executor=StaticMockCall(responseB), perspective="B1"),
+            manager.model(id="b2", executor=StaticMockCall(responseB), perspective="B2"),
         ]
 
         judge = StaticMockCall(responseA)
 
         # Test with 55% threshold (3/5 = 60%, should achieve consensus)
-        consensus_55 = ConsensusCore.consensus(
+        consensus_55 = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=0.55, first_round_threshold=0.55),
@@ -274,7 +280,7 @@ class TestActualSemanticConsensus:
         assert result_55.final_response.category == "Neural Networks"
 
         # Test with 60% threshold (3/5 = 60%, should achieve consensus at exactly the threshold)
-        consensus_60 = ConsensusCore.consensus(
+        consensus_60 = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=0.60, first_round_threshold=0.60),
@@ -286,6 +292,7 @@ class TestActualSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_perfect_tie_uses_judge(self):
+        manager = ConsensusManager(SimpleResponse)
         """Test that a perfect tie falls back to judge."""
 
         responseA = SimpleResponse(
@@ -310,17 +317,17 @@ class TestActualSemanticConsensus:
             reasoning="This model identifies Unsupervised Learning based on clustering algorithms and dimensionality reduction techniques discussed without labeled data requirements in the technical documentation.",
         )
         models = [
-            ConsensusCore.model(id="a1", executor=StaticMockCall(responseA), perspective="RL1"),
-            ConsensusCore.model(id="a2", executor=StaticMockCall(responseA), perspective="RL2"),
-            ConsensusCore.model(id="b1", executor=StaticMockCall(responseB), perspective="SL1"),
-            ConsensusCore.model(id="b2", executor=StaticMockCall(responseB), perspective="SL2"),
-            ConsensusCore.model(id="c1", executor=StaticMockCall(responseC), perspective="UL1"),
+            manager.model(id="a1", executor=StaticMockCall(responseA), perspective="RL1"),
+            manager.model(id="a2", executor=StaticMockCall(responseA), perspective="RL2"),
+            manager.model(id="b1", executor=StaticMockCall(responseB), perspective="SL1"),
+            manager.model(id="b2", executor=StaticMockCall(responseB), perspective="SL2"),
+            manager.model(id="c1", executor=StaticMockCall(responseC), perspective="UL1"),
         ]
 
         # Judge picks A
         judge = StaticMockCall(responseA)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=1, threshold=0.5),
@@ -337,6 +344,7 @@ class TestActualSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_unanimous_consensus(self):
+        manager = ConsensusManager(SimpleResponse)
         """Test that unanimous agreement achieves consensus immediately."""
 
         response = SimpleResponse(
@@ -348,7 +356,7 @@ class TestActualSemanticConsensus:
 
         # All 5 models agree
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id=f"model{i}",
                 executor=StaticMockCall(response),
                 perspective=f"Perspective {i}",
@@ -358,7 +366,7 @@ class TestActualSemanticConsensus:
 
         judge = StaticMockCall(response)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=3, threshold=0.8),
@@ -374,6 +382,7 @@ class TestActualSemanticConsensus:
 
     @pytest.mark.anyio
     async def test_no_consensus_after_max_rounds(self):
+        manager = ConsensusManager(SimpleResponse)
         """Test fallback when consensus not achieved after max rounds."""
 
         # Three completely different responses
@@ -399,14 +408,14 @@ class TestActualSemanticConsensus:
         )
 
         models = [
-            ConsensusCore.model(id="bio", executor=StaticMockCall(response1), perspective="Biology"),
-            ConsensusCore.model(id="chem", executor=StaticMockCall(response2), perspective="Chemistry"),
-            ConsensusCore.model(id="phys", executor=StaticMockCall(response3), perspective="Physics"),
+            manager.model(id="bio", executor=StaticMockCall(response1), perspective="Biology"),
+            manager.model(id="chem", executor=StaticMockCall(response2), perspective="Chemistry"),
+            manager.model(id="phys", executor=StaticMockCall(response3), perspective="Physics"),
         ]
 
         judge = StaticMockCall(response1)
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=judge,
             settings=ConsensusSettings(max_rounds=2, threshold=0.7),

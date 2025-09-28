@@ -15,10 +15,6 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from blockether_catalyst.knowledge.KnowledgeSearchCore import (
-    KnowledgeSearchCore,
-    KnowledgeSearchResult,
-)
 from blockether_catalyst.knowledge.KnowledgeTypes import (
     DocumentMetadata,
     ImageMetadata,
@@ -33,6 +29,10 @@ from blockether_catalyst.knowledge.KnowledgeTypes import (
     TermLink,
     TermOccurrence,
     TermWithLinks,
+)
+from blockether_catalyst.knowledge.search.SearchCore import (
+    KnowledgeSearchCore,
+    KnowledgeSearchResult,
 )
 
 # ============================================================================

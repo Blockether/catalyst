@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from pydantic import Field
 
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusSettings
 from blockether_catalyst.consensus.VotingComparison import (
     BaseModelWithReasoning,
@@ -93,7 +93,9 @@ class TestEdgeCaseConsensus:
     async def test_zero_models_raises_error(self) -> None:
         """Test that consensus with zero models raises ValueError."""
         with pytest.raises(ValueError, match="At least one model must be specified"):
-            ConsensusCore.consensus(
+            manager = ConsensusManager(EdgeCaseResponse)
+
+            manager.consensus(
                 models=[],  # Empty models list
                 judge=MockJudgeCall(),
                 settings=ConsensusSettings(max_rounds=1),
@@ -103,36 +105,37 @@ class TestEdgeCaseConsensus:
     async def test_model_exception_handling(self) -> None:
         """Test that consensus handles model exceptions gracefully."""
         runtime_error = RuntimeError("Model computation failed")
+        manager = ConsensusManager(EdgeCaseResponse)
 
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="working_model_1",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="First working model perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="failing_model",
                 executor=ExceptionThrowingCall(runtime_error),
                 perspective="Failing model perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="working_model_2",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Second working model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="working_model_3",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Third working model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="working_model_4",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Fourth working model",
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=MockJudgeCall(self.DEFAULT_ANSWER),
             settings=ConsensusSettings(
@@ -154,25 +157,26 @@ class TestEdgeCaseConsensus:
     @pytest.mark.anyio
     async def test_all_models_fail(self) -> None:
         """Test consensus when all models throw exceptions."""
+        manager = ConsensusManager(EdgeCaseResponse)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="failing_1",
                 executor=ExceptionThrowingCall(RuntimeError("Error 1")),
                 perspective="First failing model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="failing_2",
                 executor=ExceptionThrowingCall(ValueError("Error 2")),
                 perspective="Second failing model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="failing_3",
                 executor=ExceptionThrowingCall(TypeError("Error 3")),
                 perspective="Third failing model",
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=MockJudgeCall(),
             settings=ConsensusSettings(max_rounds=2),
@@ -199,18 +203,19 @@ class TestEdgeCaseConsensus:
     @pytest.mark.anyio
     async def test_invalid_threshold_settings(self) -> None:
         """Test that invalid threshold settings are handled."""
+        manager = ConsensusManager(EdgeCaseResponse)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Test model 1",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Test model 2",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Test model 3",
@@ -218,7 +223,7 @@ class TestEdgeCaseConsensus:
         ]
 
         # Test threshold > 1 - should be clamped to 1.0
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=MockJudgeCall(self.DEFAULT_ANSWER),
             settings=ConsensusSettings(threshold=1.5),  # Will be clamped
@@ -228,7 +233,7 @@ class TestEdgeCaseConsensus:
         assert result.consensus_achieved is True
 
         # Test threshold = 0 - all responses should achieve consensus
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=MockJudgeCall(self.DEFAULT_ANSWER),
             settings=ConsensusSettings(threshold=0.0),
@@ -240,25 +245,26 @@ class TestEdgeCaseConsensus:
     async def test_max_rounds_exceeded(self) -> None:
         """Test behavior when max rounds is exceeded without consensus."""
         # Create models that will never agree
+        manager = ConsensusManager(EdgeCaseResponse)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model1",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="First perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model2",
                 executor=SuccessfulCall(self.ALTERNATIVE_ANSWER),
                 perspective="Second perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model3",
                 executor=SuccessfulCall(60),  # Different from both
                 perspective="Third perspective",
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=MockJudgeCall(self.DEFAULT_ANSWER),
             settings=ConsensusSettings(
@@ -284,35 +290,36 @@ class TestEdgeCaseConsensus:
     @pytest.mark.anyio
     async def test_mixed_exceptions_and_timeouts(self) -> None:
         """Test consensus with mix of exceptions, timeouts, and successes."""
+        manager = ConsensusManager(EdgeCaseResponse)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="success_1",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="First successful model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="exception_model",
                 executor=ExceptionThrowingCall(RuntimeError("Critical failure")),
                 perspective="Model that throws exception",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="success_2",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Second successful model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="value_error_model",
                 executor=ExceptionThrowingCall(ValueError("Invalid input")),
                 perspective="Model with value error",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="success_3",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Third successful model",
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=MockJudgeCall(self.DEFAULT_ANSWER),
             settings=ConsensusSettings(
@@ -335,25 +342,26 @@ class TestEdgeCaseConsensus:
     @pytest.mark.anyio
     async def test_minimum_models_consensus(self) -> None:
         """Test consensus with minimum required models (3)."""
+        manager = ConsensusManager(EdgeCaseResponse)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="model_1",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="First model perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model_2",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Second model perspective",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="model_3",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Third model perspective",
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=MockJudgeCall(self.DEFAULT_ANSWER),
             settings=ConsensusSettings(max_rounds=1),
@@ -369,25 +377,26 @@ class TestEdgeCaseConsensus:
     @pytest.mark.anyio
     async def test_network_error_simulation(self) -> None:
         """Test consensus with network-like errors."""
+        manager = ConsensusManager(EdgeCaseResponse)
         models = [
-            ConsensusCore.model(
+            manager.model(
                 id="connection_error",
                 executor=ExceptionThrowingCall(ConnectionError("Network unreachable")),
                 perspective="Network error model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="timeout_error",
                 executor=ExceptionThrowingCall(TimeoutError("Request timed out")),
                 perspective="Timeout error model",
             ),
-            ConsensusCore.model(
+            manager.model(
                 id="success",
                 executor=SuccessfulCall(self.DEFAULT_ANSWER),
                 perspective="Successful model",
             ),
         ]
 
-        consensus = ConsensusCore.consensus(
+        consensus = manager.consensus(
             models=models,
             judge=MockJudgeCall(self.DEFAULT_ANSWER),
             settings=ConsensusSettings(

@@ -8,22 +8,22 @@ from typing import List
 import pytest
 
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusResult
-from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+from blockether_catalyst.knowledge.extraction.ExtractionCore import (
+    KnowledgeExtractionCore,
+)
+from blockether_catalyst.knowledge.extraction.internal.KnowledgeExtractionCallBase import (
     BaseChunkContentClassificationCall,
     BaseDocumentChunkingCall,
     BaseTermExtractionCall,
     ExtractionCallsSettings,
 )
-from blockether_catalyst.knowledge.KnowledgeExtractionCore import (
-    KnowledgeExtractionCore,
-)
 from blockether_catalyst.knowledge.KnowledgeTypes import (
     ChunkingDecisionResponse,
     ChunkOutput,
     DocumentMetadata,
-    KnowledgeChunk,
-    KnowledgePageDataWithRawText,
+    KnowledgePageData,
     KnowledgeProcessorSettings,
+    RawKnowledgeChunk,
 )
 
 
@@ -40,9 +40,9 @@ class TestChunkingConstants:
     PARAGRAPH_TEXT = """Introduction: This is the introduction section.
 
     Methods: Here we describe the methodology used in the study.
-    
+
     Results: The results show significant improvements.
-    
+
     Conclusion: In conclusion, the approach is effective."""
 
     LONG_TEXT_SENTENCES = 50
@@ -52,13 +52,13 @@ class TestChunkingConstants:
 
     SPECIAL_CHARS_TEXT = """• Bullet point one
     • Bullet point two
-    
+
     Code example:
     ```python
     def hello():
         return "world"
     ```
-    
+
     Mathematical formula: E = mc²"""
 
 
@@ -78,7 +78,7 @@ class RealDocumentChunkingCall(BaseDocumentChunkingCall):
 
     async def execute(
         self,
-        page: KnowledgePageDataWithRawText,
+        page: KnowledgePageData,
         document_name: str,
         metadata: DocumentMetadata,
     ) -> ConsensusResult:
@@ -163,7 +163,7 @@ class RealDocumentChunkingCall(BaseDocumentChunkingCall):
 
     def fill_template(
         self,
-        page: KnowledgePageDataWithRawText,
+        page: KnowledgePageData,
         document_name: str,
         metadata: DocumentMetadata,
     ) -> str:
@@ -206,7 +206,7 @@ class TestChunking:
     @pytest.mark.anyio
     async def test_chunking_with_short_text(self, real_chunking_call) -> None:
         """Test chunking with short text that fits in one chunk."""
-        page = KnowledgePageDataWithRawText(
+        page = KnowledgePageData(
             page=1,
             text=TestChunkingConstants.SHORT_TEXT,
             images=[],
@@ -230,7 +230,7 @@ class TestChunking:
         ]
         long_text = ". ".join(sentences) + "."
 
-        page = KnowledgePageDataWithRawText(page=1, text=long_text, images=[], tables=[])
+        page = KnowledgePageData(page=1, text=long_text, images=[], tables=[])
 
         result = await real_chunking_call.execute(page, "test.pdf", DocumentMetadata(document_path="test.pdf"))
 
@@ -246,7 +246,7 @@ class TestChunking:
     @pytest.mark.anyio
     async def test_chunking_preserves_semantic_boundaries(self, real_chunking_call) -> None:
         """Test that chunking respects semantic boundaries."""
-        page = KnowledgePageDataWithRawText(
+        page = KnowledgePageData(
             page=1,
             text=TestChunkingConstants.PARAGRAPH_TEXT,
             images=[],
@@ -271,7 +271,7 @@ class TestChunking:
     @pytest.mark.anyio
     async def test_chunking_with_tables_and_images(self, real_chunking_call) -> None:
         """Test chunking with mixed content (text, tables, images)."""
-        page = KnowledgePageDataWithRawText(
+        page = KnowledgePageData(
             page=1,
             text=TestChunkingConstants.MIXED_CONTENT_TEXT,
             images=[],
@@ -291,7 +291,7 @@ class TestChunking:
     @pytest.mark.anyio
     async def test_chunking_empty_page(self, real_chunking_call) -> None:
         """Test chunking with empty page."""
-        page = KnowledgePageDataWithRawText(
+        page = KnowledgePageData(
             page=1,
             text="",
             images=[],
@@ -307,7 +307,7 @@ class TestChunking:
     @pytest.mark.anyio
     async def test_chunking_special_characters(self, real_chunking_call) -> None:
         """Test chunking with special characters and formatting."""
-        page = KnowledgePageDataWithRawText(
+        page = KnowledgePageData(
             page=1,
             text=TestChunkingConstants.SPECIAL_CHARS_TEXT,
             images=[],
@@ -343,7 +343,7 @@ class TestChunking:
         # Create KnowledgeChunk objects
         chunks = []
         for idx, decision in enumerate(decisions):
-            chunk = KnowledgeChunk(
+            chunk = RawKnowledgeChunk(
                 document_id=document_id,
                 document_name=document_name,
                 doc_id=f"{document_id}-1-{idx}",
@@ -369,7 +369,7 @@ class TestChunking:
         """Test chunking handles various whitespace correctly."""
         text_with_whitespace = "  First paragraph.  \n\n  Second paragraph.  \n\n\n  Third paragraph.  "
 
-        page = KnowledgePageDataWithRawText(
+        page = KnowledgePageData(
             page=1,
             text=text_with_whitespace,
             images=[],

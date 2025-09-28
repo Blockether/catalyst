@@ -2,6 +2,7 @@
 
 import json
 from typing import Any, Optional
+from unittest.mock import MagicMock
 
 import anyio
 import pytest
@@ -329,3 +330,197 @@ class TestConsensus:
         await consensus.call("test prompt")
 
         assert mock._saw_perspective, "Perspective was not added to prompt"
+
+    @pytest.mark.anyio
+    async def test_agno_consensus_runner_settings_extension(self):
+        """Test that runner_settings extends properly when fewer settings than models."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from blockether_catalyst.consensus.Consensus import ConsensusManager
+
+        # Mock the AgnoRunnerToArityTypedCallAdapter
+        with patch("blockether_catalyst.consensus.Consensus.AgnoRunnerToArityTypedCallAdapter") as MockAdapter:
+            # Create mock runner and models
+            mock_runner = MagicMock()
+            mock_model1 = MagicMock()
+            mock_model2 = MagicMock()
+
+            # Create mock executor
+            mock_executor = AsyncMock()
+            mock_executor.call = AsyncMock(return_value=SimpleResponse(answer="test", confidence=1.0))
+            MockAdapter.create_typed_call.return_value = mock_executor
+
+            # Create consensus manager
+            manager = ConsensusManager(SimpleResponse)
+
+            # Test with 2 settings for 3 models - last should be reused
+            manager.agno_consensus(
+                runner=mock_runner,
+                ids=["model_1", "model_2", "model_3"],
+                perspectives=["perspective_1", "perspective_2", "perspective_3"],
+                weights=[1.0, 1.0, 1.0],
+                runner_settings=[
+                    {"model": mock_model1, "temperature": 0.7},
+                    {"model": mock_model2, "temperature": 0.5},
+                ],
+            )
+
+            # Verify create_typed_call was called 4 times (3 for models + 1 for judge)
+            assert MockAdapter.create_typed_call.call_count == 4
+
+            # Check that the calls used correct settings
+            calls = MockAdapter.create_typed_call.call_args_list
+
+            # First model uses first setting
+            assert calls[0][1] == {
+                "runner": mock_runner,
+                "model": mock_model1,
+                "temperature": 0.7,
+            }
+
+            # Second model uses second setting
+            assert calls[1][1] == {
+                "runner": mock_runner,
+                "model": mock_model2,
+                "temperature": 0.5,
+            }
+
+            # Third model reuses second setting (last available)
+            assert calls[2][1] == {
+                "runner": mock_runner,
+                "model": mock_model2,
+                "temperature": 0.5,
+            }
+
+            # Judge uses first setting
+            assert calls[3][1] == {
+                "runner": mock_runner,
+                "model": mock_model1,
+                "temperature": 0.7,
+            }
+
+    @pytest.mark.anyio
+    async def test_agno_consensus_single_setting_for_all(self):
+        """Test that a single runner_setting is used for all models."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from blockether_catalyst.consensus.Consensus import ConsensusManager
+
+        with patch("blockether_catalyst.consensus.Consensus.AgnoRunnerToArityTypedCallAdapter") as MockAdapter:
+            mock_runner = MagicMock()
+            mock_model = MagicMock()
+
+            mock_executor = AsyncMock()
+            mock_executor.call = AsyncMock(return_value=SimpleResponse(answer="test", confidence=1.0))
+            MockAdapter.create_typed_call.return_value = mock_executor
+
+            manager = ConsensusManager(SimpleResponse)
+
+            # Test with 1 setting for 3 models
+            manager.agno_consensus(
+                runner=mock_runner,
+                ids=["model_1", "model_2", "model_3"],
+                perspectives=["p1", "p2", "p3"],
+                weights=[1.0, 1.0, 1.0],
+                runner_settings=[{"model": mock_model, "add_history_to_context": False}],
+            )
+
+            # All calls should use the same settings
+            calls = MockAdapter.create_typed_call.call_args_list
+            for i in range(4):  # 3 models + 1 judge
+                assert calls[i][1]["model"] == mock_model
+                assert not calls[i][1]["add_history_to_context"]
+
+    def test_agno_consensus_missing_model_in_settings(self):
+        """Test that missing 'model' key in runner_settings raises error."""
+        from blockether_catalyst.consensus.Consensus import ConsensusManager
+
+        manager = ConsensusManager(SimpleResponse)
+        mock_runner = MagicMock()
+
+        with pytest.raises(ValueError, match="runner_settings\\[0\\] must contain a 'model' key"):
+            manager.agno_consensus(
+                runner=mock_runner,
+                ids=["model_1"],
+                perspectives=["p1"],
+                weights=[1.0],
+                runner_settings=[{"temperature": 0.7}],  # Missing 'model' key
+            )
+
+    def test_agno_consensus_empty_runner_settings(self):
+        """Test that empty runner_settings raises error."""
+        from blockether_catalyst.consensus.Consensus import ConsensusManager
+
+        manager = ConsensusManager(SimpleResponse)
+        mock_runner = MagicMock()
+
+        with pytest.raises(ValueError, match="runner_settings must contain at least one configuration"):
+            manager.agno_consensus(
+                runner=mock_runner,
+                ids=["model_1"],
+                perspectives=["p1"],
+                weights=[1.0],
+                runner_settings=[],
+            )
+
+    def test_agno_consensus_mismatched_lengths(self):
+        """Test that mismatched lengths of ids, perspectives, and weights raises error."""
+        from blockether_catalyst.consensus.Consensus import ConsensusManager
+
+        manager = ConsensusManager(SimpleResponse)
+        mock_runner = MagicMock()
+        mock_model = MagicMock()
+
+        with pytest.raises(
+            ValueError,
+            match="ids, perspectives, and weights must have the same length",
+        ):
+            manager.agno_consensus(
+                runner=mock_runner,
+                ids=["model_1", "model_2"],  # 2 ids
+                perspectives=["p1"],  # 1 perspective
+                weights=[1.0, 1.0],  # 2 weights
+                runner_settings=[{"model": mock_model}],
+            )
+
+    @pytest.mark.anyio
+    async def test_agno_consensus_trimming_excess_settings(self):
+        """Test that excess runner_settings are trimmed to match number of models."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from blockether_catalyst.consensus.Consensus import ConsensusManager
+
+        with patch("blockether_catalyst.consensus.Consensus.AgnoRunnerToArityTypedCallAdapter") as MockAdapter:
+            mock_runner = MagicMock()
+            mock_model1 = MagicMock()
+            mock_model2 = MagicMock()
+            mock_model3 = MagicMock()
+
+            mock_executor = AsyncMock()
+            mock_executor.call = AsyncMock(return_value=SimpleResponse(answer="test", confidence=1.0))
+            MockAdapter.create_typed_call.return_value = mock_executor
+
+            manager = ConsensusManager(SimpleResponse)
+
+            # Test with 3 settings for 2 models - third should be ignored
+            manager.agno_consensus(
+                runner=mock_runner,
+                ids=["model_1", "model_2"],
+                perspectives=["p1", "p2"],
+                weights=[1.0, 1.0],
+                runner_settings=[
+                    {"model": mock_model1},
+                    {"model": mock_model2},
+                    {"model": mock_model3},  # This should be ignored
+                ],
+            )
+
+            # Verify only 3 calls (2 models + 1 judge)
+            assert MockAdapter.create_typed_call.call_count == 3
+
+            calls = MockAdapter.create_typed_call.call_args_list
+            # First two models should use their respective settings
+            assert calls[0][1]["model"] == mock_model1
+            assert calls[1][1]["model"] == mock_model2
+            # Judge uses first setting
+            assert calls[2][1]["model"] == mock_model1

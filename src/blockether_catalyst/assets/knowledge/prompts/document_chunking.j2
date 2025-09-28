@@ -1,0 +1,16 @@
+TASK: Chunk this document page into up to 4 self-contained, semantically coherent chunks.
+
+Document: {{ document_name }}
+Page {{ page.page }}:
+
+----- START_PAGE_TEXT -----
+{{ page.text }}
+----- END_PAGE_TEXT -----
+
+GUIDELINES:
+- Up to 4 self-contained chunks per page; prefer 300-400 words per chunk; if page < 400 words return a single chunk.
+- Split only at sentence boundaries outside tables, fenced code, and lists; prefer headings, blank-line breaks, and transition phrases.
+- Rank candidates deterministically by relative score (semantic evidence + structure-safety + context-safety); ties → earlier wins.
+- If any chunk < 400 words, merge the smallest with nearest neighbor (prefer earlier on tie); prefer merging over truncation.
+- Ensure self-containment: include local heading/table header, nearest acronym expansion, and sentences that resolve pronouns; if missing, then HIGHLIGHT IT WITH <NEEDS_CONTEXT_SPECIALIST>.
+- Validate Markdown integrity; if split breaks structure return <NEEDS_MARKDOWN_SPECIALIST> or move split to nearest safe boundary. Priority on conflicts: Markdown > Context > Semantic.

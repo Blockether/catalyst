@@ -1,0 +1,94 @@
+## Chunk Content Classification Task
+
+You are analyzing a chunk of text from the document "{{ document_name }}" (page {{ page_number }}) to determine its semantic type.
+
+### Semantic Type Definitions
+
+You MUST classify the chunk into ONE OR MORE of these semantic types (a chunk can have multiple types):
+
+#### 1. **table_of_contents**
+**Definition**: Navigation and reference content that provides document structure overview.
+**Characteristics**:
+- Lists of chapters, sections, or subsections with page numbers
+- Hierarchical organization of topics
+- Index entries or references to other document parts
+- Typically contains titles/headings with corresponding page/section numbers
+**Examples**: "Chapter 1: Introduction.....15", "Section 2.3 Risk Management.....47"
+
+#### 2. **summary**
+**Definition**: Condensed content that provides high-level overview or key takeaways.
+**Characteristics**:
+- Abstracts or executive summaries
+- Key points or highlights
+- Condensed version of longer content
+- Often uses phrases like "In summary", "Key findings", "Overview"
+**Examples**: Executive summaries, chapter conclusions, abstract sections, key takeaways boxes
+
+#### 3. **rule**
+**Definition**: Prescriptive content defining requirements, policies, or mandatory guidelines.
+**Characteristics**:
+- Uses imperative or mandatory language ("must", "shall", "required", "prohibited")
+- Numbered or bulleted compliance requirements
+- Policy statements or regulatory text
+- Formal procedural instructions
+**Examples**: "All applicants must submit...", "The following conditions shall apply...", "It is prohibited to..."
+
+#### 4. **explanation**
+**Definition**: Descriptive content that elaborates, clarifies, or teaches concepts.
+**Characteristics**:
+- Detailed descriptions of processes, concepts, or systems
+- Educational or informative content
+- Uses explanatory language ("because", "therefore", "this means")
+- Provides context, background, or reasoning
+**Examples**: Concept definitions, process descriptions, theoretical explanations, how-to guides
+
+#### 5. **example**
+**Definition**: Illustrative content providing concrete instances or practical applications.
+**Characteristics**:
+- Specific scenarios or case studies
+- Sample calculations or demonstrations
+- Uses indicator phrases ("for example", "for instance", "consider", "suppose")
+- Practical applications of abstract concepts
+**Examples**: "For example, if a customer applies for...", "Consider the following scenario...", worked examples
+
+#### 6. **reference**
+**Definition**: Citation and bibliographic content that points to external sources or other documents.
+**Characteristics**:
+- Citations to other works or documents
+- Bibliography entries
+- Footnotes and endnotes
+- Author references and publication details
+- Uses citation formats (e.g., "[1]", "(Smith, 2020)", "See Appendix A")
+**Examples**: "[1] Smith, J. (2020). Title of Work", "See reference document XYZ", "As cited in Johnson et al.", bibliography sections
+
+#### 7. **general**
+**Definition**: Content that doesn't clearly fit into any single category above or contains mixed content without a dominant type.
+**Characteristics**:
+- Mixed purpose content
+- Transitional paragraphs
+- Administrative or metadata content
+- Content where no single semantic type dominates
+**Use sparingly**: Only when content truly doesn't match other categories
+
+### Chunk Content:
+```
+{{ chunk_text }}
+```
+
+### Detected Content Types:
+The chunk contains the following types of content elements: {{ content_types | join(', ') }}
+
+### Classification Requirements:
+1. Identify ALL applicable semantic types from the seven defined above
+2. A chunk can have MULTIPLE semantic types (e.g., both "rule" and "example" if it states a rule then provides an example)
+3. Only include "general" if the content has portions that don't fit other categories
+4. For EACH identified type, provide:
+   - Confidence score (0.0 to 1.0) reflecting certainty for that specific classification
+   - Key indicators (actual phrases/patterns from the text) that support that classification
+5. Provide clear reasoning explaining why each semantic type applies to this chunk
+
+### Response Format:
+- semantic_types: List of all applicable types (can be one or multiple)
+- confidence_scores: Dictionary mapping each type to its confidence score
+- key_indicators: Dictionary mapping each type to its list of supporting text indicators
+- reasoning: Overall explanation of your classification decisions. Minimum 100 characters!

@@ -1,0 +1,33 @@
+Analyze if '{{ term }}' is a valid {{ type }} and extract its meaning.
+
+{% if domain %}
+Domain context: {{ domain }}
+{% endif %}
+
+{% if application %}
+Application context: {{ application }}
+{% endif %}
+
+Contexts where the term appears:
+{% for ctx in occurrences_contexts[:15] %}
+{{ loop.index }}. {{ ctx }}
+
+{% endfor %}
+
+{% if cooccurring_terms %}
+Co-occurring terms:
+{% for cooc_term in cooccurring_terms.keys() | list | slice(10) %}
+- {{ cooc_term }}
+{% endfor %}
+{% endif %}
+
+Guidelines:
+- Always extract the term exactly as it appears.
+- For acronyms, look for parentheses or definitions nearby within the domain context.
+- For keywords, use the word itself as the full form.
+- The meaning should be concise, context-aware, and consider the domain and application.
+- When identifying acronyms, consider they are domain-specific (e.g., FI could mean "Financial Institution" in banking vs "Foreign Investment" in economics).
+- Note: Terms will be normalized to lowercase for search consistency - consider this when evaluating acronym recognition.
+- STRICT DOMAIN FILTERING: If a term is completely unrelated to the specified domain, set meaning_status to "generic" or "unknown".
+- Examples of domain-irrelevant terms to reject: "lama" (Tibetan Buddhism) in banking domain, "photosynthesis" (biology) in finance domain.
+- Use "unknown" only if you cannot confidently classify the term within the given domain context.

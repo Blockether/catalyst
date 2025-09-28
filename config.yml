@@ -15,10 +15,21 @@ model_list:
       mode: chat
       max_tokens: 128000
 
-  - model_name: qwen-3-4b
+  # - model_name: qwen-3-4b
+  #   litellm_params:
+  #     model: lm_studio/qwen/qwen3-4b-2507
+  #     api_base: http://localhost:1234/v1
+  #     api_key: dummy_key
+  #     rpm: 120
+  #     timeout: 50
+  #   model_info:
+  #     mode: chat
+  #     max_tokens: 128000
+
+  - model_name: gpt-4.1
     litellm_params:
-      model: lm_studio/qwen/qwen3-4b-2507
-      api_base: http://localhost:1234/v1
+      model: openai/gpt-4.1
+      api_base: http://localhost:3006/v1
       api_key: dummy_key
       rpm: 120
       timeout: 50
@@ -26,10 +37,10 @@ model_list:
       mode: chat
       max_tokens: 128000
 
-  - model_name: gpt-4.1
+  - model_name: gpt-4o
     litellm_params:
-      model: openai/gpt-4.1
-      api_base: http://localhost:3006/v1
+      model: openai/gpt-4o
+      api_base: http://localhost:3007/v1
       api_key: dummy_key
       rpm: 120
       timeout: 50
@@ -137,6 +148,9 @@ model_list:
       api_base: os.environ/OPENROUTER_API_BASE
       rpm: 20
       timeout: 50
+    model_info:
+      mode: chat
+      max_tokens: 128000
 
   - model_name: qwen-vl
     litellm_params:
@@ -145,12 +159,15 @@ model_list:
       api_base: os.environ/OPENROUTER_API_BASE
       rpm: 20
       timeout: 50
+    model_info:
+      mode: chat
+      max_tokens: 128000
 
   - model_name: qwen-vl
     litellm_params:
       model: lm_studio/qwen2.5-vl-3b-instruct
       api_base: http://localhost:1234/v1
-      rpm: 400
+      rpm: 20
       timeout: 50
     model_info:
       mode: chat
@@ -177,7 +194,7 @@ litellm_settings:
 
 # Router settings for load balancing
 router_settings:
-  routing_strategy: "simple-shuffle"  # Options: simple-shuffle, least-busy, usage-based-routing, latency-based-routing
+  routing_strategy: "least-busy"  # Options: simple-shuffle, least-busy, usage-based-routing, latency-based-routing
   num_retries: 3
   retry_after: 5
   timeout: 120
@@ -186,7 +203,7 @@ router_settings:
   # These fallbacks will be used when a model fails or is unavailable
   model_fallbacks:
     # Primary GPT-4 models with fallback chains
-    gpt-4o: ["grok-4-fast-free", "deepseek-chat-v3.1-free", "mistral-small-3.2-24b-instruct-free", "qwen-3-4b", "llama-3.3-8b-instruct-free", "qwen3-8b-free", "qwen3-4b-free", "nemotron-nano-9b-v2-free"]
+    gpt-4o: ["grok-4-fast-free", "deepseek-chat-v3.1-free", "mistral-small-3.2-24b-instruct-free", "llama-3.3-8b-instruct-free", "qwen3-8b-free", "qwen3-4b-free", "nemotron-nano-9b-v2-free"]
     gpt-4.1: ["gpt-4o", "grok-4-fast-free", "deepseek-chat-v3.1-free"]
 
     # Free tier models with their own fallback chains

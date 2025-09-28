@@ -11,8 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
-from blockether_catalyst.consensus.Consensus import Consensus
-from blockether_catalyst.consensus.ConsensusCore import ConsensusCore
+from blockether_catalyst.consensus.Consensus import Consensus, ConsensusManager
 from blockether_catalyst.consensus.ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
@@ -62,18 +61,17 @@ class TestConsensusCore:
 
     @pytest.fixture
     def core(self) -> Any:
-        """Create ConsensusCore instance."""
-        return ConsensusCore()
+        """Create ConsensusManager instance."""
+        return ConsensusManager(ConsensusTestResponse)
 
     @pytest.fixture
     def mock_executor(self) -> Any:
         """Create mock typed call."""
         return MockTypedCall(answer="test_answer", confidence=0.90)
 
-    @pytest.fixture
     def test_initialization(self, core: Any) -> None:
-        """Test ConsensusCore initialization."""
-        assert isinstance(core, ConsensusCore)
+        """Test ConsensusManager initialization."""
+        assert isinstance(core, ConsensusManager)
 
     def test_consensus_default(self, core: Any, mock_executor: Any) -> None:
         """Test creating Consensus with defaults."""
@@ -143,13 +141,13 @@ class TestConsensusCore:
             id="test-model",
             executor=mock_executor,
             perspective="As a test model",
-            weight_multiplier=0.8,
+            weight=0.8,
         )
 
         assert "ModelConfiguration" in config.__class__.__name__
         assert config.id == "test-model"
         assert config.executor == mock_executor
-        assert config.weight_multiplier == 0.8
+        assert config.weight == 0.8
         assert config.perspective == "As a test model"
 
     def test_configuration_with_weight(self, core: Any, mock_executor: Any) -> None:
@@ -158,11 +156,11 @@ class TestConsensusCore:
             id="expert-model",
             executor=mock_executor,
             perspective="As an expert",
-            weight_multiplier=2.0,
+            weight=2.0,
         )
 
         assert config.id == "expert-model"
-        assert config.weight_multiplier == 2.0
+        assert config.weight == 2.0
 
     def test_create_consensus_request_removed(self, core: Any, mock_executor: Any) -> None:
         """Test that consensus request creation was simplified."""
@@ -194,7 +192,7 @@ class TestConsensusCore:
                 id=f"model-{i}",
                 executor=deterministic_executor,
                 perspective=f"As model {i}",
-                weight_multiplier=1.0 - (i * 0.1),
+                weight=1.0 - (i * 0.1),
             )
             for i in range(3)
         ]
@@ -220,14 +218,15 @@ class TestConsensusCore:
         mock_call = MockTypedCall(answer="static_test_answer", confidence=0.96)
 
         # Test static method without instance
-        config1 = ConsensusCore.model(id="static-test-1", executor=mock_call, perspective="As static test 1")
-        config2 = ConsensusCore.model(id="static-test-2", executor=mock_call, perspective="As static test 2")
-        config3 = ConsensusCore.model(id="static-test-3", executor=mock_call, perspective="As static test 3")
+        manager = ConsensusManager(ConsensusTestResponse)
+        config1 = manager.model(id="static-test-1", executor=mock_call, perspective="As static test 1")
+        config2 = manager.model(id="static-test-2", executor=mock_call, perspective="As static test 2")
+        config3 = manager.model(id="static-test-3", executor=mock_call, perspective="As static test 3")
         assert config1.id == "static-test-1"
         assert config1.perspective == "As static test 1"
-        assert config1.weight_multiplier == 1.0
+        assert config1.weight == 1.0
 
-        consensus = ConsensusCore.consensus(models=[config1, config2, config3], judge=mock_call)
+        consensus = manager.consensus(models=[config1, config2, config3], judge=mock_call)
         assert consensus.__class__.__name__ == "Consensus"
         assert len(consensus.models) == 3
         assert consensus.models[0].id == "static-test-1"

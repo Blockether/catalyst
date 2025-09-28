@@ -56,9 +56,9 @@ class TestPrincipleExtractionDebug:
             overall_assessment="Needs improvement to achieve better alignment",
             specific_issues=[],
             improvement_suggestions=[
-                SemanticString(value="Should add more specific instructions"),
-                SemanticString(value="Must include concrete examples"),
-                SemanticString(value="Ensure clarity in requirements"),
+                SemanticString(root="Should add more specific instructions"),
+                SemanticString(root="Must include concrete examples"),
+                SemanticString(root="Ensure clarity in requirements"),
             ],
             principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.7,
@@ -77,9 +77,9 @@ class TestPrincipleExtractionDebug:
         feedback = AlignmentFeedback(
             overall_assessment="Has several issues that need to be addressed",
             specific_issues=[
-                SemanticString(value="Lacks clarity"),
-                SemanticString(value="Missing examples"),
-                SemanticString(value="Too vague"),
+                SemanticString(root="Lacks clarity"),
+                SemanticString(root="Missing examples"),
+                SemanticString(root="Too vague"),
             ],
             improvement_suggestions=[],
             principles_to_apply=AlignmentPrincipleList(principles=[]),
@@ -128,12 +128,12 @@ class TestPrincipleExtractionDebug:
         feedback = AlignmentFeedback(
             overall_assessment="Multiple areas for improvement",
             specific_issues=[
-                SemanticString(value="Lacks context"),
-                SemanticString(value="Too complex"),
+                SemanticString(root="Lacks context"),
+                SemanticString(root="Too complex"),
             ],
             improvement_suggestions=[
-                SemanticString(value="Should simplify the language"),
-                SemanticString(value="Must add relevant examples"),
+                SemanticString(root="Should simplify the language"),
+                SemanticString(root="Must add relevant examples"),
             ],
             principles_to_apply=AlignmentPrincipleList(
                 principles=[
@@ -181,11 +181,11 @@ class TestPrincipleExtractionDebug:
             overall_assessment="Mixed feedback with both positives and areas for improvement",
             specific_issues=[],
             improvement_suggestions=[
-                SemanticString(value="Should add more detail"),  # Actionable
-                SemanticString(value="Must include examples"),  # Actionable
-                SemanticString(value="This is interesting"),  # Not actionable
-                SemanticString(value="Good attempt"),  # Not actionable
-                SemanticString(value="Ensure proper formatting"),  # Actionable
+                SemanticString(root="Should add more detail"),  # Actionable
+                SemanticString(root="Must include examples"),  # Actionable
+                SemanticString(root="This is interesting"),  # Not actionable
+                SemanticString(root="Good attempt"),  # Not actionable
+                SemanticString(root="Ensure proper formatting"),  # Actionable
             ],
             principles_to_apply=AlignmentPrincipleList(principles=[]),
             confidence_score=0.7,

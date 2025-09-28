@@ -152,7 +152,7 @@ class TestAgnoOsASGIModule:
         return ChatConfig(
             assistant=AssistantConfig(name="Test Assistant", short="T", runner=real_workflow),
             base_url=self.BASE_URL,
-            auth_token_resolver=default_token_resolver,
+            auth_token_resolver_fn=default_token_resolver,
         )
 
     @pytest.fixture

@@ -6,10 +6,11 @@ from typing import List
 
 import pytest
 
-from blockether_catalyst.knowledge.KnowledgeSearchCore import KnowledgeSearchCore
 from blockether_catalyst.knowledge.KnowledgeTypes import (
     LinkedKnowledge,
-    NormalizedSearchResult,
+)
+from blockether_catalyst.knowledge.search.SearchCore import (
+    KnowledgeSearchCore,
 )
 
 

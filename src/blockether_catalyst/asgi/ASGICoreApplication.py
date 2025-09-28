@@ -5,8 +5,7 @@ ASGI Core Application - Root application manager with module support
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, cast
+from typing import Any, AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +14,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from .ASGICoreModule import ASGICoreModule, ASGIModuleConfig, StaticMount
+from .ASGICoreModule import ASGICoreModule, StaticMount
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +167,7 @@ class ASGICoreApplication(ASGIApplicationConfig):
         # Store module reference
         module_name = module.__class__.__name__
 
-        print(f"Mounting module {module_name} at prefix {full_prefix}")
+        logger.info(f"Mounting module {module_name} at prefix {full_prefix}")
         router = APIRouter(tags=[module_name])
 
         module.mount(self._app, router)

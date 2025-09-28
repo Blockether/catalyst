@@ -8,12 +8,12 @@ from typing import Dict, List, cast
 import pytest
 
 from blockether_catalyst.consensus.ConsensusTypes import ConsensusResult
-from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+from blockether_catalyst.knowledge.extraction.internal.KnowledgeExtractionCallBase import (
     BaseChunkContentClassificationCall,
 )
 from blockether_catalyst.knowledge.KnowledgeTypes import (
-    ChunkContentClassification,
-    KnowledgeChunk,
+    KnowledgeChunkClassificationResponse,
+    RawKnowledgeChunk,
 )
 
 
@@ -27,7 +27,7 @@ class TestChunkClassificationConstants:
 
     # Test chunks with known classifications
     TABLE_OF_CONTENTS_CHUNK = """Table of Contents
-    
+
     Chapter 1: Introduction ........................... 1
     Chapter 2: Methodology ............................ 15
     Chapter 3: Results ................................ 32
@@ -36,14 +36,14 @@ class TestChunkClassificationConstants:
     References ........................................ 70"""
 
     SUMMARY_CHUNK = """Executive Summary
-    
+
     This report provides a comprehensive overview of our research findings.
     In summary, we found that the proposed approach significantly improves
     performance compared to baseline methods. The abstract highlights key
     contributions and conclusions drawn from our extensive analysis."""
 
     RULE_CHUNK = """Security Requirements
-    
+
     All users must authenticate using two-factor authentication.
     Passwords shall contain at least 12 characters.
     Access to production systems is strictly prohibited without approval.
@@ -52,7 +52,7 @@ class TestChunkClassificationConstants:
     - Encryption is required for all data at rest"""
 
     EXPLANATION_CHUNK = """Understanding Neural Networks
-    
+
     A neural network works by processing input through layers of neurons.
     This means that each layer transforms the data in specific ways.
     In other words, the network learns patterns through these transformations.
@@ -60,27 +60,27 @@ class TestChunkClassificationConstants:
     is fundamental to image recognition."""
 
     EXAMPLE_CHUNK = """Code Examples
-    
+
     Here's an example of how to implement a simple API endpoint:
-    
+
     For instance, a GET request might look like this:
     GET /api/users/123
-    
+
     Sample response:
     {"id": 123, "name": "John Doe", "email": "john@example.com"}
-    
+
     Another example using POST:
     POST /api/users with data {"name": "Jane", "email": "jane@example.com"}"""
 
     GENERAL_CHUNK = """System Architecture
-    
+
     The system consists of multiple components working together.
     Data flows from the input layer through processing modules.
     The architecture supports horizontal scaling and high availability.
     Performance metrics are collected and monitored continuously."""
 
     MIXED_CHUNK = """Chapter 3: Implementation Examples
-    
+
     This chapter provides examples of the implementation. In summary,
     we demonstrate three approaches. Users must follow these examples
     carefully. For instance, the first approach shows basic usage."""
@@ -123,26 +123,11 @@ class RealChunkContentClassificationCall(BaseChunkContentClassificationCall):
             f"Test classification for chunk from {document_name} page {page_number}. " * 5
         )  # Ensure 150+ chars
 
-        from typing import Literal
+        semantic_types = {"general"}  # Use set instead of list
 
-        SemanticType = Literal[
-            "table_of_contents",
-            "summary",
-            "rule",
-            "explanation",
-            "example",
-            "reference",
-            "general",
-        ]
-        semantic_types = cast(list[SemanticType], ["general"])
-        confidence_scores = {"general": TestChunkClassificationConstants.HIGH_CONFIDENCE}
-        key_indicators = {"general": ["test classification indicators"]}
-
-        response = ChunkContentClassification(
+        response = KnowledgeChunkClassificationResponse(
             reasoning=response_reasoning,
             semantic_types=semantic_types,
-            confidence_scores=confidence_scores,
-            key_indicators=key_indicators,
         )
 
         return ConsensusResult(
@@ -193,8 +178,7 @@ class TestChunkClassification:
         assert result.final_response is not None
         assert "general" in result.final_response.semantic_types
         assert len(result.final_response.semantic_types) == 1
-        assert result.final_response.confidence_scores["general"] == TestChunkClassificationConstants.HIGH_CONFIDENCE
-        assert "test classification indicators" in result.final_response.key_indicators["general"]
+        assert "general" in result.final_response.semantic_types
         assert result.consensus_achieved is True
 
     @pytest.mark.anyio
@@ -209,8 +193,6 @@ class TestChunkClassification:
 
         assert result.final_response is not None
         assert "general" in result.final_response.semantic_types
-        assert result.final_response.confidence_scores["general"] == TestChunkClassificationConstants.HIGH_CONFIDENCE
-        assert "test classification indicators" in result.final_response.key_indicators["general"]
 
     @pytest.mark.anyio
     async def test_rule_classification(self, real_classification_call: RealChunkContentClassificationCall) -> None:
@@ -224,8 +206,6 @@ class TestChunkClassification:
 
         assert result.final_response is not None
         assert "general" in result.final_response.semantic_types
-        assert result.final_response.confidence_scores["general"] == TestChunkClassificationConstants.HIGH_CONFIDENCE
-        assert "test classification indicators" in result.final_response.key_indicators["general"]
 
     @pytest.mark.anyio
     async def test_explanation_classification(
@@ -241,8 +221,6 @@ class TestChunkClassification:
 
         assert result.final_response is not None
         assert "general" in result.final_response.semantic_types
-        assert result.final_response.confidence_scores["general"] == TestChunkClassificationConstants.HIGH_CONFIDENCE
-        assert "test classification indicators" in result.final_response.key_indicators["general"]
 
     @pytest.mark.anyio
     async def test_example_classification(self, real_classification_call: RealChunkContentClassificationCall) -> None:
@@ -256,8 +234,6 @@ class TestChunkClassification:
 
         assert result.final_response is not None
         assert "general" in result.final_response.semantic_types
-        assert result.final_response.confidence_scores["general"] == TestChunkClassificationConstants.HIGH_CONFIDENCE
-        assert "test classification indicators" in result.final_response.key_indicators["general"]
 
     @pytest.mark.anyio
     async def test_general_classification(self, real_classification_call: RealChunkContentClassificationCall) -> None:
@@ -363,7 +339,7 @@ class TestChunkClassification:
         self, real_classification_call: RealChunkContentClassificationCall
     ) -> None:
         """Test classification using KnowledgeChunk objects."""
-        chunk = KnowledgeChunk(
+        chunk = RawKnowledgeChunk(
             document_id="test-doc",
             document_name="test.pdf",
             doc_id="test-doc-1-0",

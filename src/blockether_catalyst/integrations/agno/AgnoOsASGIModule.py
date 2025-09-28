@@ -27,14 +27,21 @@ from blockether_catalyst.asgi.ASGICoreModule import (
     TailwindConfig,
 )
 
+type AgnoRunner = Any # type: ignore
+type Agent = Any # type: ignore
+type Workflow = Any # type: ignore
+type Team = Any # type: ignore
+
 if TYPE_CHECKING:
-    from agno.agent import Agent
-    from agno.team import Team
-    from agno.workflow import Workflow
-else:
-    Agent = Any
-    Workflow = Any
-    Team = Any
+    try:
+        from agno.agent import Agent
+        from agno.team import Team
+        from agno.workflow import Workflow
+
+        type AgnoRunner = Agent | Team | Workflow
+    except ImportError:
+        print("Unable to import agno. Make sure you have this package installed!")
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +72,12 @@ def default_token_resolver(token: str, os: AgentOS, request: Request) -> Optiona
     return None
 
 
-class AgnoOSAPISettings(BaseModel):
+class AgnoOSAPISettings(AgnoAPISettings):
     """API settings for AgnoOS integration."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     docs_enabled: bool = Field(default=True, description="Enable API documentation")
-    cors_origin_list: List[str] = Field(
+    cors_origin_list: Optional[List[str]] = Field(
         default_factory=lambda: ["http://localhost:*"],
         description="CORS allowed origins",
     )
@@ -94,7 +100,7 @@ class AssistantConfig(BaseModel):
 
     name: str = Field(default="Omniscient Assistant", description="Name of the assistant")
     short: str = Field(default="O", description="Short name/abbreviation for the assistant")
-    runner: Any = Field(description="The runner (agent, workflow, or team) for this assistant")
+    runner: AgnoRunner = Field(description="The runner (agent, workflow, or team) for this assistant")
     cookies: CookieConfig = Field(default_factory=CookieConfig, description="Cookie configuration")
 
 
@@ -104,6 +110,7 @@ class MCPConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str = Field(description="Name of the MCP application")
+    instructions: str = Field(description="Instructions of the MCP server")
     tools: List[Tool] = Field(default_factory=list, description="List of tools to register with MCP")
     resources: List[Resource] = Field(default_factory=list, description="List of resources for MCP")
     prompts: List[Prompt] = Field(default_factory=list, description="List of prompts for MCP")
@@ -118,7 +125,7 @@ class ChatConfig(BaseModel):
     user_id_cookie_max_age: int = Field(default=86400, description="User ID cookie max age in seconds")
     token_cookie_max_age: int = Field(default=86400, description="Token cookie max age in seconds")
     base_url: str = Field(description="Base URL for the application")
-    auth_token_resolver: AuthTokenResolver = Field(
+    auth_token_resolver_fn: AuthTokenResolver = Field(
         default=default_token_resolver, description="Token resolver function"
     )
 
@@ -152,14 +159,14 @@ class AgnoOsASGIModule(ASGICoreModule):
             version=self.version,
             workflows=self.workflows,
             teams=self.teams,
-            # settings=self.api,
+            settings=self.api,
             enable_mcp=False,
             telemetry=False,
         )
 
         router_os = self._os.get_app().router
         if self.mcp:
-            mcp = FastMCP(name=self.mcp.name, version=self.version)
+            mcp = FastMCP(name=self.mcp.name, version=self.version, instructions=self.mcp.instructions)
             for tool in self.mcp.tools:
                 mcp.add_tool(tool)
 
@@ -167,6 +174,9 @@ class AgnoOsASGIModule(ASGICoreModule):
 
         if not self.chat or not self.chat.assistant:
             raise ValueError("Chat configuration or assistant is not properly set")
+
+        self.chat.assistant.runner.description = self.description
+        self.chat.assistant.runner.name = self.title
 
         @router_os.get("/view", response_class=HTMLResponse, include_in_schema=False)
         async def chat_interface(request: Request) -> HTMLResponse:
@@ -194,7 +204,7 @@ class AgnoOsASGIModule(ASGICoreModule):
                 user_id = "DemoUser"
             elif token:
                 # If we have a token, resolve the user
-                user_id = self.chat.auth_token_resolver(token, self._os, request)  # type: ignore
+                user_id = self.chat.auth_token_resolver_fn(token, self._os, request)  # type: ignore
 
             # Check if user was already set in cookie (from previous resolution)
             if not user_id:
@@ -713,7 +723,7 @@ class AgnoOsASGIModule(ASGICoreModule):
                 }
 
             # Get the runner from the assistant config
-            runner: Workflow | Agent | Team = self.chat.assistant.runner
+            runner: AgnoRunner = self.chat.assistant.runner
             try:
                 result = await runner.arun(input=input_text, session_id=session_id, user_id=user_id)
 
@@ -746,7 +756,7 @@ class AgnoOsASGIModule(ASGICoreModule):
             """Get all runs for a session."""
             try:
                 # Get the runner from the assistant config
-                runner: Workflow | Agent | Team = self.chat.assistant.runner
+                runner: AgnoRunner = self.chat.assistant.runner
                 session = runner.get_session(session_id)
 
                 if not session:

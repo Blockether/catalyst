@@ -15,19 +15,19 @@ from blockether_catalyst.consensus.ConsensusTypes import (
     ConsensusSettings,
     ModelConfiguration,
 )
-from blockether_catalyst.knowledge.KnowledgeExtractionCallBase import (
+from blockether_catalyst.knowledge.extraction.ExtractionCore import (
+    KnowledgeExtractionCore,
+)
+from blockether_catalyst.knowledge.extraction.internal.KnowledgeExtractionCallBase import (
     BaseDocumentChunkingCall,
     ExtractionCallsSettings,
-)
-from blockether_catalyst.knowledge.KnowledgeExtractionCore import (
-    KnowledgeExtractionCore,
 )
 from blockether_catalyst.knowledge.KnowledgeTypes import (
     ChunkingDecisionResponse,
     ChunkOutput,
     DocumentMetadata,
     KnowledgeExtractionResultWithChunks,
-    KnowledgePageDataWithRawText,
+    KnowledgePageData,
     KnowledgeProcessorSettings,
 )
 from blockether_catalyst.utils.TypedCalls import ArityOneTypedCall
@@ -82,7 +82,7 @@ class TestKnowledgeExtractionIntegration:
                         id=f"test-model-{i}",
                         executor=MinimalJudge(),  # Use same judge as model for simplicity
                         perspective=f"Test perspective {i}",
-                        weight_multiplier=1.0,
+                        weight=1.0,
                     )
                     dummy_models.append(model_config)
 
@@ -101,7 +101,7 @@ class TestKnowledgeExtractionIntegration:
 
             async def execute(
                 self,
-                page: Any,  # KnowledgePageDataWithRawText
+                page: Any,  # KnowledgePageData
                 document_name: str,
                 metadata: Any,  # DocumentMetadata
                 *args: object,
@@ -147,7 +147,7 @@ class TestKnowledgeExtractionIntegration:
 
             def fill_template(
                 self,
-                page: Any,  # KnowledgePageDataWithRawText
+                page: Any,  # KnowledgePageData
                 document_name: str,
                 metadata: Any,  # DocumentMetadata
             ) -> str:

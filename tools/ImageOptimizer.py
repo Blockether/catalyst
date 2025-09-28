@@ -5,31 +5,21 @@ Usage: uv run python3 tools/ImageOptimizer.py <directory> [--level=4]
 """
 
 import argparse
-import os
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List
 
-import oxipng
+from blockether_catalyst.knowledge.optimization.ImageOptimizer import ImageOptimizer
 
-from blockether_catalyst.knowledge.ImageOptimizer import ImageOptimizer
 
 def main() -> None:
     """Main entry point for the script."""
-    parser = argparse.ArgumentParser(
-        description='Recursively optimize PNG images in place'
-    )
+    parser = argparse.ArgumentParser(description="Recursively optimize PNG images in place")
+    parser.add_argument("directory", type=str, help="Directory to recursively search for PNG images")
     parser.add_argument(
-        'directory',
-        type=str,
-        help='Directory to recursively search for PNG images'
-    )
-    parser.add_argument(
-        '--level',
+        "--level",
         type=int,
         default=ImageOptimizer.DEFAULT_OPTIMIZATION_LEVEL,
         choices=range(7),
-        help='Optimization level (0-6, default: 4). Higher = better compression but slower'
+        help="Optimization level (0-6, default: 4). Higher = better compression but slower",
     )
 
     args = parser.parse_args()
@@ -47,5 +37,5 @@ def main() -> None:
     optimizer.optimize()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -13,18 +13,9 @@ from pydantic import BaseModel, Field
 from ..consensus.VotingComparison import (
     BaseModelWithReasoning,
     ComparisonStrategy,
+    SemanticString,
     VotingField,
 )
-
-
-class SemanticString(BaseModel):
-    """A string wrapper that uses semantic comparison."""
-
-    value: str = VotingField(
-        description="String with semantic comparison",
-        comparison=ComparisonStrategy.SEMANTIC,
-        threshold=0.75,
-    )
 
 
 class AlignmentPrinciple(BaseModel):
