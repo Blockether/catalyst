@@ -81,8 +81,6 @@ class AgnoOSAPISettings(AgnoAPISettings):
         default_factory=lambda: ["http://localhost:*"],
         description="CORS allowed origins",
     )
-    api_token: Optional[str] = Field(default=None, description="API authentication token")
-
 
 class CookieConfig(BaseModel):
     """Configuration for cookies."""
