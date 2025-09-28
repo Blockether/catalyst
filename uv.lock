@@ -231,7 +231,6 @@ extraction = [
     { name = "rapidfuzz" },
     { name = "redis" },
     { name = "rich" },
-    { name = "scikit-learn" },
 ]
 
 [package.dev-dependencies]
@@ -285,7 +284,6 @@ requires-dist = [
     { name = "redis", marker = "extra == 'extraction'", specifier = ">=6.4.0" },
     { name = "rich", marker = "extra == 'extraction'", specifier = ">=14.1.0" },
     { name = "scikit-learn", specifier = ">=1.7.2" },
-    { name = "scikit-learn", marker = "extra == 'extraction'", specifier = ">=1.7.1" },
     { name = "sqlalchemy", specifier = ">=2.0.43" },
     { name = "tenacity", specifier = ">=9.1.2" },
     { name = "trio", specifier = ">=0.30.0" },

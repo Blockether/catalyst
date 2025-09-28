@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ module_title | default('Chat Interface') }}{% endblock %}</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Custom scrollbar styles -->
+    <style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        /* Firefox scrollbar styling */
+        .custom-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: #c1c1c1 #f1f1f1;
+        }
+    </style>
+
+    {% block head_scripts %}{% endblock %}
+</head>
+<body class="bg-gray-50">
+    {% block styles %}{% endblock %}
+
+    {% block content %}
+    <div class="container mx-auto p-4">
+        <h1 class="text-2xl font-bold mb-4">{{ module_title | default('Welcome') }}</h1>
+        <p>This is the base template content.</p>
+    </div>
+    {% endblock %}
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

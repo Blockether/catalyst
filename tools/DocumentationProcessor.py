@@ -419,428 +419,87 @@ def create_documentation_processor_workflow(
     All using Catalyst consensus pattern with Agno agents calling Serena tools.
     """
     config = config or DocumentationProcessorConfig()
-    db = SqliteDb(path=db_path)
+    db = SqliteDb(db_file=db_path)
 
-    # Agents will use Serena MCP tools directly - no wrapper tools needed
+    # Create agents for different perspectives
+    agents = [
+        DocumentationAgent(
+            id="doc_architect",
+            model=model,
+            db=db,
+            perspective="architect",
+        ),
+        DocumentationAgent(
+            id="doc_developer",
+            model=model,
+            db=db,
+            perspective="developer",
+        ),
+        DocumentationAgent(
+            id="doc_reviewer",
+            model=model,
+            db=db,
+            perspective="reviewer",
+        ),
+    ]
 
-    # Create ConsensusManager
-    output_manager = ConsensusManager(DocumentationOutput)
+    # Create consensus manager with the response type
+    consensus_manager = ConsensusManager[DocumentationOutput](
+        response_type=DocumentationOutput
+    )
 
-    def get_context(step_input: StepInput) -> Dict[str, Any]:
-        """Extract workflow context."""
-        context: Dict[str, Any] = {}
-        if isinstance(step_input.previous_step_content, dict):
-            context.update(step_input.previous_step_content)
-        if step_input.additional_data:
-            context.update(step_input.additional_data)
-        return context
-
-    # =====================================
-    # Step 1: Initialize (Serena handles its own setup)
-    # =====================================
-    def initialize_executor(step_input: StepInput) -> StepOutput:
-        """Initialize workflow - Serena handles its own configuration."""
-        context = get_context(step_input)
-
-        logger.info("Initializing documentation processor...")
-
-        # Serena handles its own setup through MCP
-        # Agents will call:
-        # 1. mcp__serena__check_onboarding_performed()
-        # 2. mcp__serena__onboarding() if needed
-        # This is Serena's responsibility, not ours
-
-        # Determine mode and input
-        if isinstance(step_input.input, dict):
-            context["mode"] = step_input.input.get("mode", config.mode)
-            context["documentation_path"] = step_input.input.get("path")
-            context["target_module"] = step_input.input.get("module")
-        else:
-            # Try to infer mode
-            input_str = str(step_input.input)
-            if Path(input_str).exists() and Path(input_str).suffix == ".md":
-                context["mode"] = "assess"
-                context["documentation_path"] = input_str
-            else:
-                context["mode"] = config.mode
-
-        mode = context["mode"]
-        logger.info(f"Step 1: Initializing in {mode} mode")
-
-        # Load existing documentation if assessing/refining
-        if mode in ["assess", "refine"]:
-            doc_path = context.get("documentation_path", "README.md")
-            doc_file = Path(doc_path)
-
-            if doc_file.exists():
-                context["existing_content"] = doc_file.read_text()
-                logger.info(f"Loaded documentation from {doc_path}")
-            else:
-                context["error"] = f"Documentation not found: {doc_path}"
-                return StepOutput(content=context)
-
-        # Agents will use Serena directly for analysis
-        context["target_module"] = context.get("target_module", "src")
-        logger.info(f"Target module: {context['target_module']}")
-
-        context["iteration_count"] = 0
-        context["processing_history"] = []
-
-        return StepOutput(content=context)
-
-    # =====================================
-    # Step 2: Process with Consensus
-    # =====================================
-    def process_executor(step_input: StepInput) -> StepOutput:
-        """Process documentation using consensus across agents."""
-        context = get_context(step_input)
-
-        mode = context.get("mode", "assess")
-        logger.info(f"Step 2: Processing documentation ({mode} mode)")
-
-        # Prepare input
+    # Create workflow steps
+    def process_documentation(input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process documentation using consensus."""
         processor_input = ProcessorInput(
-            mode=mode,
-            content=context.get("existing_content"),
-            codebase_context=context.get("codebase_context"),
-            target_module=context.get("target_module"),
-            requirements=context.get("requirements", []),
+            mode=input_data.get("mode", config.mode),
+            content=input_data.get("content"),
+            target_module=input_data.get("module"),
+            requirements=input_data.get("requirements", []),
         )
 
-        # Create consensus agent
-        consensus_agent = cast(
-            Any,
-            output_manager.agno_consensus(
-                runner=DocumentationAgent,
-                ids=["architect", "developer", "reviewer"],
-                perspectives=[
-                    f"architect focusing on system design for {mode}",
-                    f"developer focusing on practical usage for {mode}",
-                    f"reviewer focusing on quality standards for {mode}",
-                ],
-                weights=[1.0, 1.0, 1.0],
-                runner_settings=[
-                    {"model": model, "db": db, "perspective": "architect"},
-                    {"model": model, "db": db, "perspective": "developer"},
-                    {"model": model, "db": db, "perspective": "reviewer"},
-                ],
-                consensus_settings={"settings": config.consensus_settings},
-            ),
+        # Use agno_consensus method to create consensus with agents
+        consensus = consensus_manager.agno_consensus(
+            runner=agents[0],  # Use first agent as base runner
+            ids=[agent.id for agent in agents],
+            perspectives=[agent.perspective for agent in agents],
+            weights=[1.0] * len(agents),
+            runner_settings=[{"model": model} for _ in agents],
+            consensus_settings=config.consensus_settings.model_dump(),
         )
-
-        # Run consensus processing
-        result = consensus_agent.run_sync(processor_input)
-        output = result.final_response
-
-        # Calculate average quality score
-        avg_score = (
-            output.clarity_score +
-            output.completeness_score +
-            output.accuracy_score +
-            output.usability_score
-        ) / 4
-
-        context.update({
-            "current_output": output,
-            "average_score": avg_score,
-            "iteration_count": context.get("iteration_count", 0) + 1,
-            "consensus_metadata": result.metrics if hasattr(result, "metrics") else None,
-        })
-
-        # Add to history
-        history = context.get("processing_history", [])
-        history.append({
-            "iteration": context["iteration_count"],
-            "mode": mode,
-            "score": avg_score,
-            "improvements": len(output.improvements_needed),
-        })
-        context["processing_history"] = history
-
-        logger.info(f"Processing complete. Score: {avg_score:.1f}/10")
-
-        return StepOutput(content=context)
-
-    # =====================================
-    # Refinement Loop Steps
-    # =====================================
-    def identify_improvements_executor(step_input: StepInput) -> StepOutput:
-        """Identify specific improvements needed."""
-        context = get_context(step_input)
-
-        output = context.get("current_output")
-        if not output:
-            return StepOutput(content=context)
-
-        logger.info("Identifying improvements...")
-
-        improvements = []
-
-        # Add specific improvements based on scores
-        if output.clarity_score < 7:
-            improvements.append("Improve clarity and organization")
-
-        if not output.has_quickstart:
-            improvements.append("Add quickstart guide with hello world example")
-
-        if not output.has_api_docs and config.include_api_docs:
-            improvements.append("Add comprehensive API documentation")
-
-        if not output.has_examples and config.include_examples:
-            improvements.append("Add practical code examples")
-
-        if output.invalid_claims:
-            for claim in output.invalid_claims[:3]:
-                improvements.append(f"Correct invalid claim: {claim}")
-
-        if output.missing_sections:
-            for section in output.missing_sections[:3]:
-                improvements.append(f"Add missing section: {section}")
-
-        # Add consensus suggestions
-        improvements.extend(output.improvements_needed)
-
-        context["identified_improvements"] = improvements
-        context["requirements"] = improvements  # For next iteration
-
-        return StepOutput(content=context)
-
-    def refine_documentation_executor(step_input: StepInput) -> StepOutput:
-        """Refine documentation based on improvements."""
-        context = get_context(step_input)
-
-        improvements = context.get("identified_improvements", [])
-        if not improvements:
-            return StepOutput(content=context)
-
-        logger.info(f"Refining with {len(improvements)} improvements")
-
-        # Switch to refine mode
-        context["mode"] = "refine"
-
-        # Use current output as new input
-        current_output = context.get("current_output")
-        if current_output and current_output.content:
-            context["existing_content"] = current_output.content
-
-        # Re-run processing with improvements as requirements
-        return process_executor(step_input)
-
-    # =====================================
-    # Quality Check for Loop
-    # =====================================
-    def quality_check(loop_outputs: List[StepOutput]) -> bool:
-        """Check if quality threshold is met or max iterations reached."""
-        if not loop_outputs:
-            return False
-
-        latest = loop_outputs[-1]
-        context = latest.content if isinstance(latest.content, dict) else {}
-
-        avg_score = context.get("average_score", 0)
-        iteration = context.get("iteration_count", 0)
-        improvements = context.get("identified_improvements", [])
-
-        # End if:
-        # 1. Quality threshold met
-        # 2. Max iterations reached
-        # 3. No improvements needed
-
-        if avg_score >= config.min_quality_threshold:
-            logger.info(f"Quality threshold met: {avg_score:.1f}")
-            return True
-
-        if iteration >= config.max_iterations:
-            logger.info(f"Max iterations reached: {iteration}")
-            return True
-
-        if not improvements:
-            logger.info("No improvements identified")
-            return True
-
-        logger.info(f"Iteration {iteration}: Score {avg_score:.1f}, {len(improvements)} improvements needed")
-        return False
-
-    # =====================================
-    # Step 4: Generate Final Output
-    # =====================================
-    def finalize_executor(step_input: StepInput) -> StepOutput:
-        """Generate final documentation or report and save to docs directory."""
-        context = get_context(step_input)
-
-        mode = context.get("mode")
-        output = context.get("current_output")
-
-        if not output:
-            return StepOutput(content="Processing failed - no output generated")
-
-        logger.info("Step 4: Generating final output")
-
-        avg_score = context.get("average_score", 0)
-
-        if mode == "generate":
-            # Return generated documentation
-            final_content = output.content
-
-            # Add metadata footer
-            final_content += f"\n\n---\n*Generated with confidence: {output.confidence:.0%}*"
-            final_content += f"\n*Quality score: {avg_score:.1f}/10*"
-
-        else:  # assess or refine
-            # Generate assessment report
-            sections = []
-
-            # Header
-            sections.append("# 📊 Documentation Assessment Report")
-            sections.append(f"*Mode: {mode.title()}*\n")
-
-            # Overall score
-            emoji = "🟢" if avg_score >= 8 else ("🟡" if avg_score >= 6 else "🔴")
-            sections.append(f"## Overall Score: {emoji} **{avg_score:.1f}/10**\n")
-
-            # Consensus info
-            if context.get("consensus_metadata"):
-                meta = context["consensus_metadata"]
-                sections.append("### Consensus Metrics")
-                sections.append(f"- Dissent Rate: {getattr(meta, 'dissent_rate', 0):.2%}")
-                sections.append(f"- Confidence: {getattr(meta, 'consensus_confidence', 0):.2%}\n")
-
-            # Detailed scores
-            sections.append("### Detailed Scores")
-            sections.append(f"- **Clarity**: {output.clarity_score:.1f}/10")
-            sections.append(f"- **Completeness**: {output.completeness_score:.1f}/10")
-            sections.append(f"- **Accuracy**: {output.accuracy_score:.1f}/10")
-            sections.append(f"- **Usability**: {output.usability_score:.1f}/10\n")
-
-            # Checklist
-            sections.append("### Feature Checklist")
-            sections.append(f"- Examples: {'✅' if output.has_examples else '❌'}")
-            sections.append(f"- Quickstart: {'✅' if output.has_quickstart else '❌'}")
-            sections.append(f"- API Docs: {'✅' if output.has_api_docs else '❌'}")
-            sections.append(f"- Valid Examples: {'✅' if output.examples_valid else '❌'}\n")
-
-            # Analysis depth
-            sections.append("### Analysis Depth")
-            sections.append(f"- Files Analyzed: {output.files_analyzed}")
-            sections.append(f"- Patterns Found: {output.patterns_found}\n")
-
-            # Issues
-            if output.invalid_claims:
-                sections.append("### ❌ Invalid Claims")
-                for claim in output.invalid_claims:
-                    sections.append(f"- {claim}")
-                sections.append("")
-
-            if output.missing_sections:
-                sections.append("### 📝 Missing Sections")
-                for section in output.missing_sections:
-                    sections.append(f"- {section}")
-                sections.append("")
-
-            # Improvements
-            if output.improvements_needed:
-                sections.append("### 🔧 Improvements Needed")
-                for i, improvement in enumerate(output.improvements_needed, 1):
-                    sections.append(f"{i}. {improvement}")
-                sections.append("")
-
-            # Summary
-            sections.append("### 📋 Summary")
-            sections.append(output.summary)
-
-            # Processing history
-            if context.get("processing_history"):
-                sections.append("\n### 🔄 Processing History")
-                for entry in context["processing_history"]:
-                    sections.append(
-                        f"- Iteration {entry['iteration']}: "
-                        f"{entry['mode']} mode, "
-                        f"score {entry['score']:.1f}"
-                    )
-
-            final_content = "\n".join(sections)
-
-        # Save to docs directory
-        docs_dir = Path("docs")
-        docs_dir.mkdir(exist_ok=True)
-
-        # Generate filename based on mode and target
-        timestamp = _get_timestamp()
-        target = context.get("target_module", "codebase").replace("/", "_")
-
-        if mode == "generate":
-            filename = f"generated_{target}_{timestamp}.md"
-        elif mode == "assess":
-            filename = f"assessment_{target}_{timestamp}.md"
-        else:  # refine
-            filename = f"refined_{target}_{timestamp}.md"
-
-        output_path = docs_dir / filename
-        output_path.write_text(final_content)
-        logger.info(f"Documentation saved to {output_path}")
-
-        context["final_output"] = final_content
-        context["output_path"] = str(output_path)
-        return StepOutput(content=final_content)
-
-    # =====================================
-    # Create Workflow
-    # =====================================
-
-    # Create steps
-    initialize = Step(
-        name="initialize",
-        description="Initialize and analyze codebase",
-        executor=initialize_executor,
-    )
-
-    process = Step(
-        name="process",
-        description="Process documentation with consensus",
-        executor=process_executor,
-    )
-
-    identify_improvements = Step(
-        name="identify_improvements",
-        description="Identify needed improvements",
-        executor=identify_improvements_executor,
-    )
-
-    refine = Step(
-        name="refine",
-        description="Refine documentation",
-        executor=refine_documentation_executor,
-    )
-
-    finalize = Step(
-        name="finalize",
-        description="Generate final output",
-        executor=finalize_executor,
-    )
-
-    # Create refinement loop
-    refinement_loop = Loop(
-        name="refinement_loop",
-        description="Iteratively improve documentation",
-        steps=[identify_improvements, refine],
-        end_condition=quality_check,
-        max_iterations=config.max_iterations,
-    )
+        
+        # Get consensus result
+        result = consensus.run(processor_input)
+        
+        # Save documentation to file
+        if result.content:
+            docs_dir = Path("docs")
+            docs_dir.mkdir(exist_ok=True)
+            
+            timestamp = _get_timestamp()
+            output_file = docs_dir / f"documentation_{timestamp}.md"
+            
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write(result.content)
+            
+            logger.info(f"Documentation saved to {output_file}")
+
+        return {
+            "result": result.model_dump(),
+            "content": result.content,
+            "summary": result.summary,
+        }
 
     # Create workflow
     workflow = Workflow(
-        id="UnifiedDocumentationProcessor",
-        name="Unified Documentation Processor Workflow",
-        description="Single workflow for generating, assessing, and refining documentation using Catalyst consensus",
-        db=db,
-        telemetry=False,
-        debug_mode=False,
+        name="DocumentationProcessor",
         steps=[
-            initialize,
-            process,
-            refinement_loop,
-            finalize,
+            Step(
+                name="process",
+                function=process_documentation,
+            ),
         ],
+        db=db,
     )
 
     return workflow
