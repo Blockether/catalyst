@@ -588,7 +588,6 @@ def create_answer_provider_agent(domain: Optional[str] = None, application: Opti
         debug_mode=False,
         cache_session=True,
         add_datetime_to_context=True,
-        add_location_to_context=False,
         additional_input=ANSWER_PROVIDER_FEW_SHOT_EXAMPLES,  # type: ignore
         instructions=[
             dedent(

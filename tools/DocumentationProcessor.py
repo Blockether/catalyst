@@ -174,6 +174,13 @@ class DocumentationOutput(BaseModelWithReasoning):
         json_schema_extra={"voting_comparison": {"strategy": ComparisonStrategy.SEMANTIC, "threshold": 0.7}},
     )
 
+    # Required reasoning field from BaseModelWithReasoning
+    reasoning: str = Field(
+        default="",
+        description="Reasoning behind the documentation assessment",
+        json_schema_extra={"voting_comparison": {"strategy": ComparisonStrategy.SEMANTIC, "threshold": 0.7}},
+    )
+
 
 class ProcessorInput(BaseModel):
     """Input for documentation processing agents."""
@@ -421,55 +428,39 @@ def create_documentation_processor_workflow(
     config = config or DocumentationProcessorConfig()
     db = SqliteDb(db_file=db_path)
 
-    # Create agents for different perspectives
-    agents = [
-        DocumentationAgent(
-            id="doc_architect",
-            model=model,
-            db=db,
-            perspective="architect",
-        ),
-        DocumentationAgent(
-            id="doc_developer",
-            model=model,
-            db=db,
-            perspective="developer",
-        ),
-        DocumentationAgent(
-            id="doc_reviewer",
-            model=model,
-            db=db,
-            perspective="reviewer",
-        ),
-    ]
-
-    # Create consensus manager with the response type
-    consensus_manager = ConsensusManager[DocumentationOutput](
-        response_type=DocumentationOutput
+    # Create a single agent for documentation processing
+    doc_agent = DocumentationAgent(
+        id="doc_processor",
+        model=model,
+        db=db,
+        perspective="comprehensive",
     )
 
     # Create workflow steps
-    def process_documentation(input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process documentation using consensus."""
+    def process_documentation(step_input: StepInput) -> StepOutput:
+        """Process documentation using the agent."""
+        input_data = step_input.input
+        
+        # Read the content if it's a file path
+        content = None
+        if isinstance(input_data, dict):
+            file_path = input_data.get("path", input_data.get("module"))
+        else:
+            file_path = str(input_data)
+            
+        if file_path and Path(file_path).exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
         processor_input = ProcessorInput(
-            mode=input_data.get("mode", config.mode),
-            content=input_data.get("content"),
-            target_module=input_data.get("module"),
-            requirements=input_data.get("requirements", []),
+            mode=input_data.get("mode", config.mode) if isinstance(input_data, dict) else config.mode,
+            content=content,
+            target_module=input_data.get("module") if isinstance(input_data, dict) else str(input_data),
+            requirements=input_data.get("requirements", []) if isinstance(input_data, dict) else [],
         )
 
-        # Use agno_consensus method to create consensus with agents
-        consensus = consensus_manager.agno_consensus(
-            runner=agents[0],  # Use first agent as base runner
-            ids=[agent.id for agent in agents],
-            perspectives=[agent.perspective for agent in agents],
-            weights=[1.0] * len(agents),
-            runner_settings=[{"model": model} for _ in agents],
-            consensus_settings=config.consensus_settings.model_dump(),
-        )
-        
-        # Get consensus result
-        result = consensus.run(processor_input)
+        # Get result from agent
+        result = doc_agent.run_sync(processor_input)
         
         # Save documentation to file
         if result.content:
@@ -484,11 +475,10 @@ def create_documentation_processor_workflow(
             
             logger.info(f"Documentation saved to {output_file}")
 
-        return {
-            "result": result.model_dump(),
-            "content": result.content,
-            "summary": result.summary,
-        }
+        return StepOutput(
+            content=result.content,
+            success=True,
+        )
 
     # Create workflow
     workflow = Workflow(
@@ -496,7 +486,7 @@ def create_documentation_processor_workflow(
         steps=[
             Step(
                 name="process",
-                function=process_documentation,
+                executor=process_documentation,
             ),
         ],
         db=db,

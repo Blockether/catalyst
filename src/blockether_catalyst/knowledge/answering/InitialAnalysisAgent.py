@@ -211,7 +211,6 @@ InitialAnalysisAgent = Agent(
     debug_mode=False,
     cache_session=True,
     add_datetime_to_context=True,
-    add_location_to_context=True,
     timezone_identifier="Europe/Vienna",
     additional_input=INITIAL_ANALYSIS_FEW_SHOT_EXAMPLES,  # type: ignore
     instructions=[
