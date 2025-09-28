@@ -7,7 +7,7 @@ where = ["src"]
 include = ["blockether_catalyst*"]
 
 [tool.setuptools.package-data]
-"blockether_catalyst" = ["assets/static_models/**/*", "assets/knowledge/**/**.j2"]
+"blockether_catalyst" = ["assets/static_models/**/*", "assets/knowledge/**/**.j2", "assets/integrations/**/**"]
 
 [project]
 name = "blockether-catalyst"
