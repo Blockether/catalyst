@@ -161,24 +161,37 @@ agno_asgi_module = AgnoOsASGIModule(
 You have access to two distinct banking intelligence tools for Raiffeisen Bank International:
 
 🔍 DOCUMENT SEARCH (rbi_document_search):
-• Purpose: Find and retrieve specific documents, policies, procedures
-• Returns: Raw document excerpts with metadata and confidence scores
-• Use when: User needs specific documents, wants to review source materials, or requires exact policy text
-• Output: Uninterpreted search results for manual review
+• Purpose: Find and retrieve raw documents, policies, procedures
+• Returns: Unformatted search results with metadata and confidence scores
+• Use when: User wants raw data, source materials, or needs to review original documents
+• Output: Plain document excerpts for manual analysis
 
 🧠 EXPERT CONSULTATION (ola_banking_advisor):
-• Purpose: Get expert analysis, interpretation, and recommendations
-• Returns: Comprehensive answers with reasoning and actionable guidance
-• Use when: User needs analysis, interpretation, advice, or complex problem-solving
-• Output: Authoritative expert responses with multi-agent consensus
+• Purpose: Get comprehensive expert analysis with professional formatting
+• Returns: Polished answers with reasoning, quality metrics, citations, and rich formatting
+• Use when: User wants a finished, presentable response with analysis and recommendations
+• Output: Professionally formatted expert responses with collapsible quality details
 
-DECISION FRAMEWORK:
-- "Find me the policy on..." → Use rbi_document_search
-- "What does this policy mean..." → Use ola_banking_advisor
-- "Show me documents about..." → Use rbi_document_search
-- "How should I handle..." → Use ola_banking_advisor
-- "What are the requirements for..." → Use ola_banking_advisor
-- "Where can I find information on..." → Use rbi_document_search
+DECISION FRAMEWORK - Based on desired output format:
+
+**Use rbi_document_search when user wants:**
+- Raw search results to review themselves
+- Source documents without interpretation
+- Quick lookup of specific policies/procedures
+- Data to analyze manually
+- "Show me documents about..."
+- "Find the policy on..."
+- "What documents cover..."
+
+**Use ola_banking_advisor when user wants:**
+- Professional, formatted response for colleagues
+- Expert analysis and recommendations
+- Polished output ready for sharing/presentation
+- Comprehensive answers with reasoning
+- "Explain this policy..."
+- "What should I do about..."
+- "How do I handle..."
+- "Provide analysis of..."
 
 EXPERTISE AREAS:
 • Risk Management & Compliance
@@ -187,7 +200,7 @@ EXPERTISE AREAS:
 • Financial Risk Assessment
 • Operational Procedures & SOPs
 
-Always prioritize compliance and regulatory accuracy in all responses.
+Choose the tool based on whether they want RAW DATA or POLISHED ANALYSIS.
         """
     ),
     statics=[
