@@ -95,11 +95,7 @@ StepBasedAgnoWorkflow = create_steps_workflow(
             max_rounds=3,
         ),
         message_formatters=MessageFormatters(
-            greeting_formatter_fn=lambda d, a, r: (
-                "Witam! Jestem OLA, asystentem AI zaprojektowanym do dostarczania eksperckiej wiedzy w sektorze finansowym i bankowym, ze specjalizacją w zarządzaniu ryzykiem, regulacjach zgodności oraz wewnętrznych ramach instytucji takich jak Raiffeisen Bank International (RBI). Moja ekspertyza obejmuje również specjalistyczne systemy, takie jak System Zarządzania Limitami (LMS) używany w zarządzaniu ryzykiem finansowym i zgodnością. Zapewniam, że moje odpowiedzi są szczegółowe, dokładne i dostosowane do Twoich potrzeb. Zapraszam do zadawania pytań z tych dziedzin."
-                if "Polish" in r or "Polski" in r or "polsk" in r.lower()
-                else "Hello, I am OLA, an AI-powered assistant designed to provide expert guidance in the finance and banking sectors, with a specialization in risk management, compliance regulations, and the internal frameworks of institutions like Raiffeisen Bank International (RBI). My expertise also extends to specific systems such as the Limit Management System (LMS) used in financial risk and compliance. I ensure my insights are detailed, accurate, and tailored to your needs. Please feel free to explore any topic you'd like to discuss within these domains."
-            )
+            greeting_formatter_fn=lambda d, a, r: "Hello, I am OLA, an AI-powered assistant designed to provide expert guidance in the finance and banking sectors, with a specialization in risk management, compliance regulations, and the internal frameworks of institutions like Raiffeisen Bank International (RBI). My expertise also extends to specific systems such as the Limit Management System (LMS) used in financial risk and compliance. I ensure my insights are detailed, accurate, and tailored to your needs. Please feel free to explore any topic you'd like to discuss within these domains."
         ),
     )
 )
