@@ -104,6 +104,7 @@ class MCPConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str = Field(description="Name of the MCP application")
+    instructions: str = Field(description="Instructions of the MCP server")
     tools: List[Tool] = Field(default_factory=list, description="List of tools to register with MCP")
     resources: List[Resource] = Field(default_factory=list, description="List of resources for MCP")
     prompts: List[Prompt] = Field(default_factory=list, description="List of prompts for MCP")
@@ -159,7 +160,11 @@ class AgnoOsASGIModule(ASGICoreModule):
 
         router_os = self._os.get_app().router
         if self.mcp:
-            mcp = FastMCP(name=self.mcp.name, version=self.version)
+            mcp = FastMCP(
+                name=self.mcp.name,
+                version=self.version,
+                instructions=self.mcp.instructions,
+            )
             for tool in self.mcp.tools:
                 mcp.add_tool(tool)
 

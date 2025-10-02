@@ -272,18 +272,22 @@ class KnowledgeExtractionCore:
                 single_result = extractor.extract(file_path)
                 return KnowledgeExtractionItem(result=single_result)
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all tasks
-                future_to_file = {executor.submit(process_single_file, file_path): file_path for file_path in file_list}
+            for file_path in file_list:
+                extraction_item = process_single_file(file_path)
+                extraction_results.append(extraction_item)
 
-                # Collect results as they complete
-                for future in as_completed(future_to_file):
-                    file_path = future_to_file[future]
-                    try:
-                        extraction_item = future.result()
-                        extraction_results.append(extraction_item)
-                    except Exception as exc:
-                        logger.error(f"File {file_path} generated an exception: {exc}")
+            # with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            #     # Submit all tasks
+            #     future_to_file = {executor.submit(process_single_file, file_path): file_path for file_path in file_list}
+
+            #     # Collect results as they complete
+            #     for future in as_completed(future_to_file):
+            #         file_path = future_to_file[future]
+            #         try:
+            #             extraction_item = future.result()
+            #             extraction_results.append(extraction_item)
+            #         except Exception as exc:
+            #             logger.error(f"File {file_path} generated an exception: {exc}")
 
             if extension == ".pdf":
                 extraction_output.pdf = extraction_results
